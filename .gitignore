@@ -1,25 +1,65 @@
-# Escludi i file e le cartelle di VS Code
-/.vscode/
+# VS Code
+.vscode/
 
-# Escludi altri file di configurazione dell'IDE
-**/__pycache__/
+# Python artifacts
+__pycache__/
+*.py[cod]
 *.pyc
+.pytest_cache/
+.mypy_cache/
+venv/
+.venv/
+env/
+ENV/
 
-# Escludi tutti i modelli tranne Nano-U
-/models/*
-!/models/Nano-U/
-/tf_model/
+# Build / packaging
+build/
+dist/
+*.egg-info/
+*.egg
 
-# Escludi tutte le immagini
+# Jupyter
+.ipynb_checkpoints
+
+# OS
+.DS_Store
+Thumbs.db
+*~
+
+# Rust
+/target/
+**/target/
+Cargo.lock
+
+# MicroFlow / local rust implementation build outputs
+MicroFlow_implementation/target/
+
+# Data — do not import images; ignore raw/processed image folders
+data/raw/
+data/masks/
+data/TinyAgri/
+data/*/img/
+data/*/mask/
 *.png
-!/data/metrics/
+*.jpg
+*.jpeg
+*.bmp
+*.tif
+*.tiff
 
-# Escludi i frame e le mask (mantengo i data processati)
-/data/TinyAgri/
-/data/masks/
+# Models: ignore large checkpoints and tflite files except the quantized Nano-U
+models/*.pth
+models/*.pt
+models/*.tflite
+!models/Nano_U_int8.tflite
 
-# Escludi i file di Cargo tranne main.rs e Cargo.toml
-/MicroFlow_implementation/*
-!/MicroFlow_implementation/src/
-!/MicroFlow_implementation/src/main.rs
-!/MicroFlow_implementation/Cargo.toml
+# Keep small model folders if needed
+models/Nano-U/
+
+# Temporary files
+.env
+.coverage
+.cache
+
+# Node
+node_modules/

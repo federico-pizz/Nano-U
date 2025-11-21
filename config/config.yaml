@@ -1,0 +1,19 @@
+# Example configuration for training and paths
+training:
+  epochs: 50
+  batch_size: 16
+  learning_rate: 0.001
+
+paths:
+  data_raw: data/raw
+  data_processed: data/processed
+  models: models
+  results: results
+
+dataset:
+  crops_dir: data/raw/crops
+  tomatoes_dir: data/raw/tomatoes
+
+notes: |
+  Adjust paths to match your local layout. This file is a placeholder
+  to centralize hyperparameters and paths for scripts under `src/python/`.

@@ -1,8 +1,5 @@
 # Nano-U: Efficient Semantic Segmentation for Robotic Navigation in Outdoor Environments
 
-[![Nano-U Presentation Slide](path/to/title_slide_image.png)](path/to/Tesi_presentazione.pdf)  
-*Click the image above to view the full thesis presentation PDF.*
-
 ## Overview
 
 This repository contains the implementation and extensions of the Nano-U model, developed as part of my thesis at the University of Padua, Department of Information Engineering (DEI). The project focuses on efficient semantic segmentation for estimating traversable ground in outdoor environments, optimized for resource-constrained microcontrollers like the ESP32.
@@ -18,9 +15,6 @@ Thesis details:
 - **Co-Supervisor**: Francesco Pasti
 - **Academic Year**: 2024/2025
 
-[Link to full thesis document (if available)](path/to/full_thesis.pdf)  
-[Link to presentation PDF](path/to/Tesi_presentazione.pdf)
-
 ## Problem and Motivations
 
 Semantic segmentation in outdoor environments is challenging due to variability in terrain, lighting, and obstacles. This project addresses:
@@ -30,8 +24,6 @@ Semantic segmentation in outdoor environments is challenging due to variability 
 
 - **Why on microcontrollers?**  
   [Explain the need for edge computing on low-power devices like ESP32 for robotic navigation. Reference motivations from slide 2.]
-
-![Motivations Slide](path/to/motivations_slide_image.png)
 
 ## Objectives and Contributions
 
@@ -45,8 +37,6 @@ Semantic segmentation in outdoor environments is challenging due to variability 
 - Evaluation of compression techniques' effectiveness.
 - Extension of the MicroFlow library.
 
-![Objectives Slide](path/to/objectives_slide_image.png)
-
 ## Design of Nano-U
 
 Nano-U is derived from a standard U-Net architecture, optimized for efficiency:
@@ -57,8 +47,6 @@ Nano-U is derived from a standard U-Net architecture, optimized for efficiency:
 - **Nano-U in int8**: Conversion from PyTorch to TensorFlow, followed by post-training quantization (PTQ calibrated).
 
 [Include diagrams or flowcharts from slide 4, e.g., training/validation loss graphs.]
-
-![Design Slide](path/to/design_slide_image.png)
 
 ## Implementation in MicroFlow
 
@@ -71,8 +59,6 @@ Nano-U is derived from a standard U-Net architecture, optimized for efficiency:
   - Support for RESIZE BILINEAR operator.
 
 [Add details on how the model is deployed on microcontrollers. Mention any extensions you've made.]
-
-![Implementation Slide](path/to/implementation_slide_image.png)
 
 ### Rust Embeddings Extension
 [Placeholder for your additions: Describe the integration of embeddings in Rust, why Rust was chosen (e.g., performance, safety), and how it interfaces with the existing Python/TensorFlow code.]
@@ -90,22 +76,45 @@ Nano-U is derived from a standard U-Net architecture, optimized for efficiency:
 
 [Include example predictions or tables comparing model outputs.]
 
-![Dataset Slide](path/to/dataset_slide_image.png)
+### Data layout (actual folders in this repository)
+
+This repo already contains several data directories and processed data. Key locations:
+
+- `data/csv/` — CSV annotations and line points (e.g., `line_points_cs1.csv`, `line_points_ts1.csv`).
+- `data/masks/` — Raw mask folders used during preprocessing and training. Subfolders include `Crops/` and `Tomatoes/` with `scene1/` and `scene2/`.
+- `data/processed/` — Processed datasets used for training/validation/testing; contains `train/`, `val/`, `test/` each with `img/` and `mask/`.
+- `data/TinyAgri/` — Additional dataset copies organized by `Crops/` and `Tomatoes/`.
+
+When adding more raw datasets, place them under `data/raw/` (new folder) and update `config/config.yaml` paths accordingly.
 
 ## Results
 
-[Summarize measurements from slide 7, e.g., model size, inference time, IoU comparisons.]
+The repository contains recorded cross-validation metrics and saved model files. Below are the values discovered in this repository (no external measurements were modified).
 
-- **Model Performance Comparison**:  
-  | Model       | Size (KB) | Inference Time (ms) | Mean IoU |
-  |-------------|-----------|---------------------|----------|
-  | BU-Net     | [Value]  | [Value]            | [Value] |
-  | Nano-U     | [Value]  | [Value]            | [Value] |
-  | Nano-U int8| [Value]  | [Value]            | [Value] |
+### Recorded evaluation metrics (BU-Net cross-validation, 5 folds)
 
-- **IoU for MicroFlow Predictions**: [Describe graph trends.]
+- Average Train Loss: 0.2354
+- Average Train Accuracy: 0.9326
+- Average Validation Loss: 0.2601
+- Average Validation Accuracy: 0.9218
+- Best Validation Accuracy: 0.9312
 
-![Results Slide](path/to/results_slide_image.png)
+These values are taken from `data/metrics/BU_Net_cv_metrics.txt` included in the repository.
+
+### Available model files and sizes (on-disk)
+
+| Model file | Size |
+|------------|------:|
+| `BU_Net.pth` | 130 MB |
+| `Nano-U_try.pth` | 421 KB |
+| `Nano_U.pth` | 416 KB |
+| `Nano_U_2L.pth` | 416 KB |
+| `Nano_U_3L.pth` | 1.5 MB |
+| `Nano_U.tflite` | 189 KB |
+| `Nano_U_int8.tflite` | 184 KB |
+| `temp_model.pth` | 422 KB |
+
+If you want additional runtime measurements (inference time, IoU on specific test splits), run the inference scripts in `src/python/` against `data/processed/test/img/` and collect outputs in `results/predictions/`.
 
 ## Conclusions and Future Work
 
@@ -122,8 +131,6 @@ On-device ground segmentation is feasible with good accuracy, lightweight models
 - Surveillance of "no-go" areas (unstructured environments).
 
 [Add any new conclusions from your extensions.]
-
-![Conclusions Slide](path/to/conclusions_slide_image.png)
 
 ## Installation
 
@@ -173,7 +180,18 @@ Contributions are welcome! Please follow these steps:
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE) - see the LICENSE file for details.
+This project is licensed under the MIT License — see the top-level `LICENSE` file for the full text.
+
+License highlights:
+
+- Permission is granted to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software.
+- The copyright notice and permission notice must be included in all copies or substantial portions of the Software.
+
+Recommended citation (please include when using or building on this work):
+
+  federico-pizz, "Nano-U" repository, GitHub, 2025. Example: https://github.com/federico-pizz/Nano-U
+
+If you prefer a different citation format, update the `LICENSE` file accordingly.
 
 ## Acknowledgments
 
