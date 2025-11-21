@@ -53,6 +53,9 @@ models/*.pt
 models/*.tflite
 !models/Nano_U_int8.tflite
 
+# Specifically ignore the large SAM model (do not track it)
+models/sam_model/sam2.1_hiera_large.pt
+
 # Keep small model folders if needed
 models/Nano-U/
 
