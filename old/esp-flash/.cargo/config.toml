@@ -1,0 +1,6 @@
+[build]
+target = "xtensa-esp32-espidf" # Specify our target MCU architecture
+
+[target.xtensa-esp32-espidf]
+runner = "espflash flash --monitor" # Tell Cargo to use espflash to run our code
+

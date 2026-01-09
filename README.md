@@ -114,7 +114,7 @@ These values are taken from `data/metrics/BU_Net_cv_metrics.txt` included in the
 | `Nano_U_int8.tflite` | 184 KB |
 | `temp_model.pth` | 422 KB |
 
-If you want additional runtime measurements (inference time, IoU on specific test splits), run the inference scripts in `src/python/` against `data/processed/test/img/` and collect outputs in `results/predictions/`.
+If you want additional runtime measurements (inference time, IoU on specific test splits), run the inference scripts in `src/` against `data/processed/test/img/` and collect outputs in `results/predictions/`.
 
 ## Conclusions and Future Work
 

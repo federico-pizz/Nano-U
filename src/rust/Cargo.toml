@@ -1,7 +1,0 @@
-[package]
-name = "nano_u_embeddings"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-# Add dependencies here if you port embeddings or helper functions to Rust

@@ -1,68 +1,66 @@
-# VS Code
-.vscode/
-
-# Python artifacts
+# --- General Python / Environment ---
 __pycache__/
 *.py[cod]
-*.pyc
-.pytest_cache/
-.mypy_cache/
-venv/
-.venv/
-env/
-ENV/
-
-# Build / packaging
+*$py.class
+*.so
+.Python
 build/
 dist/
 *.egg-info/
 *.egg
+.coverage
+.cache/
+.pytest_cache/
+.mypy_cache/
 
-# Jupyter
-.ipynb_checkpoints
+# Virtual Environments
+venv/
+.venv/
+.venv-tf/
+env/
+ENV/
+.env
 
-# OS
+# --- IDE / Editors ---
+.vscode/
+.idea/
+*.swp
+*~
 .DS_Store
 Thumbs.db
-*~
 
-# Rust
+# --- Jupyter Notebooks ---
+.ipynb_checkpoints/
+
+# --- Project Data & Artifacts ---
+
+# Data: Ignore all raw and processed data
+data/
+
+# Models: Ignore all trained weights, checkpoints, and export formats
+models/
+# Exception: You can track the README or .gitkeep in models if it exists
+!models/.gitkeep
+!models/README.md
+
+# Results: Ignore logs, figures, and predictions
+results/
+
+# Legacy / Old folder content
+# We ignore data and models inside 'old' to prevent accidental large commits
+old/data/
+old/models/
+
+# --- Rust (from previous context) ---
 /target/
 **/target/
 Cargo.lock
 
-# MicroFlow / local rust implementation build outputs
-MicroFlow_implementation/target/
-
-# Data — do not import images; ignore raw/processed image folders
-data/raw/
-data/masks/
-data/TinyAgri/
-data/*/img/
-data/*/mask/
+# --- Large Media Files (just in case they end up elsewhere) ---
 *.png
 *.jpg
 *.jpeg
-*.bmp
+*.rgb
+*.mp4
 *.tif
 *.tiff
-
-# Models: ignore large checkpoints and tflite files except the quantized Nano-U
-models/*.pth
-models/*.pt
-models/*.tflite
-!models/Nano_U_int8.tflite
-
-# Specifically ignore the large SAM model (do not track it)
-models/sam_model/sam2.1_hiera_large.pt
-
-# Keep small model folders if needed
-models/Nano-U/
-
-# Temporary files
-.env
-.coverage
-.cache
-
-# Node
-node_modules/

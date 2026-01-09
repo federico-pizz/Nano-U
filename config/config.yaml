@@ -1,19 +1,108 @@
-# Example configuration for training and paths
+# Configuration for Nano-U Project (TensorFlow)
+
+# Global Data settings
+data:
+  input_shape: [48, 64, 3]  # Height, Width, Channels (TF format: NHWC)
+  num_classes: 1            # Binary segmentation
+  
+  # Normalization parameters (used in training and inference preprocessing)
+  # Data is normalized to [-1, 1] range: (x / 255.0 - mean) / std
+  normalization:
+    mean: [0.5, 0.5, 0.5]
+    std: [0.5, 0.5, 0.5]
+
+  # Data splitting strategy used in preparation
+  split:
+    train: 0.7
+    validation: 0.2
+    test: 0.1
+
+  paths:
+    raw:
+      root: "data/TinyAgri"
+      tomatoes: 
+        - "data/TinyAgri/Tomatoes/scene1"
+        - "data/TinyAgri/Tomatoes/scene2"
+      crops:
+        - "data/TinyAgri/Crops/scene1"
+        - "data/TinyAgri/Crops/scene2"
+      masks:
+        tomatoes:
+          - "data/masks/Tomatoes/scene1"
+          - "data/masks/Tomatoes/scene2"
+        crops:
+          - "data/masks/Crops/scene1"
+          - "data/masks/Crops/scene2"
+    
+    processed: 
+      root: "data/processed_data"
+      train:
+        img: "data/processed_data/train/img"
+        mask: "data/processed_data/train/mask"
+      val:
+        img: "data/processed_data/val/img"
+        mask: "data/processed_data/val/mask"
+      test:
+        img: "data/processed_data/test/img"
+        mask: "data/processed_data/test/mask"
+
+    models_dir: "models"
+
+
+# Model Architecture Definitions
+models:
+  # Teacher Model (BU_Net) - UNet-like architecture
+  bu_net:
+    input_shape: [48, 64, 3]
+    filters: [64, 128, 256, 512, 1024, 2048] # Encoder filters
+    bottleneck: 2048
+    decoder_filters: [1024, 512, 256, 128, 64]
+    
+  # Student Model (Nano_U) - Lightweight AutoEncoder-like
+  nano_u:
+    input_shape: [48, 64, 3]
+    filters: [32, 64, 128] # Encoder filters
+    bottleneck: 128
+    decoder_filters: [64, 32]
+
+
+# Training Hyperparameters
 training:
-  epochs: 50
-  batch_size: 16
-  learning_rate: 0.001
+  # General settings
+  seed: 42
+  
+  # Teacher (BU_Net) training config
+  bu_net:
+    epochs: 80
+    batch_size: 8
+    learning_rate: 1e-6
+    optimizer: "adam"
+    loss: "binary_crossentropy" # BCEWithLogitsLoss equivalent
+    augment: true
 
-paths:
-  data_raw: data/raw
-  data_processed: data/processed
-  models: models
-  results: results
+  # Student (Nano_U) training config
+  nano_u:
+    epochs: 90
+    batch_size: 8
+    learning_rate: 1e-6
+    optimizer: "adam"
+    loss: "binary_crossentropy"
+    augment: true
+    
+    # Knowledge Distillation settings
+    distillation:
+      enabled: true
+      teacher_weights: "models/BU_Net.pth" # Note: Will need TF equivalent weights
+      alpha: 0.5        # Weight for student loss (1-alpha for teacher loss)
+      temperature: 2.0  # Softening parameter
 
-dataset:
-  crops_dir: data/raw/crops
-  tomatoes_dir: data/raw/tomatoes
 
-notes: |
-  Adjust paths to match your local layout. This file is a placeholder
-  to centralize hyperparameters and paths for scripts under `src/python/`.
+# Quantization settings (TFLite)
+quantization:
+  method: "dynamic_range" # or "full_integer"
+  representative_dataset_size: 100
+  input_type: "int8"
+  output_type: "int8"
+  supported_ops: 
+    - "TFLITE_BUILTINS_INT8"
+    - "SELECT_TF_OPS"

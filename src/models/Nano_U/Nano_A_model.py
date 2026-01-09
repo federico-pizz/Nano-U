@@ -1,4 +1,5 @@
 from .Nano_U_layers import *
+import torch.nn as nn
 
 class Nano_A(nn.Module):
     
