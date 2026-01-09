@@ -1,16 +1,22 @@
 import os
+import sys
 import argparse
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
-from src.utils import get_project_root
+# Add project root to sys.path to resolve src_tf and src imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src_tf.models.Nano_U.model_tf import build_nano_u
 from src_tf.models.BU_Net.model_tf import build_bu_net
 from src_tf.utils.data_tf import make_dataset
 from src_tf.utils.metrics_tf import BinaryIoU
 from src_tf.utils.config import load_config
+
+def get_project_root():
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Enable GPU memory growth to avoid OOM errors
 gpus = tf.config.list_physical_devices('GPU')
@@ -84,7 +90,7 @@ def train_tf(model_name="nano_u", epochs=None, batch_size=None, lr=None,
     root_dir = str(get_project_root())
     processed_paths = config["data"]["paths"]["processed"]
     
-    # Helpers to resolve paths (absolute or relative to project root)
+    # Resolve paths (absolute or relative to project root)
     def resolve_path(p):
         return p if os.path.isabs(p) else os.path.join(root_dir, p)
 
@@ -220,8 +226,8 @@ def train_tf(model_name="nano_u", epochs=None, batch_size=None, lr=None,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to config file")
-    parser.add_argument("--model-name", default="nano_u", choices=["nano_u", "bu_net"]) 
-    parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--model", default="nano_u", choices=["nano_u", "bu_net"], help="Model to train") 
+    parser.add_argument("--epochs", type=int, default=None, help="Override epochs from config (optional)")
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--distill", action="store_true")
@@ -232,7 +238,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     train_tf(
-        model_name=args.model_name,
+        model_name=args.model,
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,

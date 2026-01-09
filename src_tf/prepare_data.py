@@ -6,6 +6,11 @@ It supports multiple datasets and merges them into a single training/validation/
 """
 
 import os
+import sys
+
+# Add project root to path so we can import src_tf and src
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import cv2
 import random
 import glob
@@ -55,11 +60,8 @@ def prepare_data(config_path="config/config.yaml"):
 
     raw_datasets = config["data"]["paths"].get("raw_datasets", [])
     
-    # Fallback to old structure if new key isn't present yet, or warn
     if not raw_datasets:
-        print("Warning: No 'raw_datasets' list found in config. Using fallback behavior (TinyAgri hardcoded logic matches).")
-        # You could implement backward compatibility or just fail.
-        # Assuming the user updates the config as I recommended.
+        print("No 'raw_datasets' list found in config.")
         return
 
     dataset_idx = 0
@@ -80,30 +82,26 @@ def prepare_data(config_path="config/config.yaml"):
 
         print(f"Processing dataset: {ds_name}...")
         
-        # Strategy: Match files.
-        # Option 1: Strict name matching (frameX.png -> maskX.png)
-        # Option 2: Sorted list matching (dangerous if missing files)
-        # Using the logic from original script: filename based matching
-        
         img_files = glob.glob(os.path.join(img_dir, "*.png"))
         img_files = sort_by_frame(img_files)
         
         count = 0
+        
         for img_path in img_files:
             basename = os.path.basename(img_path)
-            # Try to derive mask name
-            # Heuristic: frameX.png -> maskX.png
-            if "frame" in basename:
-                mask_name = basename.replace("frame", "mask")
-            else:
-                # Fallback: exact match or simple replacement
-                mask_name = basename
             
+            # Robust matching logic
+            if "frame" in basename:
+                frame_part = basename.split("frame")[1]
+                frame_num = frame_part.split(".")[0]
+                mask_name = f"mask{frame_num}.png"
+            else:
+                mask_name = basename.replace("frame", "mask")
+                
             mask_path = os.path.join(mask_dir, mask_name)
             
             if not os.path.exists(mask_path):
-                # Try simple filename match if frame/mask replacement failed
-                mask_path = os.path.join(mask_dir, basename)
+                mask_path = os.path.join(mask_dir, basename.replace("frame", "mask"))
                 
             if os.path.exists(mask_path):
                 all_pairs.append({
@@ -112,12 +110,8 @@ def prepare_data(config_path="config/config.yaml"):
                     "ds_name": ds_name
                 })
                 count += 1
-            else:
-                # Verbose debug
-                # print(f"Missing mask for {basename} at {mask_path}")
-                pass
         
-        print(f"  Found {count} pairs.")
+        print(f"  Found {count} pairs (scanned {len(img_files)} images).")
         dataset_idx += 1
 
     # Shuffle and Split

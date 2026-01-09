@@ -18,21 +18,19 @@ data:
     test: 0.1
 
   paths:
-    raw:
-      root: "data/TinyAgri"
-      tomatoes: 
-        - "data/TinyAgri/Tomatoes/scene1"
-        - "data/TinyAgri/Tomatoes/scene2"
-      crops:
-        - "data/TinyAgri/Crops/scene1"
-        - "data/TinyAgri/Crops/scene2"
-      masks:
-        tomatoes:
-          - "data/masks/Tomatoes/scene1"
-          - "data/masks/Tomatoes/scene2"
-        crops:
-          - "data/masks/Crops/scene1"
-          - "data/masks/Crops/scene2"
+    raw_datasets:
+      - name: "tomatoes_scene1"
+        images: "data/TinyAgri/Tomatoes/scene1"
+        masks: "data/masks/Tomatoes/scene1"
+      - name: "tomatoes_scene2"
+        images: "data/TinyAgri/Tomatoes/scene2"
+        masks: "data/masks/Tomatoes/scene2"
+      - name: "crops_scene1"
+        images: "data/TinyAgri/Crops/scene1"
+        masks: "data/masks/Crops/scene1"
+      - name: "crops_scene2"
+        images: "data/TinyAgri/Crops/scene2"
+        masks: "data/masks/Crops/scene2"
     
     processed: 
       root: "data/processed_data"
