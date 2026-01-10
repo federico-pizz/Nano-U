@@ -6,7 +6,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
-# Add project root to sys.path to resolve src imports
+# Add project root to sys.path to resolve src and src imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.models.Nano_U.model_tf import build_nano_u
@@ -24,14 +24,14 @@ if gpus:
     try:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-        print(f"✓ GPU memory growth enabled for {len(gpus)} GPU(s)")
+        print(f"✓ GPU memory growth enabled for {len(gpus)} GPU(s). Training will use GPU.")
     except RuntimeError as e:
         print(f"⚠ GPU configuration error: {e}")
 else:
-    print("⚠ No GPU detected - using CPU (training will be slow)")
+    print("⚠ WARNING: No GPU detected. Training will use CPU.")
 
 
-# Distiller Class to avoid manual training loops
+# Improvement: Distiller Class to avoid manual training loops
 class Distiller(keras.Model):
     def __init__(self, student, teacher):
         super(Distiller, self).__init__()
@@ -153,7 +153,7 @@ class SaveStudentCallback(keras.callbacks.Callback):
 
 def build_model_from_config(name: str, config: dict):
     input_shape = tuple(config["data"]["input_shape"])
-    
+
     if name.lower() == "nano_u":
         cfg = config["models"]["nano_u"]
         return build_nano_u(

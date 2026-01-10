@@ -1,2 +1,3 @@
-from .Nano_A_model import Nano_A
-from .Nano_U_model import Nano_U
+from .model_tf import NanoU, build_nano_u
+
+__all__ = ["NanoU", "build_nano_u"]

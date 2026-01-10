@@ -5,10 +5,10 @@ import tensorflow as tf
 from tensorflow import keras
 
 from src.utils import get_project_root
-from src_tf.models.Nano_U.model_tf import build_nano_u
-from src_tf.models.BU_Net.model_tf import build_bu_net
-from src_tf.utils.data_tf import make_dataset
-from src_tf.utils.config import load_config
+from src.models.Nano_U.model_tf import build_nano_u
+from src.models.BU_Net.model_tf import build_bu_net
+from src.utils.data_tf import make_dataset
+from src.utils.config import load_config
 
 
 def load_model_by_path(model_path):

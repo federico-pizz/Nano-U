@@ -7,7 +7,7 @@ def load_config(config_path="config/config.yaml"):
     Loads the YAML configuration file.
     Resolves the path relative to the project root.
     """
-    # Get project root (assuming this file is in src_tf/utils/)
+    # Get project root (assuming this file is in src/utils/)
     current_dir = Path(__file__).resolve().parent
     project_root = current_dir.parent.parent
     

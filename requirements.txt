@@ -1,5 +1,5 @@
 # Environment Information
-# OS: Linux
+# OS: Linux (Arch)
 # Python: 3.12.12
 # CUDA: 13.1
 # GPU: NVIDIA GeForce RTX 5060 Laptop GPU

@@ -3,12 +3,14 @@ Data Preparation Script (Config Driven)
 
 This script processes raw images and masks specified in the config/config.yaml file.
 It supports multiple datasets and merges them into a single training/validation/test split.
+For now, images are separated randomly, but later sequences will not be mixed to ensure
+the model is not trained on previous or following frames of a video sequence.
 """
 
 import os
 import sys
 
-# Add project root to path so we can import src_tf and src
+# Add project root to path so we can import src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import cv2
@@ -16,7 +18,7 @@ import random
 import glob
 import argparse
 import numpy as np
-from src_tf.utils.config import load_config
+from src.utils.config import load_config
 from src.utils import get_project_root
 
 def sort_by_frame(files):
@@ -65,7 +67,6 @@ def prepare_data(config_path="config/config.yaml"):
         return
 
     dataset_idx = 0
-    total_processed = 0
 
     for ds in raw_datasets:
         ds_name = ds.get("name", f"ds_{dataset_idx}")
