@@ -1,22 +1,35 @@
+"""train_tf.py
+Lightweight training entrypoint for Nano-U models.
+
+Overview for non-TensorFlow developers:
+- This module builds a Keras model (student) and optionally a larger teacher.
+- Knowledge distillation is supported via the Distiller class: the student is trained
+  with a combination of the standard supervised loss (binary crossentropy) and
+  a distillation loss computed between softened teacher and student outputs.
+- Training uses tf.data datasets produced by make_dataset; outputs are logits
+  (raw scores) and the code applies sigmoid where needed to get probabilities.
+
+Key design notes:
+- Keep file I/O and dataset construction outside model code (see src/utils/data_tf.py).
+- Metrics operate on probabilities (sigmoid applied internally where appropriate).
+"""
+
 import os
 import sys
 import argparse
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.keras import layers
 
-# Add project root to sys.path to resolve src and src imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Allow running the script directly (python src/train_tf.py)
+# If executed directly, add project root so absolute imports from `src` work.
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.models.Nano_U.model_tf import build_nano_u
 from src.models.BU_Net.model_tf import build_bu_net
-from src.utils.data_tf import make_dataset
-from src.utils.metrics_tf import BinaryIoU
+from src.utils import make_dataset, BinaryIoU, get_project_root
 from src.utils.config import load_config
-
-def get_project_root():
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Enable GPU memory growth to avoid OOM errors
 gpus = tf.config.list_physical_devices('GPU')
@@ -31,7 +44,6 @@ else:
     print("⚠ WARNING: No GPU detected. Training will use CPU.")
 
 
-# Improvement: Distiller Class to avoid manual training loops
 class Distiller(keras.Model):
     def __init__(self, student, teacher):
         super(Distiller, self).__init__()
@@ -245,9 +257,9 @@ def train_tf(model_name="nano_u", epochs=None, batch_size=None, lr=None,
 
 
     bce_loss = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-    # BinaryIoU logic: Thresholding logits at 0.0 (sigmoid(0)=0.5)
-    iou_metric = BinaryIoU(threshold=0.0, name='binary_iou')
-    
+    # BinaryIoU expects a probability threshold (applied after sigmoid). Use 0.5 for standard 50% cutoff.
+    iou_metric = BinaryIoU(threshold=0.5, name='binary_iou')
+
     models_dir = resolve_path(config["data"]["paths"]["models_dir"])
     if not os.path.exists(models_dir): os.makedirs(models_dir)
     ckpt_path = os.path.join(models_dir, f"{model_name}_tf_best.keras")

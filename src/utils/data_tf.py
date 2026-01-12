@@ -57,23 +57,42 @@ def make_dataset(img_files, mask_files, batch_size=8, shuffle=True, augment=Fals
                  mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5],
                  flip_prob=0.5, max_rotation_deg=20,
                  brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05):
+    # Validate inputs early and keep behavior stable
+    if len(img_files) == 0:
+        raise ValueError("make_dataset: img_files list is empty")
+    if len(mask_files) == 0:
+        raise ValueError("make_dataset: mask_files list is empty")
+    if len(img_files) != len(mask_files):
+        # Allow mismatch but warn and truncate to shortest
+        min_len = min(len(img_files), len(mask_files))
+        print(f"Warning: img_files and mask_files length mismatch ({len(img_files)} vs {len(mask_files)}). Truncating to {min_len} pairs.")
+        img_files = img_files[:min_len]
+        mask_files = mask_files[:min_len]
+
     img_files = sorted_by_frame(img_files)
     mask_files = sorted_by_frame(mask_files)
-    
+
     # Ensure mean/std are numpy arrays for broadcasting
     mean = np.array(mean, dtype=np.float32)
     std = np.array(std, dtype=np.float32)
 
     def _load_pair(img_path, mask_path):
-        # Load and normalize
-        img = cv2.imread(img_path.decode()).astype(np.float32)[:, :, ::-1] / 255.0
+        # Load and normalize using existing cv2 pipeline (maintains current dependencies)
+        img = cv2.imread(img_path.decode())
+        if img is None:
+            raise FileNotFoundError(f"Could not read image: {img_path}")
+        img = img.astype(np.float32)[:, :, ::-1] / 255.0
         img = (img - mean) / std  # Normalize to specified range
-        
-        mask = cv2.imread(mask_path.decode(), cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255.0
+
+        mask = cv2.imread(mask_path.decode(), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise FileNotFoundError(f"Could not read mask: {mask_path}")
+        mask = mask.astype(np.float32) / 255.0
         mask = np.expand_dims(mask, -1)
         return img, mask
 
     def _load_pair_tf(img_path, mask_path):
+        # Use numpy loader via numpy_function to preserve current behavior and avoid adding dependencies
         img, mask = tf.numpy_function(_load_pair, [img_path, mask_path], [tf.float32, tf.float32])
         img.set_shape([None, None, 3])
         mask.set_shape([None, None, 1])

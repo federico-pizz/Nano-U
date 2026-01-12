@@ -115,20 +115,30 @@ def prepare_data(config_path="config/config.yaml"):
         print(f"  Found {count} pairs (scanned {len(img_files)} images).")
         dataset_idx += 1
 
-    # Shuffle and Split
-    random.seed(config["training"]["seed"])
-    random.shuffle(all_pairs)
-    
+    # Sequential Split per dataset (preserve temporal order within each video/dataset)
+    # We split each dataset independently to avoid leaking adjacent frames between splits.
     splits = config["data"]["split"]
-    n_total = len(all_pairs)
-    n_train = int(n_total * splits["train"])
-    n_val = int(n_total * splits["validation"])
-    # Rest to test
+    train_pairs = []
+    val_pairs = []
+    test_pairs = []
 
-    train_pairs = all_pairs[:n_train]
-    val_pairs = all_pairs[n_train:n_train+n_val]
-    test_pairs = all_pairs[n_train+n_val:]
-    
+    # Group by dataset name while preserving original order
+    ds_names = []
+    for p in all_pairs:
+        if p["ds_name"] not in ds_names:
+            ds_names.append(p["ds_name"])
+
+    for ds in ds_names:
+        ds_pairs = [p for p in all_pairs if p["ds_name"] == ds]
+        n = len(ds_pairs)
+        n_train = int(n * splits["train"]) if n > 0 else 0
+        n_val = int(n * splits["validation"]) if n > 0 else 0
+
+        train_pairs.extend(ds_pairs[:n_train])
+        val_pairs.extend(ds_pairs[n_train:n_train + n_val])
+        test_pairs.extend(ds_pairs[n_train + n_val:])
+
+    n_total = len(all_pairs)
     print(f"Total pairs: {n_total}")
     print(f"Split: Train={len(train_pairs)}, Val={len(val_pairs)}, Test={len(test_pairs)}")
 

@@ -2,201 +2,120 @@
 
 ## Overview
 
-This repository contains the implementation and extensions of the Nano-U model, developed as part of my thesis at the University of Padua, Department of Information Engineering (DEI). The project focuses on efficient semantic segmentation for estimating traversable ground in outdoor environments, optimized for resource-constrained microcontrollers like the ESP32.
+This repository contains the TensorFlow re-implementation and extensions of the Nano-U model (thesis project). The goal is on-device binary semantic segmentation (traversable ground) for resource-constrained platforms such as the ESP32.
 
-Key features:
-- Lightweight CNN model for on-device inference.
-- Extensions including Rust-based embeddings, model retraining, and code refinements.
-- Integration with MicroFlow library for microcontroller deployment.
+Key points:
+- Lightweight segmentation model optimized for microcontrollers.
+- Full TensorFlow training, quantization and inference pipeline in `src/`.
+- Legacy artifacts and a previous MicroFlow/Rust implementation are preserved in `old/` for reference.
+- A Rust-based conversion step (TFLite -> MicroFlow/Rust) is expected to live under `rust/convert_tflite_to_microflow/` (placeholder).
 
-Thesis details:
-- **Author**: Federico Pizzolato
-- **Supervisor**: Prof. Nicola Bellotto
-- **Co-Supervisor**: Francesco Pasti
-- **Academic Year**: 2024/2025
+## Quick links
+- Config: [`config/config.yaml`](config/config.yaml:1)
+- Training script: [`src/train_tf.py`](src/train_tf.py:1)
+- Quantization / TFLite export: [`src/quantize_tf.py`](src/quantize_tf.py:1)
+- Inference (TF): [`src/infer_tf.py`](src/infer_tf.py:1)
+- Data preparation: [`src/prepare_data.py`](src/prepare_data.py:1)
+- Data utilities: [`src/utils/data_tf.py`](src/utils/data_tf.py:1)
+- Old project (PyTorch / MicroFlow examples): [`old/`](old/:1)
 
-## Problem and Motivations
+## Project structure (high-level)
+- [`config/config.yaml`](config/config.yaml:1) — Pipeline and model configuration (input shape, dataset paths, training and quantization settings).
+- [`src/`] — TensorFlow implementation: training, quantization, inference, data preparation and utilities.
+- [`models/`] — (created at runtime) trained Keras models and converted TFLite artifacts.
+- [`notebooks/`] — experimental notebooks (retraining experiments).
+- [`old/`] — previous project code and MicroFlow examples kept for reference.
+- [`rust/convert_tflite_to_microflow/`] — placeholder for the Rust converter (to be added by user).
 
-Semantic segmentation in outdoor environments is challenging due to variability in terrain, lighting, and obstacles. This project addresses:
+## Quickstart
 
-- **Why is it a complex problem?**  
-  [Briefly describe the complexities, e.g., real-time processing, diverse outdoor scenes. Include motivations from slide 2.]
+1. Create a Python virtual environment and install dependencies (recommended `.venv-tf` for TensorFlow):
 
-- **Why on microcontrollers?**  
-  [Explain the need for edge computing on low-power devices like ESP32 for robotic navigation. Reference motivations from slide 2.]
+```bash
+python -m venv .venv-tf
+source .venv-tf/bin/activate
+pip install -r [`requirements.txt`](requirements.txt:1)
+```
 
-## Objectives and Contributions
+2. Configure dataset paths in [`config/config.yaml`](config/config.yaml:1).
 
-### Objectives
-- Estimate traversable ground "on-device".
-- Adhere to ESP32 resource constraints.
-- Maintain sufficient quality for autonomous navigation.
+3. Prepare data (resizes, sequential splits):
 
-### Contributions
-- **Nano-U**: A CNN model for segmentation.
-- Evaluation of compression techniques' effectiveness.
-- Extension of the MicroFlow library.
+```bash
+python [`src/prepare_data.py`](src/prepare_data.py:1) --config config/config.yaml
+```
 
-## Design of Nano-U
+4. Train model (example for Nano_U). The project supports running the training script directly or as a module; prefer `python -m src.train_tf` when using the package context:
 
-Nano-U is derived from a standard U-Net architecture, optimized for efficiency:
+```bash
+# Direct run (works thanks to import guard):
+python src/train_tf.py --config config/config.yaml --model nano_u
 
-- **BU-Net**: Standard U-Net, effective but resource-intensive.
-- **Nano-U**: Applies compound scaling and removes skip layers.
-- **Training**: Uses knowledge distillation.
-- **Nano-U in int8**: Conversion from PyTorch to TensorFlow, followed by post-training quantization (PTQ calibrated).
+# Or module run (recommended):
+python -m src.train_tf --config config/config.yaml --model nano_u
+```
 
-[Include diagrams or flowcharts from slide 4, e.g., training/validation loss graphs.]
+For knowledge distillation (train student with a pretrained teacher):
 
-## Implementation in MicroFlow
+```bash
+python [`src/train_tf.py`](src/train_tf.py:1) --config config/config.yaml --model nano_u --distill --teacher-weights models/bu_net_tf_best.keras
+```
 
-- **Pre-processing and Input Handling**: [Describe input pre-processing steps.]
-- **MicroFlow Features**:
-  - Inference engine.
-  - Static allocations.
-  - Isolated kernels.
-  - Essential TFLite operators.
-  - Support for RESIZE BILINEAR operator.
+5. Convert trained Keras model to TFLite (optional INT8 quantization):
 
-[Add details on how the model is deployed on microcontrollers. Mention any extensions you've made.]
+```bash
+python [`src/quantize_tf.py`](src/quantize_tf.py:1) --config config/config.yaml --model-path models/nano_u_tf_best.keras --int8
+```
 
-### Rust Embeddings Extension
-[Placeholder for your additions: Describe the integration of embeddings in Rust, why Rust was chosen (e.g., performance, safety), and how it interfaces with the existing Python/TensorFlow code.]
+6. Run TensorFlow inference on validation set:
 
-### Model Retraining
-[Placeholder: Detail the retraining process, including new datasets, hyperparameters, and improvements over the original model.]
+```bash
+python [`src/infer_tf.py`](src/infer_tf.py:1) --config config/config.yaml --weights models/nano_u_tf_best.keras
+```
 
-### Code Refinements
-[Placeholder: List general code improvements, such as optimizations, bug fixes, or modularization.]
+The scripts are intentionally CLI-friendly and read settings from [`config/config.yaml`](config/config.yaml:1). Override parameters via CLI flags when necessary.
 
-## Dataset and Experiments
+## Quantization and TFLite
 
-- **Datasets Used**: [Describe datasets like Crops and Tomatoes from slide 6. Mention any new datasets added during retraining.]
-- **Experiments**: Predictions on complex (e.g., Crops) and simpler (e.g., Tomatoes) frames.
+- INT8 conversion uses a representative dataset (validation split) for calibration. Settings live under the `quantization` section of [`config/config.yaml`](config/config.yaml:1).
+- Output TFLite files are written to `models/` by default. Use [`src/quantize_tf.py`](src/quantize_tf.py:1) to customize input/output types and supported ops.
 
-[Include example predictions or tables comparing model outputs.]
+## Rust / MicroFlow conversion (placeholder)
 
-### Data layout (actual folders in this repository)
+A conversion step from TFLite to a Rust/MicroFlow inference artifact is expected. This repository currently assumes that a folder such as [`rust/convert_tflite_to_microflow/README.md`](rust/convert_tflite_to_microflow/README.md:1) will be added later with details.
 
-This repo already contains several data directories and processed data. Key locations:
+Expected inputs for that converter:
+- TFLite model file (e.g., `models/nano_u_int8.tflite`)
+- Optional metadata (input shape, mean/std normalization)
 
-- `data/csv/` — CSV annotations and line points (e.g., `line_points_cs1.csv`, `line_points_ts1.csv`).
-- `data/masks/` — Raw mask folders used during preprocessing and training. Subfolders include `Crops/` and `Tomatoes/` with `scene1/` and `scene2/`.
-- `data/processed/` — Processed datasets used for training/validation/testing; contains `train/`, `val/`, `test/` each with `img/` and `mask/`.
-- `data/TinyAgri/` — Additional dataset copies organized by `Crops/` and `Tomatoes/`.
+Expected outputs:
+- Rust crate or library wrapping MicroFlow inference kernels
+- Static binary or firmware artifacts for flashing to ESP32
 
-When adding more raw datasets, place them under `data/raw/` (new folder) and update `config/config.yaml` paths accordingly.
+NOTE: Paste your Rust conversion folder under `rust/convert_tflite_to_microflow/` when available; this README contains placeholders and will be linked from here.
 
-## Results
+## Deploying to ESP32 / Microcontrollers
 
-The repository contains recorded cross-validation metrics and saved model files. Below are the values discovered in this repository (no external measurements were modified).
+This project targets small devices; previously working examples using MicroFlow are kept in [`old/MicroFlow_implementation/`](old/MicroFlow_implementation/:1) and an ESP flash example in [`old/esp-flash/`](old/esp-flash/:1). When the Rust converter is added it should document required toolchains (cargo, xtensa toolchain or espidf) and flashing steps.
 
-### Recorded evaluation metrics (BU-Net cross-validation, 5 folds)
+## Reproducibility notes
 
-- Average Train Loss: 0.2354
-- Average Train Accuracy: 0.9326
-- Average Validation Loss: 0.2601
-- Average Validation Accuracy: 0.9218
-- Best Validation Accuracy: 0.9312
+- The pipeline reads paths and hyperparameters from [`config/config.yaml`](config/config.yaml:1). Seed is set in training config.
+- Data normalization: configured in [`config/config.yaml`](config/config.yaml:1) and applied consistently by [`src/utils/data_tf.py`](src/utils/data_tf.py:1).
+- If you need to reproduce results exactly, export the `models/` directory after training and include the exact `config/config.yaml` used.
 
-These values are taken from `data/metrics/BU_Net_cv_metrics.txt` included in the repository.
+## Legacy / Reference
 
-### Available model files and sizes (on-disk)
+- Old PyTorch training and helper scripts are under [`old/`](old/:1) for reference during migration. In particular see [`old/pytorch-tflite-quant.py`](old/pytorch-tflite-quant.py:1) and [`old/model_training.py`](old/model_training.py:1).
 
-| Model file | Size |
-|------------|------:|
-| `BU_Net.pth` | 130 MB |
-| `Nano-U_try.pth` | 421 KB |
-| `Nano_U.pth` | 416 KB |
-| `Nano_U_2L.pth` | 416 KB |
-| `Nano_U_3L.pth` | 1.5 MB |
-| `Nano_U.tflite` | 189 KB |
-| `Nano_U_int8.tflite` | 184 KB |
-| `temp_model.pth` | 422 KB |
+## Contribution
 
-If you want additional runtime measurements (inference time, IoU on specific test splits), run the inference scripts in `src/` against `data/processed/test/img/` and collect outputs in `results/predictions/`.
-
-## Conclusions and Future Work
-
-On-device ground segmentation is feasible with good accuracy, lightweight models, and minimal runtime footprint.
-
-### Future Projects
-- More varied datasets.
-- Use Neural Architecture Search (NAS) techniques.
-- Experiment with advanced quantizations like f4 (further MicroFlow extension).
-
-### Possible Applications
-- Outdoor robotic navigation (thesis goal).
-- Agricultural monitoring (with microcontrollers).
-- Surveillance of "no-go" areas (unstructured environments).
-
-[Add any new conclusions from your extensions.]
-
-## Installation
-
-### Prerequisites
-- Python 3.x
-- Rust (for embeddings extension)
-- [List libraries: e.g., PyTorch, TensorFlow, TensorFlow Lite, etc.]
-- ESP32 development tools (if deploying on hardware)
-
-### Setup
-1. Clone the repository:
-  git clone https://github.com/yourusername/nano-u-repo.git
-  cd nano-u-repo
-
-2. Install Python dependencies:
-   pip install -r requirements.txt
-
-3. For Rust components:
-   cargo build --release
-
-[Add hardware setup instructions for ESP32 if applicable.]
-
-## Usage
-
-### Running the Model
-[Provide example commands, e.g.:]
-python scripts/train.py --dataset path/to/dataset
-python scripts/infer.py --model path/to/model.tflite --image path/to/test_image.png
-
-
-### Deploying on ESP32
-[Describe steps to flash the model using MicroFlow.]
-
-### Example Output
-[Placeholder for sample segmentation results.]
-
-## Contributing
-
-Contributions are welcome! Please follow these steps:
-1. Fork the repository.
-2. Create a feature branch (`git checkout -b feature/YourFeature`).
-3. Commit your changes (`git commit -m 'Add some feature'`).
-4. Push to the branch (`git push origin feature/YourFeature`).
-5. Open a Pull Request.
-
-[Add any specific guidelines, e.g., coding standards.]
+Contributions are welcome. Please follow the standard GitHub workflow (fork, feature branch, PR). Keep changes to configuration and model artifacts well documented.
 
 ## License
 
-This project is licensed under the MIT License — see the top-level `LICENSE` file for the full text.
+This project is MIT licensed — see [`LICENSE`](LICENSE:1).
 
-License highlights:
+---
 
-- Permission is granted to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software.
-- The copyright notice and permission notice must be included in all copies or substantial portions of the Software.
-
-Recommended citation (please include when using or building on this work):
-
-  federico-pizz, "Nano-U" repository, GitHub, 2025. Example: https://github.com/federico-pizz/Nano-U
-
-If you prefer a different citation format, update the `LICENSE` file accordingly.
-
-## Acknowledgments
-
-- University of Padua, DEI.
-- Prof. Nicola Bellotto and Francesco Pasti for supervision.
-- [Any other credits, e.g., libraries or datasets used.]
-
-[Feel free to add badges, e.g., for build status or coverage if you set them up.]
+Last updated: concise README with TensorFlow pipeline and placeholder for Rust conversion. Please paste the Rust conversion folder under `rust/convert_tflite_to_microflow/` and I will update the README to include exact conversion and flashing steps.

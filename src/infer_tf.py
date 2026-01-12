@@ -12,9 +12,14 @@ from src.utils.config import load_config
 
 
 def load_model_by_path(model_path):
-    # If a saved compiled model is provided
-    if os.path.isfile(model_path) and (model_path.endswith('.keras') or model_path.endswith('.h5')):
-        return keras.models.load_model(model_path, compile=False)
+    # Robust model loading with clearer errors
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model file not found: {model_path}")
+    if model_path.endswith('.keras') or model_path.endswith('.h5'):
+        try:
+            return keras.models.load_model(model_path, compile=False)
+        except Exception as e:
+            raise RuntimeError(f"Failed loading model at {model_path}: {e}")
     raise ValueError(f"Unsupported model file: {model_path}")
 
 def build_model_from_config(name: str, config: dict):

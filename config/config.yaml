@@ -56,12 +56,12 @@ models:
     bottleneck: 2048
     decoder_filters: [1024, 512, 256, 128, 64]
     
-  # Student Model (Nano_U) - Lightweight AutoEncoder-like
+  # Student Model (Nano_U) - Ultra-light model for embedded deployment
   nano_u:
     input_shape: [48, 64, 3]
-    filters: [32, 64, 128] # Encoder filters
-    bottleneck: 128
-    decoder_filters: [64, 32]
+    filters: [8, 16, 32] # Encoder filters (reduced)
+    bottleneck: 32
+    decoder_filters: [16, 8]
 
 
 # Training Hyperparameters
@@ -92,7 +92,7 @@ training:
     # Knowledge Distillation settings
     distillation:
       enabled: true
-      teacher_weights: "models/bu_net_final.keras" 
+      teacher_weights: "models/bu_net_best.keras" 
       alpha: 0.5        # Weight for student loss (1-alpha for teacher loss)
       temperature: 3.0  # Slightly softer distribution for better knowledge transfer
 
