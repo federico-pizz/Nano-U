@@ -7,7 +7,7 @@ from tensorflow import keras
 from src.utils import get_project_root
 from src.models.Nano_U.model_tf import build_nano_u
 from src.models.BU_Net.model_tf import build_bu_net
-from src.utils.data_tf import make_dataset
+from src.utils.data import make_dataset
 from src.utils.config import load_config
 
 
@@ -44,7 +44,7 @@ def build_model_from_config(name: str, config: dict):
     else:
         raise ValueError(f"Unknown model name: {name}")
 
-def infer_tf(model_name="nano_u", weights_path=None, batch_size=None, config_path="config/config.yaml"):
+def infer(model_name="nano_u", weights_path=None, batch_size=None, config_path="config/config.yaml"):
     config = load_config(config_path)
     root_dir = str(get_project_root())
     
@@ -108,4 +108,4 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=None)
     args = parser.parse_args()
 
-    infer_tf(args.model_name, args.weights, args.batch_size, args.config)
+    infer(args.model_name, args.weights, args.batch_size, args.config)

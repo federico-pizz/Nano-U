@@ -64,3 +64,13 @@ Cargo.lock
 *.mp4
 *.tif
 *.tiff
+# Rust subproject esp_flash
+esp_flash/target/
+esp_flash/debug/
+esp_flash/.vscode/
+esp_flash/.venv/
+esp_flash/venv/
+esp_flash/input_data/
+esp_flash/output_data/
+esp_flash/.cargo/
+models/*.tflite

@@ -4,14 +4,14 @@ import argparse
 import tensorflow as tf
 from tensorflow import keras
 
-# Allow running the script directly (python src/quantize_tf.py)
+# Allow running the script directly (python src/quantize.py)
 # If executed directly, add project root so imports from `src` work.
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.utils import get_project_root
 from src.utils.config import load_config
-from src.utils.data_tf import make_dataset
+from src.utils.data import make_dataset
 
 def convert_to_tflite(model_path, out_path=None, int8=False, config=None):
     model = keras.models.load_model(model_path, compile=False)

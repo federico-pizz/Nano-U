@@ -1,0 +1,30 @@
+# Rust
+target/
+debug/
+**/*.rs.bk
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Project specific generated files
+input_data/
+output_data/
+models/*.tflite
+
+# Editor / IDE
+.vscode/
+.idea/
+.zed/
+.helix/
+.nvim.lua
+*.swp
+*.swo
+.DS_Store

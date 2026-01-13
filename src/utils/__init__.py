@@ -1,7 +1,7 @@
 import os
 
-from .data_tf import make_dataset
-from .metrics_tf import BinaryIoU
+from .data import make_dataset
+from .metrics import BinaryIoU
 
 def get_project_root():
     # From src/utils/__init__.py, go up: utils -> src -> project_root

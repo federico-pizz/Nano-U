@@ -1,4 +1,4 @@
-"""train_tf.py
+"""train.py
 Lightweight training entrypoint for Nano-U models.
 
 Overview for non-TensorFlow developers:
@@ -10,7 +10,7 @@ Overview for non-TensorFlow developers:
   (raw scores) and the code applies sigmoid where needed to get probabilities.
 
 Key design notes:
-- Keep file I/O and dataset construction outside model code (see src/utils/data_tf.py).
+- Keep file I/O and dataset construction outside model code (see src/utils/data.py).
 - Metrics operate on probabilities (sigmoid applied internally where appropriate).
 """
 
@@ -21,7 +21,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-# Allow running the script directly (python src/train_tf.py)
+# Allow running the script directly (python src/train.py)
 # If executed directly, add project root so absolute imports from `src` work.
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -186,7 +186,7 @@ def build_model_from_config(name: str, config: dict):
         raise ValueError(f"Unknown model name: {name}")
 
 
-def train_tf(model_name="nano_u", epochs=None, batch_size=None, lr=None,
+def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
              distill=False, teacher_weights=None, alpha=None, temperature=None,
              augment=True, config_path="config/config.yaml"):
     
@@ -331,7 +331,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-augment", action="store_true")
     args = parser.parse_args()
 
-    train_tf(
+    train(
         model_name=args.model,
         epochs=args.epochs,
         batch_size=args.batch_size,
