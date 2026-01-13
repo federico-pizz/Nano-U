@@ -82,12 +82,14 @@ fi
 QUANT_SCRIPT="src/quantize.py"
 if [ -f "$QUANT_SCRIPT" ]; then
   shopt -s nullglob
-  for K in models/*.keras models/*_final.keras models/*_best.keras; do
+  # Quantize models with .keras or .h5 extensions
+  for K in models/*.keras models/*.h5; do
     [ -f "$K" ] || continue
-    BASENAME=$(basename "$K" .keras)
+    BASENAME=$(basename "$K")
+    BASENAME="${BASENAME%.*}"
     OUT="models/${BASENAME}.tflite"
     echo "[tf_pipeline] Quantizing $K -> $OUT"
-    "$PYTHON_BIN" "$QUANT_SCRIPT" "$K" "$OUT" || echo "[tf_pipeline] Quantize failed for $K"
+    "$PYTHON_BIN" "$QUANT_SCRIPT" --model-name "$BASENAME" --output "$OUT" --int8 --config "config/config.yaml" || echo "[tf_pipeline] Quantize failed for $K"
   done
   shopt -u nullglob
 else
@@ -98,10 +100,15 @@ fi
 EVAL_SCRIPT="src/evaluate.py"
 if [ -f "$EVAL_SCRIPT" ]; then
   shopt -s nullglob
+  # Create results/eval folder
+  mkdir -p results/eval
   for TFL in models/*.tflite; do
     [ -f "$TFL" ] || continue
-    echo "[tf_pipeline] Evaluating model: $TFL"
-    "$PYTHON_BIN" "$EVAL_SCRIPT" "$TFL" || echo "[tf_pipeline] Evaluation failed for $TFL"
+    BASENAME=$(basename "$TFL")
+    BASENAME="${BASENAME%.*}"
+    OUT_PNG="results/eval/${BASENAME}_eval.png"
+    echo "[tf_pipeline] Evaluating model: $TFL -> $OUT_PNG"
+    "$PYTHON_BIN" "$EVAL_SCRIPT" --model-name "$BASENAME" --out "$OUT_PNG" || echo "[tf_pipeline] Evaluation failed for $TFL"
   done
   shopt -u nullglob
 else

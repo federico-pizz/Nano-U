@@ -52,7 +52,7 @@ def focal_loss_from_logits(y_true, logits, gamma=2.0, alpha=0.25):
     return tf.reduce_mean(loss)
 
 
-def evaluate_and_plot(model_path, config_path, batch_size=8, threshold=0.5, samples_to_plot=6, out_path=None):
+def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samples_to_plot=6, out_path=None):
     config = load_config(config_path)
     root_dir = str(get_project_root())
 
@@ -110,10 +110,22 @@ def evaluate_and_plot(model_path, config_path, batch_size=8, threshold=0.5, samp
 
     test_ds = make_dataset(test_imgs, test_masks, batch_size=batch_size, shuffle=False, augment=False, mean=mean, std=std)
 
-    # If model_path is not provided, default to quantized nano-u TFLite model next to models_dir
+    # Resolve model by name (prefer .tflite, then .keras/.h5)
+    models_dir = resolve_path(config['data']['paths']['models_dir'])
+    candidates = [
+        os.path.join(models_dir, f"{model_name}.tflite"),
+        os.path.join(models_dir, f"{model_name}.keras"),
+        os.path.join(models_dir, f"{model_name}.h5"),
+    ]
+
+    model_path = None
+    for c in candidates:
+        if os.path.exists(c):
+            model_path = c
+            break
+
     if model_path is None:
-        models_dir = resolve_path(config['data']['paths']['models_dir'])
-        model_path = os.path.join(models_dir, 'nano_u_tf_best.tflite')
+        raise FileNotFoundError(f'Model not found. Checked: {candidates}')
 
     if not os.path.exists(model_path):
         raise FileNotFoundError(f'Model not found: {model_path}')
@@ -309,12 +321,12 @@ def evaluate_and_plot(model_path, config_path, batch_size=8, threshold=0.5, samp
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='config/config.yaml')
-    parser.add_argument('--model-path', required=False, default=None,
-                        help='Path to model (.keras or .tflite). If omitted, uses quantized nano_u TFLite in models dir')
+    parser.add_argument('--model-name', required=False, default='nano_u',
+                        help='Model basename (without extension). Script will locate .tflite/.keras/.h5 in models dir')
     parser.add_argument('--batch-size', type=int, default=8)
     parser.add_argument('--threshold', type=float, default=0.5)
     parser.add_argument('--samples', type=int, default=6)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
 
-    evaluate_and_plot(args.model_path, args.config, batch_size=args.batch_size, threshold=args.threshold, samples_to_plot=args.samples, out_path=args.out)
+    evaluate_and_plot(args.model_name, args.config, batch_size=args.batch_size, threshold=args.threshold, samples_to_plot=args.samples, out_path=args.out)

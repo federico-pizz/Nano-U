@@ -203,10 +203,12 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
     # Distillation params
     if distill:
         distill_cfg = train_cfg.get("distillation", {})
-        if alpha is None: alpha = distill_cfg.get("alpha", 0.5)
-        if temperature is None: temperature = distill_cfg.get("temperature", 2.0)
+        # Favor teacher more by default: lower alpha means student relies more on distillation loss
+        if alpha is None: alpha = distill_cfg.get("alpha", 0.3)
+        # Higher temperature softens teacher probabilities to provide richer gradients
+        if temperature is None: temperature = distill_cfg.get("temperature", 3.0)
         if teacher_weights is None: teacher_weights = distill_cfg.get("teacher_weights", None)
-            
+        
     # Resolve relative path for teacher weights if needed
     if teacher_weights and not os.path.exists(teacher_weights):
          root_teacher = os.path.join(str(get_project_root()), teacher_weights)
@@ -262,7 +264,8 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
 
     models_dir = resolve_path(config["data"]["paths"]["models_dir"])
     if not os.path.exists(models_dir): os.makedirs(models_dir)
-    ckpt_path = os.path.join(models_dir, f"{model_name}_tf_best.keras")
+    # Use a single canonical model filename (no '_tf' suffix) and overwrite the best/final into this file.
+    ckpt_path = os.path.join(models_dir, f"{model_name}.keras")
 
     print(f"Starting training for {model_name}...")
     print(f"Epochs: {epochs}, Batch Size: {batch_size}, LR: {lr}, Distill: {distill}")
@@ -295,7 +298,8 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
         model = student_model
         model.compile(optimizer=optimizer, loss=bce_loss, metrics=[iou_metric])
         callbacks = [
-            tf.keras.callbacks.ModelCheckpoint(filepath=ckpt_path, save_best_only=True, monitor="val_binary_iou", mode="max"),
+            # Save the best model to a single canonical path (overwrite previous).
+            tf.keras.callbacks.ModelCheckpoint(filepath=ckpt_path, save_best_only=True, monitor="val_binary_iou", mode="max", save_weights_only=False),
             tf.keras.callbacks.ReduceLROnPlateau(monitor="val_binary_iou", mode="max", factor=0.5, patience=10, min_lr=1e-6, verbose=1),
             tf.keras.callbacks.EarlyStopping(monitor="val_binary_iou", mode="max", patience=20, restore_best_weights=True)
         ]
@@ -308,12 +312,12 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
         callbacks=callbacks
     )
 
-    final_path = os.path.join(models_dir, f"{model_name}_tf_final.keras")
+    # Ensure final student/model saved to the canonical path (may overwrite; ModelCheckpoint already saved best)
     if distill:
-        model.student.save(final_path)
+        model.student.save(ckpt_path)
     else:
-        model.save(final_path)
-        
+        model.save(ckpt_path)
+
     return model, history
 
 

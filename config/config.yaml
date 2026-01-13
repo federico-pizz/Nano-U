@@ -67,11 +67,11 @@ models:
 # Training Hyperparameters
 training:
   # General settings
-  seed: 42
+  seed: 24
   
   # Teacher (BU_Net) training config
   bu_net:
-    epochs: 150
+    epochs: 100
     batch_size: 16
     learning_rate: 1e-4
     weight_decay: 1e-3
@@ -81,8 +81,8 @@ training:
 
   # Student (Nano_U) training config
   nano_u:
-    epochs: 150 
-    batch_size: 16
+    epochs: 100 
+    batch_size: 8
     learning_rate: 1e-4
     weight_decay: 1e-3
     optimizer: "adamw"
@@ -92,9 +92,9 @@ training:
     # Knowledge Distillation settings
     distillation:
       enabled: true
-      teacher_weights: "models/bu_net_best.keras" 
-      alpha: 0.5        # Weight for student loss (1-alpha for teacher loss)
-      temperature: 3.0  # Slightly softer distribution for better knowledge transfer
+      teacher_weights: "models/bu_net.keras"
+      alpha: 0.3        # Weight for student loss (1-alpha for teacher loss); lower => more teacher influence
+      temperature: 4.0  # Higher temperature to soften teacher distribution for richer distillation gradients
 
 
 # Quantization settings (TFLite)

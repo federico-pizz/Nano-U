@@ -112,29 +112,40 @@ def convert_to_tflite(model_path, out_path=None, int8=False, config=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert Keras model to TFLite format")
     parser.add_argument("--config", type=str, default="config/config.yaml")
-    parser.add_argument("--model-path", type=str, default=None, help="Path to .keras model file")
-    parser.add_argument("--model-name", type=str, default="nano_u", choices=["nano_u", "bu_net"], help="Model name to auto-find")
+    parser.add_argument("--model-name", type=str, default="nano_u",
+                        help="Model name (basename without extension) to locate in models_dir")
     parser.add_argument("--int8", action="store_true", help="Enable INT8 quantization")
     parser.add_argument("--output", type=str, default=None, help="Output TFLite path")
     args = parser.parse_args()
-    
+
     config = load_config(args.config)
     root_dir = str(get_project_root())
-    
-    model_path = args.model_path
-    if not model_path:
-        # Try to find from config models_dir
-        models_dir = config["data"]["paths"]["models_dir"]
-        if not os.path.isabs(models_dir):
-            models_dir = os.path.join(root_dir, models_dir)
-        model_path = os.path.join(models_dir, f"{args.model_name}_tf_best.keras")
-    
-    if not os.path.exists(model_path):
-        print(f"Error: Model not found at {model_path}")
+
+    model_name = args.model_name
+    # Resolve models directory from config
+    models_dir = config["data"]["paths"]["models_dir"]
+    if not os.path.isabs(models_dir):
+        models_dir = os.path.join(root_dir, models_dir)
+
+    # Candidate model filenames (common extensions / naming)
+    candidates = [
+        os.path.join(models_dir, f"{model_name}.keras"),
+        os.path.join(models_dir, f"{model_name}_tf_best.keras"),
+        os.path.join(models_dir, f"{model_name}.h5"),
+    ]
+
+    model_path = None
+    for c in candidates:
+        if os.path.exists(c):
+            model_path = c
+            break
+
+    if model_path is None:
+        print(f"Error: Model not found. Checked candidates: {candidates}")
         exit(1)
-    
+
     # Use output path from args or default next to model
     output_path = args.output
-    
-    # If int8 is requested via CLI, ensure we pass config
+
+    # Perform conversion
     convert_to_tflite(model_path, out_path=output_path, int8=args.int8, config=config)
