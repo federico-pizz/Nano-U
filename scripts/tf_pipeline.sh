@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # TF automation pipeline — assumes an existing Python venv at .venv-tf.
-# Automates: image prep, training (two models), quantization and evaluation.
+# Automates: data prep, model build, training (two models), quantization, inference and evaluation.
 # Usage: ./scripts/tf_pipeline.sh
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -11,6 +11,7 @@ cd "$ROOT"
 VENV_DIR=".venv-tf"
 PYTHON_BIN="$VENV_DIR/bin/python"
 PIP_CMD=("$PYTHON_BIN" -m pip)
+SRC_DIR="src"
 
 echo "[tf_pipeline] Working in: $ROOT"
 
@@ -50,36 +51,32 @@ fi
 # Ensure models dir
 mkdir -p models
 
-# --- Step 1: Image prep ---
-if [ -f gen_image.py ]; then
-  echo "[tf_pipeline] Generating sample input image (gen_image.py)"
-  "$PYTHON_BIN" gen_image.py || echo "[tf_pipeline] gen_image.py failed"
-else
-  echo "[tf_pipeline] gen_image.py not found — skipping image prep"
-fi
+# Data prep removed by request — skipping
 
 # --- Step 2: Build tiny INT8 model ---
-if [ -f build_net.py ]; then
-  echo "[tf_pipeline] Building tiny INT8 model (build_net.py)"
-  "$PYTHON_BIN" build_net.py || echo "[tf_pipeline] build_net.py failed"
+if [ -f "$SRC_DIR/build_net.py" ]; then
+  echo "[tf_pipeline] Building tiny INT8 model ($SRC_DIR/build_net.py)"
+  "$PYTHON_BIN" "$SRC_DIR/build_net.py" || echo "[tf_pipeline] build_net.py failed"
 else
-  echo "[tf_pipeline] build_net.py not found — skipping tiny model generation"
+  echo "[tf_pipeline] $SRC_DIR/build_net.py not found — skipping tiny model generation"
 fi
 
-# --- Step 3: Train models ---
-TRAIN_SCRIPT="src/train.py"
+# --- Step 3: Train models (run bu_net then nano_u with distillation) ---
+TRAIN_SCRIPT="$SRC_DIR/train.py"
 if [ -f "$TRAIN_SCRIPT" ]; then
-  for MODEL_NAME in bu_net nano_u; do
-    echo "[tf_pipeline] Training model: $MODEL_NAME"
-    # Provide MODEL env var; training script should read it or fallback
-    MODEL="$MODEL_NAME" "$PYTHON_BIN" "$TRAIN_SCRIPT" || echo "[tf_pipeline] Training $MODEL_NAME failed"
-  done
+  echo "[tf_pipeline] Training model: bu_net"
+  # Call train.py with explicit CLI args to avoid relying on environment variables
+  "$PYTHON_BIN" "$TRAIN_SCRIPT" --model bu_net || echo "[tf_pipeline] Training bu_net failed"
+
+  echo "[tf_pipeline] Training model: nano_u (distillation from bu_net)"
+  # Pass the teacher weights path so train.py can load the teacher for distillation
+  "$PYTHON_BIN" "$TRAIN_SCRIPT" --model nano_u --distill --teacher-weights "models/bu_net.keras" || echo "[tf_pipeline] Training nano_u failed"
 else
   echo "[tf_pipeline] Training script $TRAIN_SCRIPT not found — skipping training"
 fi
 
 # --- Step 4: Quantization ---
-QUANT_SCRIPT="src/quantize.py"
+QUANT_SCRIPT="$SRC_DIR/quantize.py"
 if [ -f "$QUANT_SCRIPT" ]; then
   shopt -s nullglob
   # Quantize models with .keras or .h5 extensions
@@ -96,8 +93,24 @@ else
   echo "[tf_pipeline] Quantize script not found — skipping quantization"
 fi
 
-# --- Step 5: Evaluation ---
-EVAL_SCRIPT="src/evaluate.py"
+# --- Step 5: Inference (optional) ---
+INFER_SCRIPT="$SRC_DIR/infer.py"
+if [ -f "$INFER_SCRIPT" ]; then
+  shopt -s nullglob
+  echo "[tf_pipeline] Running inference on available models using $INFER_SCRIPT"
+  for M in models/*.tflite models/*.keras models/*.h5; do
+    [ -f "$M" ] || continue
+    echo "[tf_pipeline] Infer: $M"
+    # pass model path as first arg; infer.py should accept positional model path
+    "$PYTHON_BIN" "$INFER_SCRIPT" "$M" || echo "[tf_pipeline] Inference failed for $M"
+  done
+  shopt -u nullglob
+else
+  echo "[tf_pipeline] $INFER_SCRIPT not found — skipping inference"
+fi
+
+# --- Step 6: Evaluation ---
+EVAL_SCRIPT="$SRC_DIR/evaluate.py"
 if [ -f "$EVAL_SCRIPT" ]; then
   shopt -s nullglob
   # Create results/eval folder

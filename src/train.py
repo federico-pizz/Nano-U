@@ -51,7 +51,9 @@ class Distiller(keras.Model):
         self.teacher = teacher
 
     def compile(self, optimizer, metrics, student_loss_fn, distillation_loss_fn, alpha=0.5, temperature=2.0):
-        super(Distiller, self).compile(optimizer=optimizer, metrics=metrics)
+        # Store user metrics explicitly to avoid relying on Keras compiled_metrics() internals
+        self._user_metrics = list(metrics) if metrics is not None else []
+        super(Distiller, self).compile(optimizer=optimizer, metrics=self._user_metrics)
         self.student_loss_fn = student_loss_fn
         self.distillation_loss_fn = distillation_loss_fn
         self.alpha = alpha
@@ -62,13 +64,9 @@ class Distiller(keras.Model):
 
     @property
     def metrics(self):
+        # Return internal trackers first, then user-provided metrics so Keras can reset them.
         metrics = [self.total_loss_tracker, self.distillation_loss_tracker, self.student_loss_tracker]
-        if self.compiled_metrics is not None:
-            # Handle Keras internal metric wrapper
-            if hasattr(self.compiled_metrics, "metrics"):
-                metrics += self.compiled_metrics.metrics
-            elif isinstance(self.compiled_metrics, list):
-                metrics += self.compiled_metrics
+        metrics += list(getattr(self, "_user_metrics", []))
         return metrics
 
     def train_step(self, data):
@@ -95,7 +93,15 @@ class Distiller(keras.Model):
         self.student_loss_tracker.update_state(student_loss)
         self.distillation_loss_tracker.update_state(dist_loss)
         self.total_loss_tracker.update_state(loss)
-        self.compiled_metrics.update_state(y, student_predictions)
+
+        # Update user metrics directly to avoid deprecated compiled_metrics() calls in Keras internals
+        for m in getattr(self, "_user_metrics", []):
+            try:
+                m.update_state(y, student_predictions)
+            except Exception:
+                # Ignore metric update failures to avoid stopping training; log minimally
+                print(f"Warning: failed to update metric {m}")
+
         return {m.name: m.result() for m in self.metrics}
 
     # validation, keras wants the alias test_step
@@ -104,7 +110,13 @@ class Distiller(keras.Model):
         y_pred = self.student(x, training=False)
         student_loss = self.student_loss_fn(y, y_pred)
         self.total_loss_tracker.update_state(student_loss)
-        self.compiled_metrics.update_state(y, y_pred)
+
+        for m in getattr(self, "_user_metrics", []):
+            try:
+                m.update_state(y, y_pred)
+            except Exception:
+                print(f"Warning: failed to update metric {m} (validation)")
+
         return {m.name: m.result() for m in self.metrics}
     
     def call(self, x):

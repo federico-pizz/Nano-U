@@ -80,11 +80,22 @@ def main():
     # A short epoch to initialize weights; conversion uses the weights only.
     model.fit(x, y, epochs=1, batch_size=8, verbose=0)
 
-    out_dir = os.path.dirname(__file__)
-    # Small model output name
-    out_path = os.path.join(out_dir, "models/dummy5.tflite")
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    to_tflite_int8(model, out_path)
+    # Ensure output is placed into the repository-level models/ directory
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    out_dir = os.path.join(repo_root, "models")
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Save a Keras model artifact so downstream quantization can pick it up
+    keras_path = os.path.join(out_dir, "dummy5.keras")
+    try:
+        model.save(keras_path)
+        print(f"Saved Keras model to {keras_path}")
+    except Exception as e:
+        print(f"Failed to save Keras model to {keras_path}: {e}")
+
+    # Also export an INT8 TFLite for convenience
+    tflite_path = os.path.join(out_dir, "dummy5.tflite")
+    to_tflite_int8(model, tflite_path)
 
 
 if __name__ == "__main__":
