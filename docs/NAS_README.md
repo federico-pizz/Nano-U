@@ -1,52 +1,95 @@
-# NAS utilities in this project
+# NAS utilities and pipeline usage
 
-This document explains the NAS-related utilities added to the project and how to use them in the training pipeline.
+This document explains how the project's NAS utilities integrate into the Python
+TF pipeline (`scripts/tf_pipeline.py`) and gives concrete command examples.
 
 Overview
-- src/nas_covariance.py contains utilities to measure and regularize channel-level redundancy inside activation layers. The goal is to help Neural Architecture Search (NAS) or pruning decisions by quantifying how redundant channels are within a layer.
+- `src/nas_covariance.py`: core utilities (ActivationExtractor, RunningCovariance,
+  covariance_redundancy, FeatureDecorrelationRegularizer, DistillationAwareNAS).
+- `src/nas_analyze.py`: minimal analysis runner that computes redundancy scores
+  for a list of teacher layer names and writes JSON results.
+- `src/train_nas.py`: NAS-enabled training entrypoint that adds covariance-based
+  regularization into the training loop when requested.
+- `scripts/tf_pipeline.py`: orchestration CLI that wraps build/train/distill/analyze/quantize/infer/eval steps.
 
-Key components
-- ActivationExtractor
-  - Build a cached Keras Model that returns intermediate layer activations for a set of selected layer names or regex selectors.
-  - Use when you need to extract activations for regularization or distillation without rebuilding models repeatedly.
+Pipeline usage
 
-- _collapse_spatial_to_channels(x, data_format)
-  - Collapse spatial dims into a [B, C] matrix by averaging over spatial dimensions. Supports rank 2-5 tensors and both channels_last and channels_first formats.
+Activate the TF virtual environment before running the pipeline:
 
-- covariance_redundancy(activations, normalize=True, return_metrics=False)
-  - Computes a DeCov-style redundancy score. Higher means more redundancy.
-  - Optional return_metrics flag returns diagnostics such as trace, off_diagonal_norm and condition number.
+  source .venv-tf/bin/activate
 
-- FeatureDecorrelationRegularizer
-  - Keras regularizer wrapper exposing the redundancy penalty for use directly in layer regularizers.
-  - Supports warmup (linear scaling) to avoid penalizing early training.
+Run the pipeline commands via the Python CLI (no shell script required):
 
-- covariance_regularizer_loss
-  - Aggregates redundancy penalties across multiple activations (e.g., selected conv layers) with optional weighting and per-layer reporting.
+- Build models:
 
-- RunningCovariance
-  - TF-native Welford running covariance estimator useful for streaming or validation-set analysis.
-  - Exposes redundancy_score() computed from accumulated covariance.
+  python scripts/tf_pipeline.py build
 
-- DistillationAwareNAS
-  - Small helper to compute feature-matching losses between teacher and student models and analyze layer redundancy for NAS decisions.
+- Train a model (standard training):
 
-Usage patterns
-- Per-step regularization
-  - Create an ActivationExtractor for the set of layer names you want to regularize.
-  - During training, call extractor(inputs, training=True) to obtain activations and pass them to covariance_regularizer_loss.
-  - Add the returned scalar to your task loss with an appropriate multiplier.
+  python scripts/tf_pipeline.py train --model bu_net
 
-- Offline analysis for NAS/pruning
-  - Use DistillationAwareNAS.analyze_layer_importance with a validation dataset to get per-layer redundancy scores.
-  - Lower scores indicate less redundancy (more useful channels), higher scores indicate candidates for pruning.
+- Train with NAS-enabled regularization (uses `src/train_nas.py`):
+
+  python scripts/tf_pipeline.py train --model nano_u --enable-nas --nas-layers "/conv/" --nas-weight 0.01
+
+  Notes:
+  - `--enable-nas` will cause the pipeline to invoke `src/train_nas.py` instead
+    of the default `src/train.py`.
+  - `--nas-layers` accepts comma-separated layer selectors (exact names or
+    simple regex-wrapped selectors, e.g. `/conv_/`). If omitted, train_nas
+    defaults to a conservative selector set.
+
+- Distillation training (teacher -> student):
+
+  python scripts/tf_pipeline.py distill --model nano_u --teacher-weights models/bu_net.keras
+
+- Analyze layer redundancy with the minimal analyzer:
+
+  python scripts/tf_pipeline.py analyze --num-batches 50
+
+  The pipeline will invoke `src/nas_analyze.py` which writes JSON scores to the path
+  you pass via its --out argument when used directly.
+
+- Quantize a model (delegates to src/quantize.py):
+
+  python scripts/tf_pipeline.py quantize --model-name bu_net --output models/bu_net.tflite
+
+- Run inference on a model (delegates to src/infer.py):
+
+  python scripts/tf_pipeline.py infer models/bu_net.tflite
+
+- Evaluate a model (delegates to src/evaluate.py):
+
+  python scripts/tf_pipeline.py eval --model-name bu_net --out results/eval/bu_net_eval.png
+
+Implementation notes
+
+- The pipeline is intentionally lightweight and delegates heavy work to existing
+  modules in `src/` to avoid duplicating logic. The NAS-enabled trainer is
+  implemented as `src/train_nas.py` so the main `src/train.py` remains untouched.
+
+- `src/nas_analyze.py` is a minimal runner: for production analysis, replace the
+  synthetic dataset in the script with your validation dataset (or call the
+  script with a wrapper that constructs a real tf.data dataset).
+
+- Logging: scripts use Python logging. Replace or extend with the project's
+  logging facility in `src/utils/config.py` if required.
 
 Testing
-- Unit tests for core utilities are in tests/test_nas_covariance.py. Running tests requires a TF-enabled virtual environment.
 
-Notes and integration
-- Warnings are emitted with tf.print to avoid noisy stdout. If you prefer the project logger, replace tf.print calls with your logging facility.
-- The module removed inline examples to avoid accidental running. See the plans/nas_covariance_changelog.md for details.
+- Unit tests for NAS utilities live in `tests/test_nas_covariance.py`.
+- To exercise the pipeline in dry-run mode, run the commands above after
+  activating `.venv-tf`.
 
-Contact
-- If you need these utilities adapted to a different training loop or to support per-sample covariances, open an issue or assign to the maintainer.
+Troubleshooting
+
+- If `scripts/tf_pipeline.py` complains about a missing virtualenv, create one:
+
+  python3 -m venv .venv-tf
+  source .venv-tf/bin/activate
+  python -m pip install -r requirements.txt
+
+- If `src/train_nas.py` fails because helper functions are not exported from
+  `src/train.py`, implement small adapter helpers in `src/train.py` (e.g.
+  build_model, get_dataset, compile_and_train) or call `src/train.py` directly
+  with subprocess in the pipeline.
