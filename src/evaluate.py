@@ -198,9 +198,16 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
             if 'quantization' in in_det and in_det['quantization'] != (0.0, 0):
                 q_scale, q_zero = in_det['quantization']
 
+            # Prepare output dequantization info
+            out_det = output_details[0]
+            out_dtype = out_det['dtype']
+            out_qscale, out_qzero = (None, None)
+            if 'quantization' in out_det and out_det['quantization'] != (0.0, 0):
+                out_qscale, out_qzero = out_det['quantization']
+
             for i in range(imgs.shape[0]):
                 inp = imgs[i:i+1].numpy()
-                # quantize if needed
+                # quantize if needed for input
                 if in_dtype == np.int8 or in_dtype == np.uint8:
                     if q_scale is None:
                         raise RuntimeError('TFLite model expects quantized input but no quantization params found')
@@ -209,23 +216,36 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
                 else:
                     interpreter.set_tensor(in_index, inp.astype(in_dtype))
                 interpreter.invoke()
-                out = interpreter.get_tensor(output_details[0]['index'])
+                out = interpreter.get_tensor(out_det['index'])
+                # Dequantize output if quantized
+                if (out_dtype == np.int8 or out_dtype == np.uint8) and out_qscale is not None:
+                    out = (out.astype(np.float32) - out_qzero) * out_qscale
+                else:
+                    out = out.astype(np.float32)
                 batch_outs.append(out)
             outputs = np.concatenate(batch_outs, axis=0)
-            outputs = tf.convert_to_tensor(outputs)
+            # Ensure outputs are float32 numpy array before converting to tensor
+            outputs = tf.convert_to_tensor(outputs, dtype=tf.float32)
         else:
             outputs = model(imgs, training=False)
 
         # Detect whether model output is probabilities (in [0,1]) or raw logits.
-        out_np = outputs.numpy()
+        # Ensure we operate on a numpy float32 array for dtype-safe ops
+        if isinstance(outputs, tf.Tensor):
+            out_np = outputs.numpy()
+        else:
+            out_np = np.array(outputs)
+
+        print(f"[debug] model outputs dtype={out_np.dtype}, min={out_np.min():.6f}, max={out_np.max():.6f}")
         is_prob = out_np.min() >= -1e-6 and out_np.max() <= 1.0 + 1e-6
+        print(f"[debug] is_prob decision: {is_prob}")
 
         if is_prob:
-            probs = tf.convert_to_tensor(outputs)
+            probs = tf.convert_to_tensor(out_np, dtype=tf.float32)
             # convert probabilities to logits for loss functions expecting logits
             logits = tf.math.log(probs + EPS) - tf.math.log(1.0 - probs + EPS)
         else:
-            logits = tf.convert_to_tensor(outputs)
+            logits = tf.convert_to_tensor(out_np, dtype=tf.float32)
             probs = sigmoid(logits)
 
         # compute losses/metrics using logits where required
@@ -327,6 +347,17 @@ if __name__ == '__main__':
     parser.add_argument('--threshold', type=float, default=0.5)
     parser.add_argument('--samples', type=int, default=6)
     parser.add_argument('--out', type=str, default=None)
+    parser.add_argument('--metrics-out', type=str, default=None, help='Path to write evaluation metrics JSON')
     args = parser.parse_args()
 
-    evaluate_and_plot(args.model_name, args.config, batch_size=args.batch_size, threshold=args.threshold, samples_to_plot=args.samples, out_path=args.out)
+    results = evaluate_and_plot(args.model_name, args.config, batch_size=args.batch_size, threshold=args.threshold, samples_to_plot=args.samples, out_path=args.out)
+
+    if args.metrics_out and results is not None:
+        try:
+            os.makedirs(os.path.dirname(args.metrics_out), exist_ok=True)
+        except Exception:
+            pass
+        with open(args.metrics_out, 'w') as mf:
+            import json as _json
+            _json.dump(results, mf, indent=2)
+        print(f'Wrote metrics JSON to {args.metrics_out}')

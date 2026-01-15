@@ -59,9 +59,9 @@ models:
   # Student Model (Nano_U) - Ultra-light model for embedded deployment
   nano_u:
     input_shape: [48, 64, 3]
-    filters: [8, 16, 32] # Encoder filters (reduced)
-    bottleneck: 32
-    decoder_filters: [16, 8]
+    filters: [16, 32, 64] # Encoder filters (reduced)
+    bottleneck: 64
+    decoder_filters: [32, 16]
 
 
 # Training Hyperparameters

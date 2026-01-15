@@ -57,7 +57,9 @@ class NASWrapper(keras.Model):
 
     @property
     def metrics(self):
-        return [self.total_loss_tracker, self.student_loss_tracker] + list(self._user_metrics)
+        # Exclude Keras internal CompileMetrics wrapper if present (it has name 'compile_metrics')
+        user_metrics = [m for m in self._user_metrics if getattr(m, 'name', '') != 'compile_metrics']
+        return [self.total_loss_tracker, self.student_loss_tracker] + list(user_metrics)
 
     def call(self, x):
         return self.base_model(x)
@@ -81,7 +83,22 @@ class NASWrapper(keras.Model):
                 m.update_state(y, y_pred)
             except Exception:
                 pass
-        return {m.name: m.result() for m in self.metrics}
+        # Debug: inspect metrics before returning results
+        for mm in self.metrics:
+            try:
+                print(f"METRIC DEBUG: name={mm.name}, type={type(mm)}, is_metric={isinstance(mm, tf.keras.metrics.Metric)}, variables={getattr(mm, 'variables', None)}")
+            except Exception as _e:
+                print(f"METRIC DEBUG: failed to inspect metric {mm}: {_e}")
+        results = {}
+        for m in self.metrics:
+            if getattr(m, 'name', '') == 'compile_metrics':
+                continue
+            try:
+                results[m.name] = m.result()
+            except Exception as _e:
+                print(f"METRIC RESULT ERROR: {m} -> {_e}")
+                results[m.name] = None
+        return results
 
     def test_step(self, data):
         x, y = data
@@ -93,7 +110,22 @@ class NASWrapper(keras.Model):
                 m.update_state(y, y_pred)
             except Exception:
                 pass
-        return {m.name: m.result() for m in self.metrics}
+        # Debug: inspect metrics before returning results
+        for mm in self.metrics:
+            try:
+                print(f"METRIC DEBUG: name={mm.name}, type={type(mm)}, is_metric={isinstance(mm, tf.keras.metrics.Metric)}, variables={getattr(mm, 'variables', None)}")
+            except Exception as _e:
+                print(f"METRIC DEBUG: failed to inspect metric {mm}: {_e}")
+        results = {}
+        for m in self.metrics:
+            if getattr(m, 'name', '') == 'compile_metrics':
+                continue
+            try:
+                results[m.name] = m.result()
+            except Exception as _e:
+                print(f"METRIC RESULT ERROR: {m} -> {_e}")
+                results[m.name] = None
+        return results
 
 
 class DistillerWithNAS(keras.Model):
@@ -111,8 +143,17 @@ class DistillerWithNAS(keras.Model):
         self.total_loss_tracker = keras.metrics.Mean(name="loss")
 
     def compile(self, optimizer, metrics, student_loss_fn, distillation_loss_fn, alpha=0.5, temperature=2.0):
+        # Store user metrics but avoid passing them to super().compile to prevent Keras from
+        # wrapping them in CompileMetrics which isn't compatible with our custom Model wrappers.
         self._user_metrics = list(metrics) if metrics is not None else []
-        super(DistillerWithNAS, self).compile(optimizer=optimizer, metrics=self._user_metrics)
+        super(DistillerWithNAS, self).compile(optimizer=optimizer, metrics=None)
+        # Manually ensure metric variables are created by calling update_state once with zeros
+        for m in self._user_metrics:
+            try:
+                # Use safe initialization: if metric has update_state, call with zeros to create variables
+                m.update_state(tf.zeros((1, 1)), tf.zeros((1, 1)))
+            except Exception:
+                pass
         self.student_loss_fn = student_loss_fn
         self.distillation_loss_fn = distillation_loss_fn
         self.alpha = alpha
@@ -120,7 +161,9 @@ class DistillerWithNAS(keras.Model):
 
     @property
     def metrics(self):
-        return [self.total_loss_tracker, self.distillation_loss_tracker, self.student_loss_tracker] + list(self._user_metrics)
+        # Exclude Keras internal CompileMetrics wrapper if present
+        user_metrics = [m for m in self._user_metrics if getattr(m, 'name', '') != 'compile_metrics']
+        return [self.total_loss_tracker, self.distillation_loss_tracker, self.student_loss_tracker] + list(user_metrics)
 
     def train_step(self, data):
         x, y = data
@@ -154,7 +197,16 @@ class DistillerWithNAS(keras.Model):
             except Exception:
                 pass
 
-        return {m.name: m.result() for m in self.metrics}
+        results = {}
+        for m in self.metrics:
+            if getattr(m, 'name', '') == 'compile_metrics':
+                continue
+            try:
+                results[m.name] = m.result()
+            except Exception as _e:
+                print(f"METRIC RESULT ERROR: {m} -> {_e}")
+                results[m.name] = None
+        return results
 
     def test_step(self, data):
         x, y = data
@@ -166,7 +218,16 @@ class DistillerWithNAS(keras.Model):
                 m.update_state(y, y_pred)
             except Exception:
                 pass
-        return {m.name: m.result() for m in self.metrics}
+        results = {}
+        for m in self.metrics:
+            if getattr(m, 'name', '') == 'compile_metrics':
+                continue
+            try:
+                results[m.name] = m.result()
+            except Exception as _e:
+                print(f"METRIC RESULT ERROR: {m} -> {_e}")
+                results[m.name] = None
+        return results
 
     def call(self, x):
         return self.student(x)
@@ -241,10 +302,19 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
         if temperature is None: temperature = distill_cfg.get("temperature", 3.0)
         if teacher_weights is None: teacher_weights = distill_cfg.get("teacher_weights", None)
 
+    # Resolve teacher_weights if provided as relative path; attempt to auto-detect canonical bu_net checkpoint when distilling
     if teacher_weights and not os.path.exists(teacher_weights):
         root_teacher = os.path.join(str(get_project_root()), teacher_weights)
         if os.path.exists(root_teacher):
             teacher_weights = root_teacher
+
+    if distill and not teacher_weights:
+        root_dir = str(get_project_root())
+        candidate_models_dir = config["data"]["paths"].get("models_dir", "models")
+        candidate_models_dir = candidate_models_dir if os.path.isabs(candidate_models_dir) else os.path.join(root_dir, candidate_models_dir)
+        candidate_teacher = os.path.join(candidate_models_dir, "bu_net.keras")
+        if os.path.exists(candidate_teacher):
+            teacher_weights = candidate_teacher
 
     root_dir = str(get_project_root())
     processed_paths = config["data"]["paths"]["processed"]
@@ -316,8 +386,16 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
                     self.student = student
                     self.teacher = teacher
                 def compile(self, optimizer, metrics, student_loss_fn, distillation_loss_fn, alpha=0.5, temperature=2.0):
+                    # Store user metrics but avoid passing them to super().compile to prevent Keras
+                    # wrapping them in CompileMetrics, which can be incompatible with our nested custom Model.
                     self._user_metrics = list(metrics) if metrics is not None else []
-                    super(Distiller, self).compile(optimizer=optimizer, metrics=self._user_metrics)
+                    super(Distiller, self).compile(optimizer=optimizer, metrics=None)
+                    # Initialize metric variables safely by calling update_state with zeros where possible
+                    for m in self._user_metrics:
+                        try:
+                            m.update_state(tf.zeros((1, 1)), tf.zeros((1, 1)))
+                        except Exception:
+                            pass
                     self.student_loss_fn = student_loss_fn
                     self.distillation_loss_fn = distillation_loss_fn
                     self.alpha = alpha
@@ -340,7 +418,23 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
                             m.update_state(y, student_predictions)
                         except Exception:
                             pass
-                    return {m.name: m.result() for m in self.metrics}
+                    # Debug: inspect metrics before returning results
+                    for mm in self.metrics:
+                        try:
+                            print(f"METRIC DEBUG INNER DISTILLER: name={mm.name}, type={type(mm)}, is_metric={isinstance(mm, tf.keras.metrics.Metric)}, variables={getattr(mm, 'variables', None)}")
+                        except Exception as _e:
+                            print(f"METRIC DEBUG INNER DISTILLER: failed to inspect metric {mm}: {_e}")
+                    # Return only metrics safe to call result() on (exclude Keras internal compile wrapper)
+                    results = {}
+                    for m in self.metrics:
+                        if getattr(m, 'name', '') == 'compile_metrics':
+                            continue
+                        try:
+                            results[m.name] = m.result()
+                        except Exception as _e:
+                            print(f"METRIC RESULT ERROR: {m} -> {_e}")
+                            results[m.name] = None
+                    return results
                 def test_step(self, data):
                     x, y = data
                     y_pred = self.student(x, training=False)
@@ -350,7 +444,16 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
                             m.update_state(y, y_pred)
                         except Exception:
                             pass
-                    return {m.name: m.result() for m in self.metrics}
+                    results = {}
+                    for m in self.metrics:
+                        if getattr(m, 'name', '') == 'compile_metrics':
+                            continue
+                        try:
+                            results[m.name] = m.result()
+                        except Exception as _e:
+                            print(f"METRIC RESULT ERROR: {m} -> {_e}")
+                            results[m.name] = None
+                    return results
                 def call(self, x):
                     return self.student(x)
 

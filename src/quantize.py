@@ -106,6 +106,29 @@ def convert_to_tflite(model_path, out_path=None, int8=False, config=None):
 
     size_kb = len(tflite_model) / 1024.0
     print(f"Saved TFLite model to {out_path} ({size_kb:.1f} KB)")
+
+    # Basic runtime verification: load the TFLite interpreter and run one zero-input inference.
+    try:
+        print("Verifying TFLite runtime...")
+        interpreter = tf.lite.Interpreter(model_path=str(out_path))
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+
+        import numpy as _np
+        inp_shape = input_details[0]['shape']
+        inp_dtype = input_details[0].get('dtype', _np.float32)
+        # Create a zero sample matching expected dtype/shape
+        sample = _np.zeros(inp_shape, dtype=inp_dtype)
+
+        # If the model expects int8 but uses quantization parameters, zeros are safe as a smoke-check
+        interpreter.set_tensor(input_details[0]['index'], sample)
+        interpreter.invoke()
+        out = interpreter.get_tensor(output_details[0]['index'])
+        print("TFLite invocation successful. Output shape:", out.shape, "dtype:", out.dtype)
+    except Exception as e:
+        print("TFLite runtime verification failed:", e)
+
     return out_path
 
 

@@ -21,6 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 import logging
+import json
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -128,6 +129,60 @@ def cmd_eval(args):
     return run_module(evaluate, args=["--model-name", args.model_name, "--out", args.out])
 
 
+def cmd_pipeline(args):
+    """Orchestrate end-to-end: 1) train bu_net with NAS, 2) distill nano_u from bu_net, 3) quantize nano_u to int8, 4) evaluate models."""
+    models_dir = ROOT / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1) Train bu_net with NAS
+    bu_train = SRC / "train_with_nas.py"
+    if not bu_train.exists():
+        log.error("train_with_nas.py not found in src")
+        return 1
+    r = run_module(bu_train, args=["--model", "bu_net", "--enable-nas"])
+    if r != 0:
+        log.error("bu_net training failed: %s", r)
+        return r
+
+    teacher_ckpt = models_dir / "bu_net.keras"
+    if not teacher_ckpt.exists():
+        log.error("Expected teacher checkpoint not found: %s", teacher_ckpt)
+        return 1
+
+    # 2) Distill nano_u using trained bu_net
+    r = run_module(bu_train, args=["--model", "nano_u", "--distill", "--teacher-weights", str(teacher_ckpt)])
+    if r != 0:
+        log.error("Distillation failed: %s", r)
+        return r
+
+    # 3) Quantize nano_u to int8
+    quant = SRC / "quantize.py"
+    int8_out = models_dir / "nano_u-int8.tflite"
+    if quant.exists():
+        r = run_module(quant, args=["--model-name", "nano_u", "--output", str(int8_out)])
+        if r != 0:
+            log.error("Quantization failed: %s", r)
+            return r
+    else:
+        log.warning("quantize.py not found, skipping quantization")
+
+    # 4) Evaluate models (float students)
+    evaluate = SRC / "evaluate.py"
+    if evaluate.exists():
+        # evaluate bu_net
+        r1 = run_module(evaluate, args=["--model-name", "bu_net", "--out", str(models_dir / "bu_net_metrics.json")])
+        # evaluate nano_u
+        r2 = run_module(evaluate, args=["--model-name", "nano_u", "--out", str(models_dir / "nano_u_metrics.json")])
+        if r1 != 0 or r2 != 0:
+            log.error("Evaluation returned non-zero exit codes: %s %s", r1, r2)
+            return 1
+    else:
+        log.warning("evaluate.py not found, skipping evaluation")
+
+    log.info("Pipeline finished. Artifacts in %s", models_dir)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="tf_pipeline")
     parser.add_argument("--install-deps", action="store_true", help="Install dependencies into .venv-tf")
@@ -162,6 +217,9 @@ def main(argv=None):
     s_eval.add_argument("--model-name", required=True)
     s_eval.add_argument("--out", required=True)
 
+    s_pipeline = sub.add_parser("pipeline")
+    s_pipeline.add_argument("--enable-nas-for-student", action="store_true", help="Enable NAS for student during distillation")
+
     args = parser.parse_args(argv)
 
     if args.cmd is None:
@@ -184,6 +242,8 @@ def main(argv=None):
         return cmd_infer(args)
     if args.cmd == "eval":
         return cmd_eval(args)
+    if args.cmd == "pipeline":
+        return cmd_pipeline(args)
 
     return 0
 
