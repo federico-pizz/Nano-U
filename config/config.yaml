@@ -97,12 +97,40 @@ training:
       temperature: 4.0  # Higher temperature to soften teacher distribution for richer distillation gradients
 
 
+# NAS (Neural Architecture Search) Monitoring Configuration
+# Callback-based monitoring for analyzing model efficiency during training
+nas:
+  # Enable NAS monitoring (can be overridden via CLI --enable-nas)
+  enabled: false
+  
+  # Logging configuration
+  log_dir: "logs/nas"           # Directory for TensorBoard logs
+  csv_path: null                # CSV output path (null = auto-generate based on model name)
+  
+  # Monitoring frequency
+  log_freq: "epoch"             # Options: "epoch" or "batch"
+  monitor_batch_freq: 10        # When log_freq="batch", monitor every N batches
+  
+  # Analysis thresholds for automated recommendations
+  thresholds:
+    high_redundancy: 0.7        # Redundancy above this suggests overparameterization
+    low_redundancy: 0.3         # Redundancy below this indicates good utilization
+    high_correlation: 0.5       # Correlation above this suggests feature redundancy
+    poor_conditioning: 1.0e6    # Condition number above this indicates numerical issues
+  
+  # Visualization settings (used by plot_nas_metrics.py)
+  visualization:
+    dpi: 300                    # Plot resolution
+    figure_format: "png"        # Output format: png, pdf, svg
+    color_scheme: "tab10"       # Matplotlib colormap for comparisons
+
+
 # Quantization settings (TFLite)
 quantization:
   method: "dynamic_range" # or "full_integer"
   representative_dataset_size: 100
   input_type: "int8"
   output_type: "int8"
-  supported_ops: 
+  supported_ops:
     - "TFLITE_BUILTINS_INT8"
     - "SELECT_TF_OPS"

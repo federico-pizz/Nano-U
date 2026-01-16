@@ -7,6 +7,13 @@ def _resolve_path(p, project_root):
         return p
     path = Path(p)
     resolved = path if path.is_absolute() else (project_root / path)
+    try:
+        resolved = resolved.resolve()
+        project_root_resolved = Path(project_root).resolve()
+        if not str(resolved).startswith(str(project_root_resolved)):
+            raise ValueError(f"Path '{p}' resolves outside project root")
+    except (OSError, RuntimeError) as e:
+        raise ValueError(f"Invalid path '{p}': {e}")
     return str(resolved)
 
 

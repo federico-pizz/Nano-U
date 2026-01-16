@@ -57,7 +57,16 @@ def make_dataset(img_files, mask_files, batch_size=8, shuffle=True, augment=Fals
                  mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5],
                  flip_prob=0.5, max_rotation_deg=20,
                  brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05):
+    """Create a TensorFlow dataset for image segmentation with validation.
+
+    Raises:
+        TypeError: if inputs are not list/tuple
+        ValueError: if input lists are empty
+        FileNotFoundError: if listed files do not exist
+    """
     # Validate inputs early and keep behavior stable
+    if not isinstance(img_files, (list, tuple)) or not isinstance(mask_files, (list, tuple)):
+        raise TypeError("img_files and mask_files must be list or tuple of paths")
     if len(img_files) == 0:
         raise ValueError("make_dataset: img_files list is empty")
     if len(mask_files) == 0:

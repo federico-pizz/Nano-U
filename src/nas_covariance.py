@@ -9,6 +9,7 @@ This module provides:
 - FeatureDecorrelationRegularizer: Keras regularizer that wraps redundancy
 - RunningCovariance: Welford-style online covariance estimator (TF-safe)
 - DistillationAwareNAS: small helper to compare teacher/student activations
+- NASMonitorCallback: Keras callback for non-invasive NAS monitoring
 
 The implementation removes examples and keeps only runtime utilities used by
 the project pipeline. Non-obvious implementation details are documented inline
@@ -58,7 +59,12 @@ class ActivationExtractor:
                     matches = [l.name for l in all_layers if pattern.search(l.name)]
                     # Use tf.print to avoid noisy stdout in some environments
                     if not matches:
-                        tf.print("Warning: Regex pattern", sel, "matched no layers")
+                        tf.print("Warning: Regex pattern", sel, "matched no layers. Attempting fallback search by substring 'conv'.")
+                        # Fallback: look for common conv substring (case-insensitive)
+                        fallback = [l.name for l in all_layers if 'conv' in l.name.lower()]
+                        if fallback:
+                            tf.print("Fallback matched layers:", fallback)
+                            matches = fallback
                     resolved.extend(matches)
                 else:
                     # exact name
@@ -78,6 +84,10 @@ class ActivationExtractor:
             if n not in seen:
                 seen.add(n)
                 out.append(n)
+        if not out:
+            # No selectors matched; fail fast with helpful diagnostics
+            available = sorted(list(layer_names_set))
+            raise ValueError(f"No layers matched selectors {self.layer_selectors}. Available layer names (first 20): {available[:20]}")
         return out
 
     def _build_intermediate_model(self) -> tf.keras.Model:
@@ -89,7 +99,17 @@ class ActivationExtractor:
             except ValueError:
                 raise ValueError(f"Layer '{name}' not found in model.")
         # Single model that maps original inputs to a list of intermediate outputs
+        if not outputs:
+            raise ValueError(f"No intermediate outputs resolved for selectors: {self.layer_selectors}")
         return tf.keras.Model(inputs=self.model.inputs, outputs=outputs)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Ensure cached intermediate model is released when used as a context manager
+        self.cleanup()
+        return False
 
     def __call__(self, inputs: tf.Tensor, training: bool = False) -> Dict[str, tf.Tensor]:
         outs = self.intermediate_model(inputs, training=training)
@@ -562,3 +582,187 @@ class DistillationAwareNAS:
     def cleanup(self):
         self.teacher_extractor.cleanup()
         self.student_extractor.cleanup()
+
+
+class NASMonitorCallback(tf.keras.callbacks.Callback):
+    """
+    Non-invasive NAS monitoring via Keras callback.
+    
+    Monitors feature redundancy during training by computing covariance
+    statistics on model outputs. Works with any model architecture without
+    requiring layer introspection.
+    
+    Args:
+        validation_data: Validation dataset (tf.data.Dataset or tuple of arrays).
+                        Required if you want to monitor redundancy during training.
+                        Pass the same validation_data you use in model.fit().
+        monitor_frequency: 'batch' or 'epoch' - when to compute metrics
+        log_frequency: Log every N batches/epochs
+        redundancy_weight: Optional weight for adding redundancy to loss (not implemented yet)
+        log_dir: Directory for TensorBoard logs
+        save_history: Save metrics to CSV at end of training
+        csv_path: Path for CSV file (default: 'nas_metrics.csv')
+    
+    Example:
+        >>> val_ds = ...  # your validation dataset
+        >>> callback = NASMonitorCallback(
+        ...     validation_data=val_ds,
+        ...     monitor_frequency='epoch',
+        ...     log_frequency=1,
+        ...     log_dir='logs/nas',
+        ...     save_history=True
+        ... )
+        >>> model.fit(train_ds, validation_data=val_ds, callbacks=[callback])
+    """
+    
+    def __init__(self,
+                 validation_data=None,
+                 monitor_frequency='epoch',
+                 log_frequency=1,
+                 redundancy_weight=0.0,
+                 log_dir=None,
+                 save_history=True,
+                 csv_path='nas_metrics.csv'):
+        super().__init__()
+        self.validation_data = validation_data
+        self.monitor_frequency = monitor_frequency
+        self.log_frequency = log_frequency
+        self.redundancy_weight = redundancy_weight
+        self.log_dir = log_dir
+        self.save_history = save_history
+        self.csv_path = csv_path
+        
+        # Metrics storage
+        self.redundancy_history = []
+        self.correlation_history = []
+        self.trace_history = []
+        self.condition_history = []
+        self.step_history = []
+        self.batch_count = 0
+        
+        # TensorBoard writer
+        if log_dir:
+            self.tb_writer = tf.summary.create_file_writer(log_dir)
+        else:
+            self.tb_writer = None
+    
+    def on_epoch_end(self, epoch, logs=None):
+        """Monitor redundancy at end of each epoch."""
+        if self.monitor_frequency != 'epoch':
+            return
+        
+        if epoch % self.log_frequency != 0:
+            return
+        
+        # Check if validation data is available
+        if self.validation_data is None:
+            # No validation data - skip metrics computation
+            return
+        
+        # Compute metrics on first validation batch
+        val_data = self.validation_data
+        if isinstance(val_data, tf.data.Dataset):
+            for x_val, y_val in val_data.take(1):
+                metrics = self._compute_metrics(x_val)
+                self._log_metrics(epoch, metrics, prefix='epoch')
+                break
+        elif isinstance(val_data, tuple) and len(val_data) >= 2:
+            # Validation data passed as (x_val, y_val) tuple
+            x_val = val_data[0]
+            # Take a batch if it's a full dataset
+            if len(x_val.shape) > 1:
+                batch_size = min(32, len(x_val))
+                x_batch = x_val[:batch_size]
+                metrics = self._compute_metrics(x_batch)
+                self._log_metrics(epoch, metrics, prefix='epoch')
+    
+    def on_batch_end(self, batch, logs=None):
+        """Monitor redundancy at end of each batch (if enabled)."""
+        if self.monitor_frequency != 'batch':
+            return
+        
+        self.batch_count += 1
+        if self.batch_count % self.log_frequency != 0:
+            return
+        
+        # Batch-level monitoring requires access to training batch
+        # This is more complex and optional for initial implementation
+        pass
+    
+    def on_train_end(self, logs=None):
+        """Save metrics to CSV at end of training."""
+        if self.save_history and len(self.redundancy_history) > 0:
+            self.save_metrics_csv(self.csv_path)
+    
+    def _compute_metrics(self, x):
+        """Compute redundancy metrics on model output."""
+        # Get model output
+        y_pred = self.model(x, training=False)
+        
+        # Compute covariance-based redundancy with full metrics
+        redundancy_score, metrics_dict = covariance_redundancy(
+            y_pred, 
+            normalize=True, 
+            return_metrics=True
+        )
+        
+        return {
+            'redundancy_score': float(redundancy_score.numpy()),
+            'trace': float(metrics_dict.get('trace', 0)),
+            'mean_correlation': float(metrics_dict.get('mean_correlation', 0)),
+            'condition_number': float(metrics_dict.get('condition_number', 1))
+        }
+    
+    def _log_metrics(self, step, metrics, prefix='epoch'):
+        """Log metrics to console, TensorBoard, and history."""
+        # Console logging
+        print(f"\nNAS Metrics ({prefix} {step}):")
+        for key, value in metrics.items():
+            print(f"  {key}: {value:.6f}")
+        
+        # TensorBoard logging
+        if self.tb_writer:
+            with self.tb_writer.as_default():
+                for key, value in metrics.items():
+                    tf.summary.scalar(f'nas/{key}', value, step=step)
+                self.tb_writer.flush()
+        
+        # History storage
+        if self.save_history:
+            self.redundancy_history.append(metrics['redundancy_score'])
+            self.correlation_history.append(metrics.get('mean_correlation', 0))
+            self.trace_history.append(metrics.get('trace', 0))
+            self.condition_history.append(metrics.get('condition_number', 1))
+            self.step_history.append(step)
+    
+    def get_metrics(self):
+        """Return collected metrics as a dictionary."""
+        return {
+            'steps': self.step_history,
+            'redundancy': self.redundancy_history,
+            'correlation': self.correlation_history,
+            'trace': self.trace_history,
+            'condition_number': self.condition_history
+        }
+    
+    def save_metrics_csv(self, filepath='nas_metrics.csv'):
+        """Save metrics to CSV file."""
+        import csv
+        import os
+        
+        # Create directory if needed
+        os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else '.', exist_ok=True)
+        
+        with open(filepath, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['epoch', 'redundancy_score', 'mean_correlation', 'trace', 'condition_number'])
+            for i in range(len(self.step_history)):
+                writer.writerow([
+                    self.step_history[i],
+                    self.redundancy_history[i],
+                    self.correlation_history[i],
+                    self.trace_history[i],
+                    self.condition_history[i]
+                ])
+        
+        print(f"✓ NAS metrics saved to {filepath}")

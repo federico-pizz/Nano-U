@@ -30,13 +30,22 @@ from src.models.Nano_U.model_tf import build_nano_u
 from src.models.BU_Net.model_tf import build_bu_net
 from src.utils import make_dataset, BinaryIoU, get_project_root
 from src.utils.config import load_config
+from src.nas_covariance import NASMonitorCallback
 
 # Enable GPU memory growth to avoid OOM errors
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
     try:
         for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
+            try:
+                if hasattr(tf.config, 'set_memory_growth'):
+                    tf.config.set_memory_growth(gpu, True)
+                elif hasattr(tf.config, 'experimental') and hasattr(tf.config.experimental, 'set_memory_growth'):
+                    tf.config.experimental.set_memory_growth(gpu, True)
+                else:
+                    tf.get_logger().warning('set_memory_growth not available on this TF build; skipping')
+            except Exception as e:
+                tf.get_logger().warning(f"GPU memory growth config failed for device {gpu}: {e}")
         print(f"✓ GPU memory growth enabled for {len(gpus)} GPU(s). Training will use GPU.")
     except RuntimeError as e:
         print(f"⚠ GPU configuration error: {e}")
@@ -200,7 +209,9 @@ def build_model_from_config(name: str, config: dict):
 
 def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
              distill=False, teacher_weights=None, alpha=None, temperature=None,
-             augment=True, config_path="config/config.yaml"):
+             augment=True, config_path="config/config.yaml",
+             enable_nas_monitoring=False, nas_log_dir=None, nas_csv_path=None,
+             nas_log_freq='epoch', nas_monitor_batch_freq=10):
     
     # Load configuration
     config = load_config(config_path)
@@ -280,7 +291,32 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
     ckpt_path = os.path.join(models_dir, f"{model_name}.keras")
 
     print(f"Starting training for {model_name}...")
-    print(f"Epochs: {epochs}, Batch Size: {batch_size}, LR: {lr}, Distill: {distill}")
+    print(f"Epochs: {epochs}, Batch Size: {batch_size}, LR: {lr}, Distill: {distill}, NAS Monitoring: {enable_nas_monitoring}")
+
+    # Initialize NAS monitoring callback if enabled
+    nas_callback = None
+    if enable_nas_monitoring:
+        # Resolve NAS config from config file if not provided
+        nas_config = config.get("nas", {})
+        
+        if nas_log_dir is None:
+            nas_log_dir = nas_config.get("log_dir", "logs/nas")
+            nas_log_dir = resolve_path(nas_log_dir)
+        
+        if nas_csv_path is None:
+            nas_csv_path = nas_config.get("csv_path", f"logs/nas/{model_name}_nas_metrics.csv")
+            nas_csv_path = resolve_path(nas_csv_path)
+        
+        # Ensure log directory exists
+        os.makedirs(os.path.dirname(nas_csv_path), exist_ok=True)
+        
+        nas_callback = NASMonitorCallback(
+            log_dir=nas_log_dir,
+            csv_path=nas_csv_path,
+            log_freq=nas_log_freq,
+            monitor_batch_freq=nas_monitor_batch_freq
+        )
+        print(f"✓ NAS monitoring enabled: logs={nas_log_dir}, csv={nas_csv_path}")
 
     if distill:
         if not teacher_weights: raise ValueError("Teacher weights required for distillation")
@@ -306,6 +342,9 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
             tf.keras.callbacks.ReduceLROnPlateau(monitor="val_binary_iou", mode="max", factor=0.5, patience=10, min_lr=1e-6, verbose=1),
             tf.keras.callbacks.EarlyStopping(monitor="val_binary_iou", mode="max", patience=20, restore_best_weights=True)
         ]
+        # Add NAS callback if enabled
+        if nas_callback is not None:
+            callbacks.append(nas_callback)
     else:
         model = student_model
         model.compile(optimizer=optimizer, loss=bce_loss, metrics=[iou_metric])
@@ -315,6 +354,9 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
             tf.keras.callbacks.ReduceLROnPlateau(monitor="val_binary_iou", mode="max", factor=0.5, patience=10, min_lr=1e-6, verbose=1),
             tf.keras.callbacks.EarlyStopping(monitor="val_binary_iou", mode="max", patience=20, restore_best_weights=True)
         ]
+        # Add NAS callback if enabled
+        if nas_callback is not None:
+            callbacks.append(nas_callback)
 
     # Unified Training Loop
     history = model.fit(
@@ -345,6 +387,14 @@ if __name__ == "__main__":
     parser.add_argument("--alpha", type=float, default=None)
     parser.add_argument("--temperature", type=float, default=None)
     parser.add_argument("--no-augment", action="store_true")
+    
+    # NAS monitoring arguments
+    parser.add_argument("--enable-nas", action="store_true", help="Enable NAS monitoring during training")
+    parser.add_argument("--nas-log-dir", type=str, default=None, help="Directory for NAS TensorBoard logs")
+    parser.add_argument("--nas-csv-path", type=str, default=None, help="Path for NAS metrics CSV output")
+    parser.add_argument("--nas-log-freq", type=str, default="epoch", choices=["epoch", "batch"], help="NAS logging frequency")
+    parser.add_argument("--nas-batch-freq", type=int, default=10, help="Batch frequency for NAS monitoring (when log_freq=batch)")
+    
     args = parser.parse_args()
 
     train(
@@ -357,5 +407,10 @@ if __name__ == "__main__":
         alpha=args.alpha,
         temperature=args.temperature,
         augment=not args.no_augment,
-        config_path=args.config
+        config_path=args.config,
+        enable_nas_monitoring=args.enable_nas,
+        nas_log_dir=args.nas_log_dir,
+        nas_csv_path=args.nas_csv_path,
+        nas_log_freq=args.nas_log_freq,
+        nas_monitor_batch_freq=args.nas_batch_freq
     )
