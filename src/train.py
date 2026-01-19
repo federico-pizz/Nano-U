@@ -310,6 +310,10 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
                 nas_csv_path = f"logs/nas/{model_name}_nas_metrics.csv"
         nas_csv_path = resolve_path(nas_csv_path)
         
+        # Get layer selectors from config or CLI override
+        if nas_layer_selectors is None:
+            nas_layer_selectors = nas_config.get("layer_selectors", None)
+        
         # Ensure log directory exists (only if CSV has a directory part)
         csv_dir = os.path.dirname(nas_csv_path)
         if csv_dir:  # Only create if there's a directory part
@@ -317,12 +321,14 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
         
         nas_callback = NASMonitorCallback(
             validation_data=val_ds,  # Pass validation dataset
+            layer_selectors=nas_layer_selectors,  # Pass layer selectors
             log_dir=nas_log_dir,
             csv_path=nas_csv_path,
             monitor_frequency=nas_log_freq,
             log_frequency=nas_monitor_batch_freq
         )
-        print(f"✓ NAS monitoring enabled: logs={nas_log_dir}, csv={nas_csv_path}")
+        layer_info = f", layers={nas_layer_selectors}" if nas_layer_selectors else " (monitoring output)"
+        print(f"✓ NAS monitoring enabled: logs={nas_log_dir}, csv={nas_csv_path}{layer_info}")
 
     if distill:
         if not teacher_weights: raise ValueError("Teacher weights required for distillation")
@@ -400,8 +406,14 @@ if __name__ == "__main__":
     parser.add_argument("--nas-csv-path", type=str, default=None, help="Path for NAS metrics CSV output")
     parser.add_argument("--nas-log-freq", type=str, default="epoch", choices=["epoch", "batch"], help="NAS logging frequency")
     parser.add_argument("--nas-batch-freq", type=int, default=10, help="Batch frequency for NAS monitoring (when log_freq=batch)")
+    parser.add_argument("--nas-layers", type=str, default=None, help="Comma-separated list of layer names to monitor (e.g., 'encoder_conv_0,bottleneck')")
     
     args = parser.parse_args()
+    
+    # Parse nas_layers from comma-separated string to list
+    nas_layers_list = None
+    if args.nas_layers:
+        nas_layers_list = [layer.strip() for layer in args.nas_layers.split(',')]
 
     train(
         model_name=args.model,
@@ -418,5 +430,6 @@ if __name__ == "__main__":
         nas_log_dir=args.nas_log_dir,
         nas_csv_path=args.nas_csv_path,
         nas_log_freq=args.nas_log_freq,
-        nas_monitor_batch_freq=args.nas_batch_freq
+        nas_monitor_batch_freq=args.nas_batch_freq,
+        nas_layer_selectors=nas_layers_list
     )

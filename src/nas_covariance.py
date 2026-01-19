@@ -648,6 +648,7 @@ class NASMonitorCallback(tf.keras.callbacks.Callback):
         
         # Extractor will be initialized in on_train_begin when model is available
         self.extractor = None
+        self._extractor_initialized = False
         
         # Metrics storage
         self.redundancy_history = []
@@ -662,6 +663,120 @@ class NASMonitorCallback(tf.keras.callbacks.Callback):
             self.tb_writer = tf.summary.create_file_writer(log_dir)
         else:
             self.tb_writer = None
+    
+    def on_train_begin(self, logs=None):
+        """Initialize ActivationExtractor when training starts and model is available."""
+        if self.layer_selectors and not self._extractor_initialized:
+            try:
+                # Check if model is a nested functional wrapper around subclassed model
+                inner_model = None
+                for layer in self.model.layers:
+                    if isinstance(layer, tf.keras.Model) and layer.name in ['BU_Net', 'Nano_U']:
+                        inner_model = layer
+                        print(f"✓ NAS: Detected nested subclassed model: {layer.name}")
+                        break
+                
+                if inner_model is None:
+                    # Not a nested model - try standard approach
+                    self.extractor = ActivationExtractor(self.model, self.layer_selectors)
+                    self._extractor_initialized = True
+                    print(f"✓ NAS: ActivationExtractor initialized with layers: {self.extractor.layer_names}")
+                    return
+                
+                # For subclassed models, we need to create a new functional model
+                # that exposes the intermediate layer outputs
+                print(f"✓ NAS: Building functional extraction model for subclassed {inner_model.name}...")
+                
+                # Build the inner model if not already built
+                if not inner_model.built:
+                    input_shape = self.model.input_shape
+                    if isinstance(input_shape, tuple) and input_shape[0] is None:
+                        dummy_shape = (1,) + input_shape[1:]
+                    else:
+                        dummy_shape = input_shape
+                    dummy_input = tf.zeros(dummy_shape)
+                    _ = inner_model(dummy_input, training=False)
+                
+                # Collect target layer instances from model attributes
+                target_layers = []
+                for selector in self.layer_selectors:
+                    found = False
+                    # Check encoder convs
+                    if hasattr(inner_model, 'enc_convs'):
+                        for conv_layer in inner_model.enc_convs:
+                            if conv_layer.name == selector:
+                                target_layers.append(conv_layer)
+                                found = True
+                                break
+                    # Check bottleneck
+                    if not found and hasattr(inner_model, 'bottleneck'):
+                        if inner_model.bottleneck.name == selector:
+                            target_layers.append(inner_model.bottleneck)
+                            found = True
+                    # Check decoder convs
+                    if not found and hasattr(inner_model, 'dec_convs'):
+                        for conv_layer in inner_model.dec_convs:
+                            if conv_layer.name == selector:
+                                target_layers.append(conv_layer)
+                                found = True
+                                break
+                    if not found:
+                        print(f"⚠ Warning: Layer '{selector}' not found in model")
+                
+                if not target_layers:
+                    raise ValueError(f"No valid layers found for selectors: {self.layer_selectors}")
+                
+                # Create a functional model that traces through the subclassed model
+                # and captures the intermediate outputs
+                print(f"✓ NAS: Creating functional extraction model with {len(target_layers)} target layers...")
+                
+                # Use the outer functional model's input
+                inputs = self.model.input
+                
+                # Create a custom call function that extracts intermediate outputs
+                @tf.function
+                def extract_activations(x):
+                    outputs = {}
+                    # We need to trace through the model's call and capture outputs
+                    # This is done by monkey-patching the layer call temporarily
+                    for layer in target_layers:
+                        original_call = layer.call
+                        
+                        def make_capturing_call(layer_name):
+                            def capturing_call(inputs_inner, *args, **kwargs):
+                                result = original_call(inputs_inner, *args, **kwargs)
+                                outputs[layer_name] = result
+                                return result
+                            return capturing_call
+                        
+                        layer.call = make_capturing_call(layer.name)
+                    
+                    # Run forward pass
+                    _ = inner_model(x, training=False)
+                    
+                    # Restore original calls
+                    for layer in target_layers:
+                        # Note: in practice this is tricky; better approach below
+                        pass
+                    
+                    return outputs
+                
+                # Actually, let's use a simpler approach: create a custom extractor function
+                self._target_layers = target_layers
+                self._inner_model = inner_model
+                self._extractor_initialized = True
+                print(f"✓ NAS: Custom extractor initialized for layers: {[l.name for l in target_layers]}")
+                    
+            except Exception as e:
+                import traceback
+                print(f"⚠ Warning: Failed to initialize ActivationExtractor: {e}")
+                print(f"   Traceback: {traceback.format_exc()}")
+                print(f"   Available model layers: {[l.name for l in self.model.layers]}")
+                print("   Falling back to output monitoring")
+                self.extractor = None
+                self._target_layers = None
+                self._inner_model = None
+                self._extractor_initialized = False
     
     def on_epoch_end(self, epoch, logs=None):
         """Monitor redundancy at end of each epoch."""
@@ -712,14 +827,104 @@ class NASMonitorCallback(tf.keras.callbacks.Callback):
             self.save_metrics_csv(self.csv_path)
     
     def _compute_metrics(self, x):
-        """Compute redundancy metrics on model output."""
-        # Get model output
+        """Compute redundancy metrics on model output or internal layers."""
+        if self.extractor is not None and self._extractor_initialized:
+            # Monitor internal layers using ActivationExtractor
+            try:
+                activations = self.extractor(x, training=False)
+                
+                # Aggregate metrics across all monitored layers
+                all_metrics = []
+                for layer_name, act in activations.items():
+                    redundancy_score, metrics_dict = covariance_redundancy(
+                        act,
+                        normalize=True,
+                        return_metrics=True
+                    )
+                    all_metrics.append({
+                        'layer': layer_name,
+                        'redundancy_score': float(redundancy_score.numpy()),
+                        'trace': float(metrics_dict.get('trace', 0)),
+                        'mean_correlation': float(metrics_dict.get('mean_correlation', 0)),
+                        'condition_number': float(metrics_dict.get('condition_number', 1))
+                    })
+                
+                # Average metrics across layers
+                if all_metrics:
+                    return {
+                        'redundancy_score': sum(m['redundancy_score'] for m in all_metrics) / len(all_metrics),
+                        'trace': sum(m['trace'] for m in all_metrics) / len(all_metrics),
+                        'mean_correlation': sum(m['mean_correlation'] for m in all_metrics) / len(all_metrics),
+                        'condition_number': sum(m['condition_number'] for m in all_metrics) / len(all_metrics)
+                    }
+            except Exception as e:
+                print(f"⚠ Warning: Failed to compute metrics from ActivationExtractor: {e}")
+                print("   Falling back to output monitoring")
+        
+        elif hasattr(self, '_target_layers') and self._target_layers and self._extractor_initialized:
+            # Custom extractor for subclassed models
+            try:
+                # Capture layer outputs by monkey-patching
+                layer_outputs = {}
+                original_calls = {}
+                
+                # Store original calls and replace with capturing wrappers
+                for layer in self._target_layers:
+                    original_calls[layer.name] = layer.call
+                    
+                    def make_capturing_wrapper(layer_name, original_call):
+                        def wrapper(inputs, *args, **kwargs):
+                            output = original_call(inputs, *args, **kwargs)
+                            layer_outputs[layer_name] = output
+                            return output
+                        return wrapper
+                    
+                    layer.call = make_capturing_wrapper(layer.name, original_calls[layer.name])
+                
+                # Run forward pass through inner model
+                _ = self._inner_model(x, training=False)
+                
+                # Restore original calls
+                for layer in self._target_layers:
+                    layer.call = original_calls[layer.name]
+                
+                # Compute metrics on captured activations
+                all_metrics = []
+                for layer_name, act in layer_outputs.items():
+                    redundancy_score, metrics_dict = covariance_redundancy(
+                        act,
+                        normalize=True,
+                        return_metrics=True
+                    )
+                    all_metrics.append({
+                        'layer': layer_name,
+                        'redundancy_score': float(redundancy_score.numpy()),
+                        'trace': float(metrics_dict.get('trace', 0)),
+                        'mean_correlation': float(metrics_dict.get('mean_correlation', 0)),
+                        'condition_number': float(metrics_dict.get('condition_number', 1))
+                    })
+                
+                # Average metrics across layers
+                if all_metrics:
+                    return {
+                        'redundancy_score': sum(m['redundancy_score'] for m in all_metrics) / len(all_metrics),
+                        'trace': sum(m['trace'] for m in all_metrics) / len(all_metrics),
+                        'mean_correlation': sum(m['mean_correlation'] for m in all_metrics) / len(all_metrics),
+                        'condition_number': sum(m['condition_number'] for m in all_metrics) / len(all_metrics)
+                    }
+            except Exception as e:
+                import traceback
+                print(f"⚠ Warning: Failed to compute metrics from custom extractor: {e}")
+                print(f"   Traceback: {traceback.format_exc()}")
+                print("   Falling back to output monitoring")
+        
+        # Fallback: Monitor model output
         y_pred = self.model(x, training=False)
         
         # Compute covariance-based redundancy with full metrics
         redundancy_score, metrics_dict = covariance_redundancy(
-            y_pred, 
-            normalize=True, 
+            y_pred,
+            normalize=True,
             return_metrics=True
         )
         
