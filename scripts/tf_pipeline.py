@@ -65,25 +65,30 @@ def cmd_build(args):
 
 
 def cmd_train(args):
-    # Prefer train_with_nas.py when NAS is enabled, fallback to train.py
-    train = SRC / ("train_with_nas.py" if args.enable_nas else "train.py")
+    # Use unified train.py (supports both regular and NAS training)
+    train = SRC / "train.py"
     if not train.exists():
         log.warning("train.py not found, skipping")
         return 0
 
-    # Build base command for subprocess fallback
+    # Build base command for subprocess
     cmd = [str(PYTHON), str(train), "--model", args.model]
+    
+    # Add distillation flags if specified
     if args.distill and args.teacher_weights:
         cmd += ["--distill", "--teacher-weights", args.teacher_weights]
+    
+    # Add NAS monitoring flags if enabled
     if args.enable_nas:
-        # pass NAS flags through env or CLI variable
         cmd += ["--enable-nas"]
         if args.nas_layers:
             cmd += ["--nas-layers", args.nas_layers]
-        if args.nas_weight:
-            cmd += ["--nas-weight", str(args.nas_weight)]
+        if args.nas_log_dir:
+            cmd += ["--nas-log-dir", args.nas_log_dir]
+        if args.nas_csv_path:
+            cmd += ["--nas-csv-path", args.nas_csv_path]
 
-    # direct execution of selected training module
+    # Execute training
     log.info("Executing: %s", " ".join(cmd))
     return subprocess.call(cmd)
 

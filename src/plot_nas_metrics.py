@@ -27,8 +27,14 @@ import argparse
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 from pathlib import Path
+
+# seaborn is optional - only used for enhanced styling if available
+try:
+    import seaborn as sns
+    sns.set_style("whitegrid")
+except ImportError:
+    sns = None
 from typing import List, Dict, Optional
 
 # Ensure project root is importable
@@ -37,11 +43,22 @@ if __name__ == "__main__" and __package__ is None:
 
 
 def load_nas_metrics(csv_path: str) -> pd.DataFrame:
-    """Load NAS metrics from CSV file."""
+    """Load NAS metrics from CSV file and normalize column names."""
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"CSV file not found: {csv_path}")
     
     df = pd.read_csv(csv_path)
+    
+    # Normalize column names for compatibility
+    if 'mean_correlation' in df.columns and 'correlation_mean' not in df.columns:
+        df['correlation_mean'] = df['mean_correlation']
+    if 'correlation_mean' not in df.columns:
+        # Add dummy column if neither exists
+        df['correlation_mean'] = 0.0
+    if 'correlation_std' not in df.columns:
+        # Add dummy std column for plotting
+        df['correlation_std'] = 0.0
+    
     print(f"✓ Loaded {len(df)} metric records from {csv_path}")
     return df
 
@@ -104,11 +121,14 @@ def plot_correlation_analysis(df: pd.DataFrame, output_path: str, model_name: st
     fig.suptitle(f'{model_name}: Activation Correlation Analysis', fontsize=16, fontweight='bold')
     
     # Plot 1: Correlation over time
-    axes[0].plot(df['epoch'], df['correlation_mean'], marker='o', linewidth=2, markersize=4, 
+    # Use mean_correlation from callback (no std available in simple mode)
+    corr_col = 'mean_correlation' if 'mean_correlation' in df.columns else 'correlation_mean'
+    axes[0].plot(df['epoch'], df[corr_col], marker='o', linewidth=2, markersize=4,
                  color='#06A77D', label='Mean Correlation')
-    axes[0].fill_between(df['epoch'], 
-                         df['correlation_mean'] - df['correlation_std'],
-                         df['correlation_mean'] + df['correlation_std'],
+    if 'correlation_std' in df.columns:
+        axes[0].fill_between(df['epoch'],
+                         df[corr_col] - df['correlation_std'],
+                         df[corr_col] + df['correlation_std'],
                          alpha=0.3, color='#06A77D', label='±1 Std Dev')
     axes[0].set_ylabel('Correlation Coefficient', fontsize=12, fontweight='bold')
     axes[0].set_xlabel('Epoch', fontsize=12)
@@ -117,8 +137,9 @@ def plot_correlation_analysis(df: pd.DataFrame, output_path: str, model_name: st
     axes[0].set_title('Mean Correlation Over Training', fontsize=11)
     
     # Plot 2: Distribution histogram for last epoch
-    last_mean = df['correlation_mean'].iloc[-1]
-    last_std = df['correlation_std'].iloc[-1]
+    corr_col = 'mean_correlation' if 'mean_correlation' in df.columns else 'correlation_mean'
+    last_mean = df[corr_col].iloc[-1]
+    last_std = df.get('correlation_std', pd.Series([0.1])).iloc[-1] if 'correlation_std' in df.columns else 0.1
     
     # Simulate distribution for visualization (since we only have mean/std)
     simulated_corr = np.random.normal(last_mean, last_std, 1000)

@@ -211,7 +211,7 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
              distill=False, teacher_weights=None, alpha=None, temperature=None,
              augment=True, config_path="config/config.yaml",
              enable_nas_monitoring=False, nas_log_dir=None, nas_csv_path=None,
-             nas_log_freq='epoch', nas_monitor_batch_freq=10):
+             nas_log_freq='epoch', nas_monitor_batch_freq=10, nas_layer_selectors=None):
     
     # Load configuration
     config = load_config(config_path)
@@ -304,17 +304,23 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
             nas_log_dir = resolve_path(nas_log_dir)
         
         if nas_csv_path is None:
-            nas_csv_path = nas_config.get("csv_path", f"logs/nas/{model_name}_nas_metrics.csv")
-            nas_csv_path = resolve_path(nas_csv_path)
+            nas_csv_path = nas_config.get("csv_path")
+            # Handle null/None values from config by using default path
+            if nas_csv_path is None:
+                nas_csv_path = f"logs/nas/{model_name}_nas_metrics.csv"
+        nas_csv_path = resolve_path(nas_csv_path)
         
-        # Ensure log directory exists
-        os.makedirs(os.path.dirname(nas_csv_path), exist_ok=True)
+        # Ensure log directory exists (only if CSV has a directory part)
+        csv_dir = os.path.dirname(nas_csv_path)
+        if csv_dir:  # Only create if there's a directory part
+            os.makedirs(csv_dir, exist_ok=True)
         
         nas_callback = NASMonitorCallback(
+            validation_data=val_ds,  # Pass validation dataset
             log_dir=nas_log_dir,
             csv_path=nas_csv_path,
-            log_freq=nas_log_freq,
-            monitor_batch_freq=nas_monitor_batch_freq
+            monitor_frequency=nas_log_freq,
+            log_frequency=nas_monitor_batch_freq
         )
         print(f"✓ NAS monitoring enabled: logs={nas_log_dir}, csv={nas_csv_path}")
 

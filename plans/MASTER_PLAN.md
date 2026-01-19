@@ -24,54 +24,115 @@
 ### Project Goal
 Nano-U is a tiny segmentation model for ESP32-S3 deployment. The project evolved from a working PyTorch implementation but became overcomplicated during the TensorFlow port with architectural mismatches and broken NAS integration.
 
-### What We're Fixing
-1. ✅ **Nano_U Architecture**: Remove skip connections to match original simple autoencoder **[COMPLETED]**
-2. ✅ **NAS Integration**: Replace broken ActivationExtractor with simple callback-based monitoring **[COMPLETED]**
-3. ✅ **Code Simplification**: Remove complex nested model workarounds **[COMPLETED]**
-4. ✅ **Visualization**: Add comprehensive metrics plotting for NAS analysis **[COMPLETED]**
+### What We've Completed
+1. ✅ **Nano_U Architecture**: Removed skip connections to match original simple autoencoder **[COMPLETED]**
+2. ✅ **NAS Integration**: Replaced broken ActivationExtractor with callback-based monitoring **[COMPLETED]**
+3. ✅ **Code Simplification**: Removed complex nested model workarounds **[COMPLETED]**
+4. ✅ **Visualization**: Added comprehensive metrics plotting (4 plot types) **[COMPLETED]**
+5. ✅ **Test Suite**: 13/13 tests passing for NAS callback **[COMPLETED]**
+6. ✅ **Bug Fixes**: Fixed 5 critical bugs in training and plotting **[COMPLETED]**
+
+### Critical Issue Remaining
+⚠️ **NAS Monitoring Returns Zero Metrics**: The callback monitors model OUTPUT (single channel) instead of internal CONV layers. For meaningful analysis, need to add layer selector support to monitor internal activations.
 
 ### Key Decisions Made
 - **Architecture Philosophy**: Nano_U = Simple autoencoder (NO skip connections)
-- **NAS Approach**: Option 1 - Callback-based monitoring (non-invasive, compatible with any model)
-- **Priority**: Get basic training working first, then enhance with NAS monitoring
+- **NAS Approach**: Callback-based monitoring (non-invasive, compatible with any model)
+- **Priority**: Training works, NAS integrated but needs enhancement for internal layer monitoring
 
 ---
 
-## Critical Issues Found
+## Critical Issues - Status Update
 
-### Issue #1: Nano_U Has Wrong Architecture ⚠️
-**Problem**: Current implementation has U-Net skip connections, but old working version didn't have them
+### Issue #1: Nano_U Had Wrong Architecture ✅ FIXED
+**Problem**: Had U-Net skip connections, but old working version didn't have them
 
-**Impact**: 
-- Architecture doesn't match proven implementation
-- ~19K parameters vs expected ~41K (when using old config)
-- May not perform as well as original
+**Fix Applied**: Removed skip connections from [`src/models/Nano_U/model_tf.py:84-110`](../src/models/Nano_U/model_tf.py)
 
-**Fix**: Remove skip connections from [`src/models/Nano_U/model_tf.py:84-110`](../src/models/Nano_U/model_tf.py)
+**Result**: Architecture now matches original simple autoencoder
 
-### Issue #2: NAS Layer Detection Completely Broken ⚠️
-**Problem**: ActivationExtractor can't find layers in nested subclassed models
+---
 
-**Root Cause**:
+### Issue #2: NAS Layer Detection Was Broken ✅ PARTIALLY FIXED
+**Problem**: ActivationExtractor couldn't find layers in nested subclassed models
+
+**Fix Applied**: Replaced with callback-based monitoring (doesn't need layer introspection)
+
+**Current Status**: ✅ Callback works, but ⚠️ monitors OUTPUT instead of internal layers
+
+**Remaining Problem**: For single-output segmentation (1 channel), covariance analysis yields:
+- `trace = 0` (sum of eigenvalues for 1×1 matrix)
+- `condition_number = 1` (only one eigenvalue)
+- `redundancy_score = 0` (no off-diagonal elements)
+
+**Solution Needed**: Modify `NASMonitorCallback` to accept layer selectors and use `ActivationExtractor` internally:
+
 ```python
-# Functional wrapper contains subclassed model
-build_nano_u() → Functional Model
-    └── layers = [Input, Nano_U instance, ...]  # Nano_U is ONE layer
-                         └── layers = [encoder_conv_0, ...]  # Internal layers NOT accessible
-
-# ActivationExtractor searches student_model.layers → finds nothing
+# Proposed fix:
+nas_callback = NASMonitorCallback(
+    validation_data=val_ds,
+    layer_selectors=["encoder_conv1", "encoder_conv2", "bottleneck"],  # NEW
+    log_dir="logs/nas"
+)
 ```
 
-**Impact**: NAS training silently fails, no regularization applied
+**Priority**: HIGH - blocks useful NAS analysis
 
-**Fix**: Replace with callback-based monitoring (doesn't need layer introspection)
+---
 
-### Issue #3: Overcomplicated Workarounds
+### Issue #3: Overcomplicated Workarounds ✅ FIXED
 **Problem**: `inner_model` parameter passed around trying to fix issue #2
 
-**Impact**: Complex, fragile code that still doesn't work
+**Fix Applied**: Removed all workarounds, simplified `train_with_nas.py` to delegate to `train.py`
 
-**Fix**: Remove all workarounds, use clean callback approach
+**Result**: Clean, maintainable code
+
+---
+
+## NEW ISSUES DISCOVERED & FIXED
+
+### Bug #4: Directory Creation Failure ✅ FIXED
+**File**: [`src/train.py:311-313`](../src/train.py)
+**Problem**: `os.makedirs(os.path.dirname('file.csv'))` fails when dirname returns empty string
+
+**Fix**:
+```python
+csv_dir = os.path.dirname(nas_csv_path)
+if csv_dir:  # Only create if there's a directory part
+    os.makedirs(csv_dir, exist_ok=True)
+```
+
+---
+
+### Bug #5: NASMonitorCallback Parameter Mismatch ✅ FIXED
+**File**: [`src/train.py:315-321`](../src/train.py)
+**Problem**: Wrong parameter names when initializing callback
+
+**Fix**: Changed `log_freq` → `monitor_frequency`, `monitor_batch_freq` → `log_frequency`, added `validation_data` parameter
+
+---
+
+### Bug #6: Missing validation_data in Callback ✅ FIXED
+**File**: [`src/nas_covariance.py:619`](../src/nas_covariance.py)
+**Problem**: Keras doesn't automatically pass `validation_data` to callbacks
+
+**Fix**: Modified `NASMonitorCallback.__init__()` to accept `validation_data` as explicit parameter
+
+---
+
+### Bug #7: Seaborn Import Error ✅ FIXED
+**File**: [`src/plot_nas_metrics.py:32-37`](../src/plot_nas_metrics.py)
+**Problem**: Hard requirement on seaborn which isn't installed
+
+**Fix**: Made seaborn optional with try/except import
+
+---
+
+### Bug #8: Column Name Mismatch in Plots ✅ FIXED
+**File**: [`src/plot_nas_metrics.py:45-66`](../src/plot_nas_metrics.py)
+**Problem**: Code expected `correlation_mean` but CSV saved `mean_correlation`
+
+**Fix**: Added normalization logic in `load_nas_metrics()` to handle both column names
 
 ---
 

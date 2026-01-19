@@ -105,7 +105,18 @@ nas:
   
   # Logging configuration
   log_dir: "logs/nas"           # Directory for TensorBoard logs
-  csv_path: null                # CSV output path (null = auto-generate based on model name)
+  csv_path: "logs/nas/nas_metrics.csv"  # CSV output path (auto-generated filename: {model_name}_nas_metrics.csv)
+  
+  # Layer monitoring (NEW)
+  # Specify which layers to monitor for redundancy analysis
+  # If null/empty, monitors model output (may return zero for single-channel segmentation)
+  # Options:
+  #   - List of exact layer names: ['encoder_conv_0', 'encoder_conv_1', 'bottleneck']
+  #   - Regex patterns: ['/conv.*/'] matches all layers with 'conv' in the name
+  #   - null: monitor output only (default)
+  layer_selectors: null
+  # Example for Nano_U internal monitoring:
+  # layer_selectors: ['encoder_conv_0', 'encoder_conv_1', 'encoder_conv_2', 'bottleneck']
   
   # Monitoring frequency
   log_freq: "epoch"             # Options: "epoch" or "batch"

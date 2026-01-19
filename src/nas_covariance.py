@@ -589,13 +589,16 @@ class NASMonitorCallback(tf.keras.callbacks.Callback):
     Non-invasive NAS monitoring via Keras callback.
     
     Monitors feature redundancy during training by computing covariance
-    statistics on model outputs. Works with any model architecture without
-    requiring layer introspection.
+    statistics on model outputs OR internal layer activations. Works with any
+    model architecture.
     
     Args:
         validation_data: Validation dataset (tf.data.Dataset or tuple of arrays).
                         Required if you want to monitor redundancy during training.
                         Pass the same validation_data you use in model.fit().
+        layer_selectors: Optional list of layer names or regex patterns to monitor.
+                        If None, monitors model output (may return zeros for single-channel output).
+                        Examples: ['encoder_conv1', 'bottleneck'], or ['/conv.*/'] for regex.
         monitor_frequency: 'batch' or 'epoch' - when to compute metrics
         log_frequency: Log every N batches/epochs
         redundancy_weight: Optional weight for adding redundancy to loss (not implemented yet)
@@ -603,7 +606,7 @@ class NASMonitorCallback(tf.keras.callbacks.Callback):
         save_history: Save metrics to CSV at end of training
         csv_path: Path for CSV file (default: 'nas_metrics.csv')
     
-    Example:
+    Example (monitor output):
         >>> val_ds = ...  # your validation dataset
         >>> callback = NASMonitorCallback(
         ...     validation_data=val_ds,
@@ -613,10 +616,20 @@ class NASMonitorCallback(tf.keras.callbacks.Callback):
         ...     save_history=True
         ... )
         >>> model.fit(train_ds, validation_data=val_ds, callbacks=[callback])
+    
+    Example (monitor internal layers):
+        >>> callback = NASMonitorCallback(
+        ...     validation_data=val_ds,
+        ...     layer_selectors=['encoder_conv_0', 'encoder_conv_1', 'bottleneck'],
+        ...     monitor_frequency='epoch',
+        ...     log_dir='logs/nas'
+        ... )
+        >>> model.fit(train_ds, validation_data=val_ds, callbacks=[callback])
     """
     
     def __init__(self,
                  validation_data=None,
+                 layer_selectors=None,
                  monitor_frequency='epoch',
                  log_frequency=1,
                  redundancy_weight=0.0,
@@ -625,12 +638,16 @@ class NASMonitorCallback(tf.keras.callbacks.Callback):
                  csv_path='nas_metrics.csv'):
         super().__init__()
         self.validation_data = validation_data
+        self.layer_selectors = layer_selectors
         self.monitor_frequency = monitor_frequency
         self.log_frequency = log_frequency
         self.redundancy_weight = redundancy_weight
         self.log_dir = log_dir
         self.save_history = save_history
         self.csv_path = csv_path
+        
+        # Extractor will be initialized in on_train_begin when model is available
+        self.extractor = None
         
         # Metrics storage
         self.redundancy_history = []

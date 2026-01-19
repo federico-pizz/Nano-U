@@ -1,0 +1,4 @@
+epoch,redundancy_score,mean_correlation,trace,condition_number
+0,0.0,0.0,0.0,1.0
+10,0.0,0.0,0.0,1.0
+20,0.0,0.0,0.0,1.0
