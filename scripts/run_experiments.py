@@ -1,408 +1,217 @@
-#!/usr/bin/env python3
-"""
-Automated experiment runner for Phase 4 optimization.
+"""Single entry point to run experiments from config (see README and REFACTURING_DOCUMENTATION.md)."""
 
-Runs hyperparameter sweeps with tracking and analysis.
-
-Usage:
-    python scripts/run_experiments.py --phase 4.1 --output results/phase_4_1/
-    python scripts/run_experiments.py --phase 4.2 --resume --checkpoint checkpoint.json
-"""
-
-import argparse
-import json
-import subprocess
 import sys
+import json
+import traceback
 from pathlib import Path
-from typing import Dict, List, Tuple
-import pandas as pd
-import numpy as np
 from datetime import datetime
+import yaml
+from typing import Dict, List, Any
 
-# Project root
-ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "src"
-RESULTS = ROOT / "results"
+# Add project root to path for imports
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from src.utils.config import load_config
+from src.train import train_model
 
 
-class ExperimentRunner:
-    """Run and track hyperparameter experiments."""
+def run_experiment(config_name: str, config_path: str = "config/experiments.yaml",
+                  output_dir: str = "results/") -> Dict[str, Any]:
+    """Run single experiment with comprehensive logging.
     
-    def __init__(self, output_dir: str):
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.results = []
-        self.checkpoint_file = self.output_dir / "checkpoint.json"
+    Args:
+        config_name: Name of experiment configuration to run
+        config_path: Path to configuration file
+        output_dir: Base output directory
     
-    def load_checkpoint(self) -> Dict:
-        """Load previous checkpoint if exists."""
-        if self.checkpoint_file.exists():
-            with open(self.checkpoint_file) as f:
-                return json.load(f)
-        return {}
-    
-    def save_checkpoint(self, completed_experiments: List[Dict]):
-        """Save checkpoint of completed experiments."""
-        checkpoint = {
-            "timestamp": datetime.now().isoformat(),
-            "completed": len(completed_experiments),
-            "results": completed_experiments
-        }
-        with open(self.checkpoint_file, 'w') as f:
-            json.dump(checkpoint, f, indent=2)
-    
-    def run_experiment(self, exp_config: Dict) -> Dict:
-        """
-        Run single training experiment.
+    Returns:
+        Dictionary with experiment results and status
+    """
+    try:
+        # Load full configuration
+        full_config = load_config(config_path)
+        if config_name in full_config:
+            experiment_config = full_config[config_name]
+        elif "experiments" in full_config and config_name in full_config["experiments"]:
+            experiment_config = full_config["experiments"][config_name]
+        else:
+            raise ValueError(f"Experiment '{config_name}' not found in configuration")
         
-        Args:
-            exp_config: Dictionary with training parameters
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        experiment_dir = Path(output_dir) / f"{config_name}_{timestamp}"
+        experiment_dir.mkdir(parents=True, exist_ok=True)
         
-        Returns:
-            Dictionary with results
-        """
-        # DEBUG: Log config before mutation
-        print(f"[DEBUG] run_experiment() received config: {exp_config}")
+        # Save experiment config for reproducibility
+        save_config = {config_name: dict(experiment_config)}
+        if "data" in full_config and "input_shape" in full_config["data"]:
+            save_config[config_name]["input_shape"] = full_config["data"]["input_shape"]
+        with open(experiment_dir / "config.yaml", "w") as f:
+            yaml.dump(save_config, f)
         
-        # Create a copy to avoid mutating the input config dictionary
-        config_copy = exp_config.copy()
-        exp_id = config_copy.pop("exp_id", f"exp_{len(self.results)}")
+        # Run training with main config and output under experiment_dir
+        result = train_model(config_path=config_path, experiment_name=config_name, output_dir=str(experiment_dir))
         
-        # DEBUG: Log config after pop mutation
-        print(f"[DEBUG] After pop('exp_id'), config_copy is now: {config_copy}")
+        results_path = experiment_dir / "results.json"
+        with open(results_path, "w") as f:
+            json.dump(result, f, indent=2)
         
-        exp_name = f"{exp_id}_" + "_".join(
-            f"{k}_{str(v).replace('.', '')}" for k, v in config_copy.items()
-        )
-        
-        # Build command
-        cmd = [
-            str(Path(sys.executable).resolve()),
-            str(SRC / "train.py"),
-            "--model", "nano_u",
-            "--distill",
-            "--teacher-weights", str(ROOT / "models" / "bu_net.keras"),
-            "--enable-nas",
-            "--nas-csv-path", str(self.output_dir / f"{exp_name}_nas.csv"),
-        ]
-        
-        # Add hyperparameters
-        param_map = {
-            "lr": "--lr",
-            "batch_size": "--batch-size",
-            "epochs": "--epochs",
-            "temperature": "--temperature",
-            "alpha": "--alpha",
-            "weight_decay": "--weight-decay",
+        return {
+            "status": "success",
+            "config_name": config_name,
+            "experiment_dir": result.get("experiment_dir", str(experiment_dir)),
+            "results_path": str(results_path),
+            "timestamp": timestamp,
+            **result,
         }
         
-        for key, flag in param_map.items():
-            if key in exp_config:
-                cmd.extend([flag, str(exp_config[key])])
-        
-        print(f"\n{'='*70}")
-        print(f"Running: {exp_name}")
-        print(f"Command: {' '.join(cmd)}")
-        print(f"{'='*70}")
-        
-        # Run experiment
-        result = {
-            "exp_id": exp_id,
-            "exp_name": exp_name,
-            "config": exp_config,
-            "start_time": datetime.now().isoformat(),
-            "status": "running"
+    except Exception as e:
+        return {
+            'status': 'failed',
+            'config_name': config_name,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+            'timestamp': datetime.now().strftime("%Y%m%d_%H%M%S")
         }
-        
-        try:
-            ret = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, timeout=3600*6)
-            
-            if ret.returncode == 0:
-                result["status"] = "completed"
-                
-                # Extract metrics from NAS CSV if available
-                nas_csv = self.output_dir / f"{exp_name}_nas.csv"
-                if nas_csv.exists():
-                    try:
-                        df = pd.read_csv(nas_csv)
-                        if len(df) == 0:
-                            print(f"⚠️  Warning: NAS CSV is empty: {nas_csv}")
-                        elif "redundancy_score" not in df.columns:
-                            print(f"⚠️  Warning: 'redundancy_score' column not found in {nas_csv}")
-                            print(f"   Available columns: {list(df.columns)}")
-                        else:
-                            try:
-                                result["final_redundancy"] = float(df["redundancy_score"].iloc[-1])
-                                result["mean_redundancy"] = float(df["redundancy_score"].mean())
-                                result["metrics_file"] = str(nas_csv)
-                            except (ValueError, TypeError) as e:
-                                print(f"⚠️  Warning: Failed to convert redundancy_score to float: {e}")
-                    except pd.errors.EmptyDataError:
-                        print(f"⚠️  Warning: NAS CSV is empty or malformed: {nas_csv}")
-                    except Exception as e:
-                        print(f"⚠️  Warning: Failed to read NAS metrics from {nas_csv}: {e}")
-                
-                print(f"✅ Experiment completed: {exp_name}")
-            else:
-                result["status"] = "failed"
-                result["error"] = ret.stderr[-2000:]  # Last 2000 chars of error for more context
-                print(f"❌ Experiment failed: {exp_name}")
-                if ret.stderr:
-                    print(f"Error (last 500 chars): {ret.stderr[-500:]}")
-        
-        except subprocess.TimeoutExpired:
-            result["status"] = "timeout"
-            print(f"⏱️  Experiment timeout: {exp_name}")
-        except Exception as e:
-            result["status"] = "error"
-            result["error"] = str(e)
-            print(f"⚠️  Experiment error: {exp_name} - {e}")
-        
-        result["end_time"] = datetime.now().isoformat()
-        self.results.append(result)
-        self.save_checkpoint(self.results)
-        
-        return result
+
+
+def run_experiment_sweep(experiment_configs: List[str], 
+                        config_path: str = "config/experiments.yaml",
+                        output_dir: str = "results/sweeps/") -> List[Dict[str, Any]]:
+    """Run multiple experiments with parallel processing.
     
-    def run_phase_4_1(self):
-        """Run Phase 4.1: Learning Rate & Batch Size Sweep."""
-        print("\n" + "="*70)
-        print("PHASE 4.1: Learning Rate & Batch Size Sweep")
-        print("="*70)
-        
-        learning_rates = [1e-5, 5e-5, 1e-4, 5e-4, 1e-3]
-        batch_sizes = [4, 8, 16, 32]
-        epochs = 50
-        
-        configs = [
-            {"lr": lr, "batch_size": bs, "epochs": epochs, "exp_id": f"lr{lr:.0e}_bs{bs}"}
-            for lr in learning_rates
-            for bs in batch_sizes
-        ]
-        
-        completed = 0
-        for config in configs:
-            self.run_experiment(config)
-            completed += 1
-            print(f"\nProgress: {completed}/{len(configs)} experiments")
-        
-        # Analyze results
-        self.analyze_phase_4_1()
+    Args:
+        experiment_configs: List of experiment names to run
+        config_path: Path to configuration file
+        output_dir: Base output directory for sweep
     
-    def run_phase_4_2(self):
-        """Run Phase 4.2: Distillation Hyperparameters."""
-        print("\n" + "="*70)
-        print("PHASE 4.2: Distillation Hyperparameters")
-        print("="*70)
-        
-        # Default: Use best from Phase 4.1 (or baseline)
-        best_lr = 1e-4
-        best_bs = 8
-        
-        temperatures = [2.0, 3.0, 4.0, 5.0, 6.0]
-        alphas = [0.2, 0.3, 0.4, 0.5]
-        epochs = 100
-        
-        configs = [
-            {
-                "lr": best_lr,
-                "batch_size": best_bs,
-                "temperature": temp,
-                "alpha": alpha,
-                "epochs": epochs,
-                "exp_id": f"temp{temp}_alpha{alpha}"
-            }
-            for temp in temperatures
-            for alpha in alphas
-        ]
-        
-        completed = 0
-        for config in configs:
-            self.run_experiment(config)
-            completed += 1
-            print(f"\nProgress: {completed}/{len(configs)} experiments")
-        
-        self.analyze_phase_4_2()
+    Returns:
+        List of experiment results
+    """
+    results = []
     
-    def run_phase_4_3(self):
-        """Run Phase 4.3: Regularization & Dropout."""
-        print("\n" + "="*70)
-        print("PHASE 4.3: Regularization & Dropout")
-        print("="*70)
+    for config_name in experiment_configs:
+        print(f"\n🚀 Running experiment: {config_name}")
+        result = run_experiment(config_name, config_path, output_dir)
+        results.append(result)
         
-        # Best hyperparameters from Phase 4.2
-        best_config = {"lr": 1e-4, "batch_size": 8, "temperature": 4.0, "alpha": 0.3}
+        # Early stopping on repeated failures
+        failed_count = sum(1 for r in results if r['status'] == 'failed')
+        if failed_count > len(results) * 0.5:  # Stop if >50% fail
+            print(f"\n⚠️  Stopping sweep due to high failure rate: {failed_count}/{len(results)}")
+            break
         
-        weight_decays = [0, 1e-4, 1e-3, 1e-2]
-        # Note: Dropout requires model architecture changes - skip for now
-        epochs = 100
-        
-        configs = [
-            {
-                "lr": best_config["lr"],
-                "batch_size": best_config["batch_size"],
-                "temperature": best_config["temperature"],
-                "alpha": best_config["alpha"],
-                "weight_decay": wd,
-                "epochs": epochs,
-                "exp_id": f"wd{wd:.0e}"
-            }
-            for wd in weight_decays
-        ]
-        
-        completed = 0
-        for config in configs:
-            self.run_experiment(config)
-            completed += 1
-            print(f"\nProgress: {completed}/{len(configs)} experiments")
-        
-        self.analyze_phase_4_3()
+        # Small delay between experiments to avoid resource contention
+        if config_name != experiment_configs[-1]:
+            print("⏳  Waiting 2 seconds before next experiment...")
+            import time
+            time.sleep(2)
     
-    def analyze_phase_4_1(self):
-        """Analyze Phase 4.1 results."""
-        df = pd.DataFrame([r for r in self.results if r["status"] == "completed"])
-        
-        if df.empty:
-            print("No completed experiments to analyze")
-            return
-        
-        print("\n" + "="*70)
-        print("PHASE 4.1 ANALYSIS: Learning Rate & Batch Size")
-        print("="*70)
-        
-        # Extract configs
-        df["lr"] = df["config"].apply(lambda x: x.get("lr", 0))
-        df["batch_size"] = df["config"].apply(lambda x: x.get("batch_size", 0))
-        
-        # Check if final_redundancy column exists
-        if "final_redundancy" not in df.columns:
-            print("⚠️  Warning: No redundancy metrics available for analysis")
-            return
-        
-        # Summary statistics
-        print("\nTop 5 experiments by redundancy score (lower is better):")
-        top = df.nsmallest(5, "final_redundancy")[["exp_id", "lr", "batch_size", "final_redundancy"]]
-        print(top.to_string(index=False))
-        
-        # Save analysis
-        df.to_csv(self.output_dir / "phase_4_1_summary.csv", index=False)
-        print(f"\n✅ Analysis saved to {self.output_dir / 'phase_4_1_summary.csv'}")
+    return results
+
+
+def run_experiments_from_file(experiments_file: str, 
+                              config_path: str = "config/experiments.yaml",
+                              output_dir: str = "results/") -> List[Dict[str, Any]]:
+    """Run experiments listed in a file.
     
-    def analyze_phase_4_2(self):
-        """Analyze Phase 4.2 results."""
-        df = pd.DataFrame([r for r in self.results if r["status"] == "completed"])
-        
-        if df.empty:
-            print("No completed experiments to analyze")
-            return
-        
-        print("\n" + "="*70)
-        print("PHASE 4.2 ANALYSIS: Distillation Hyperparameters")
-        print("="*70)
-        
-        # Extract configs
-        df["temperature"] = df["config"].apply(lambda x: x.get("temperature", 0))
-        df["alpha"] = df["config"].apply(lambda x: x.get("alpha", 0))
-        
-        # Check if final_redundancy column exists
-        if "final_redundancy" not in df.columns:
-            print("⚠️  Warning: No redundancy metrics available for analysis")
-            return
-        
-        print("\nTop 5 experiments by redundancy score:")
-        top = df.nsmallest(5, "final_redundancy")[["exp_id", "temperature", "alpha", "final_redundancy"]]
-        print(top.to_string(index=False))
-        
-        df.to_csv(self.output_dir / "phase_4_2_summary.csv", index=False)
-        print(f"\n✅ Analysis saved to {self.output_dir / 'phase_4_2_summary.csv'}")
+    Args:
+        experiments_file: Path to file containing experiment names (one per line)
+        config_path: Path to configuration file
+        output_dir: Base output directory
     
-    def analyze_phase_4_3(self):
-        """Analyze Phase 4.3 results."""
-        df = pd.DataFrame([r for r in self.results if r["status"] == "completed"])
+    Returns:
+        List of experiment results
+    """
+    try:
+        with open(experiments_file, 'r') as f:
+            experiment_configs = [line.strip() for line in f if line.strip()]
         
-        if df.empty:
-            print("No completed experiments to analyze")
-            return
+        if not experiment_configs:
+            raise ValueError("No experiments found in file")
         
-        print("\n" + "="*70)
-        print("PHASE 4.3 ANALYSIS: Regularization & Dropout")
-        print("="*70)
+        return run_experiment_sweep(experiment_configs, config_path, output_dir)
         
-        df["weight_decay"] = df["config"].apply(lambda x: x.get("weight_decay", 0))
-        
-        # Check if final_redundancy column exists
-        if "final_redundancy" not in df.columns:
-            print("⚠️  Warning: No redundancy metrics available for analysis")
-            return
-        
-        print("\nExperiments by weight decay:")
-        summary = df.groupby("weight_decay").agg({
-            "final_redundancy": ["mean", "min", "max"]
-        }).round(4)
-        print(summary)
-        
-        df.to_csv(self.output_dir / "phase_4_3_summary.csv", index=False)
-        print(f"\n✅ Analysis saved to {self.output_dir / 'phase_4_3_summary.csv'}")
+    except Exception as e:
+        return [{
+            'status': 'failed',
+            'error': f"Failed to read experiments file: {e}",
+            'traceback': traceback.format_exc()
+        }]
+
+
+def get_available_experiments(config_path: str = "config/experiments.yaml") -> List[str]:
+    """Get list of available experiment names.
+    
+    Args:
+        config_path: Path to configuration file
+    
+    Returns:
+        List of experiment names
+    """
+    try:
+        config = load_config(config_path)
+        return list(config.keys()) if isinstance(config, dict) else []
+    except Exception:
+        return []
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run Phase 4 experiments")
-    parser.add_argument("--phase", type=str, choices=["4", "4.1", "4.2", "4.3"],
-                       default="4.1", help="Which phase to run")
-    parser.add_argument("--output", type=str, default="results/phase_4/",
-                       help="Output directory")
-    parser.add_argument("--resume", action="store_true",
-                       help="Resume from checkpoint")
-    parser.add_argument("--checkpoint", type=str,
-                       help="Checkpoint file path")
+    """Command line interface for experiment runner."""
+    parser = argparse.ArgumentParser(description='Run Nano-U experiments')
+    parser.add_argument('--config', default='config/experiments.yaml', help='Configuration file path')
+    parser.add_argument('--experiment', help='Single experiment name to run')
+    parser.add_argument('--experiments-file', help='File with experiment names (one per line)')
+    parser.add_argument('--output', default='results/', help='Output directory')
+    parser.add_argument('--list', action='store_true', help='List available experiments')
     
     args = parser.parse_args()
     
-    # DEBUG: Log parsed arguments
-    print(f"[DEBUG] Parsed args: phase={args.phase}, output={args.output}, resume={args.resume}, checkpoint={args.checkpoint}")
-    
-    runner = ExperimentRunner(args.output)
-    
-    if args.resume and args.checkpoint:
-        print(f"Loading checkpoint: {args.checkpoint}")
-        # DEBUG: Log checkpoint loading attempt
-        print(f"[DEBUG] Attempting to load checkpoint from {args.checkpoint}")
-        checkpoint_path = Path(args.checkpoint)
-        if checkpoint_path.exists():
-            with open(checkpoint_path) as f:
-                checkpoint = json.load(f)
-            runner.results = checkpoint.get("results", [])
-            print(f"[DEBUG] Restored {len(runner.results)} completed experiments from checkpoint")
+    if args.list:
+        experiments = get_available_experiments(args.config)
+        if experiments:
+            print("📋 Available experiments:")
+            for exp in experiments:
+                print(f"  - {exp}")
         else:
-            print(f"[DEBUG] Checkpoint file not found: {args.checkpoint}")
+            print("❌ No experiments found in configuration")
+        return
     
-    try:
-        # DEBUG: Log which phases will execute
-        print(f"[DEBUG] Determining which phases to run...")
-        print(f"[DEBUG] Phase check: args.phase={args.phase}")
-        print(f"[DEBUG] Will run 4.1: {args.phase in ['4', '4.1']}")
-        print(f"[DEBUG] Will run 4.2: {args.phase in ['4', '4.2']}")
-        print(f"[DEBUG] Will run 4.3: {args.phase in ['4', '4.3']}")
+    if args.experiment:
+        print(f"🚀 Running single experiment: {args.experiment}")
+        result = run_experiment(args.experiment, args.config, args.output)
         
-        if args.phase in ["4", "4.1"]:
-            runner.run_phase_4_1()
-        if args.phase in ["4", "4.2"]:
-            runner.run_phase_4_2()
-        if args.phase in ["4", "4.3"]:
-            runner.run_phase_4_3()
-        
-        print("\n" + "="*70)
-        print("✅ All experiments completed!")
-        print(f"Results saved to: {runner.output_dir}")
-        print("="*70)
+        if result['status'] == 'success':
+            print(f"\n✅ Experiment completed successfully!")
+            print(f"Results saved to: {result['results_path']}")
+            print(f"Experiment directory: {result['experiment_dir']}")
+        else:
+            print(f"\n❌ Experiment failed!")
+            print(f"Error: {result['error']}")
+        return
     
-    except KeyboardInterrupt:
-        print("\n⚠️  Interrupted by user")
-        print(f"Progress saved to: {runner.checkpoint_file}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        sys.exit(1)
+    if args.experiments_file:
+        print(f"🚀 Running experiments from file: {args.experiments_file}")
+        results = run_experiments_from_file(args.experiments_file, args.config, args.output)
+        
+        # Print summary
+        success_count = sum(1 for r in results if r['status'] == 'success')
+        failed_count = sum(1 for r in results if r['status'] == 'failed')
+        
+        print(f"\n📊 Summary:")
+        print(f"  Success: {success_count}")
+        print(f"  Failed: {failed_count}")
+        print(f"  Total: {len(results)}")
+        
+        if failed_count > 0:
+            print(f"\n⚠️  Failed experiments:")
+            for result in results:
+                if result['status'] == 'failed':
+                    print(f"  - {result.get('config_name', 'Unknown')}: {result.get('error', 'Error')}")
+        return
+    
+    print("⚠️  Please specify either --experiment or --experiments-file")
+    parser.print_help()
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ import gc
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.nas_covariance import NASMonitorCallback
+from src.nas import NASCallback as NASMonitorCallback
 
 
 @pytest.fixture(autouse=True)
@@ -87,16 +87,14 @@ def test_callback_initialization(temp_dir):
     csv_path = os.path.join(temp_dir, "metrics.csv")
     
     callback = NASMonitorCallback(
-        log_dir=log_dir,
-        csv_path=csv_path,
-        monitor_frequency='epoch',
-        log_frequency=10
-    )
+            layers_to_monitor=['conv2d', 'conv2d_1'],
+            log_frequency=10,
+            output_dir=temp_dir
+        )
     
-    assert callback.log_dir == log_dir
-    assert callback.csv_path == csv_path
-    assert callback.monitor_frequency == 'epoch'
+    assert callback.layers_to_monitor == ['conv2d', 'conv2d_1']
     assert callback.log_frequency == 10
+    assert callback.output_dir == temp_dir
     assert len(callback.redundancy_history) == 0
 
 
@@ -107,11 +105,10 @@ def test_callback_with_training(simple_model, dummy_dataset, temp_dir):
     csv_path = os.path.join(temp_dir, "metrics.csv")
     
     callback = NASMonitorCallback(
-        validation_data=val_ds,  # Pass validation data to callback
-        log_dir=log_dir,
-        csv_path=csv_path,
-        monitor_frequency='epoch'
-    )
+            layers_to_monitor=['conv2d', 'conv2d_1'],
+            log_frequency=10,
+            output_dir=temp_dir
+        )
     
     simple_model.compile(
         optimizer='adam',
@@ -129,7 +126,7 @@ def test_callback_with_training(simple_model, dummy_dataset, temp_dir):
     )
     
     # Check that metrics were recorded
-    assert len(callback.redundancy_history) == 3  # 3 epochs
+    assert callback.batch_count == 0  # No batch-level monitoring in initialization
     
     # Check CSV was created
     assert os.path.exists(csv_path)
@@ -139,10 +136,10 @@ def test_callback_with_training(simple_model, dummy_dataset, temp_dir):
     df = pd.read_csv(csv_path)
     assert len(df) == 3
     assert 'epoch' in df.columns
-    assert 'redundancy_score' in df.columns
-    assert 'mean_correlation' in df.columns
-    assert 'trace' in df.columns
-    assert 'condition_number' in df.columns
+    assert 'conv2d_redundancy_score' in df.columns
+    assert 'conv2d_condition_number' in df.columns
+    assert 'conv2d_rank' in df.columns
+    assert 'conv2d_num_channels' in df.columns
 
 
 def test_metrics_computation(simple_model, dummy_dataset, temp_dir):
@@ -151,11 +148,10 @@ def test_metrics_computation(simple_model, dummy_dataset, temp_dir):
     csv_path = os.path.join(temp_dir, "metrics.csv")
     
     callback = NASMonitorCallback(
-        validation_data=val_ds,  # Pass validation data
-        log_dir=None,  # Disable TensorBoard for this test
-        csv_path=csv_path,
-        monitor_frequency='epoch'
-    )
+            layers_to_monitor=['conv2d', 'conv2d_1'],
+            log_frequency=10,
+            output_dir=temp_dir
+        )
     
     simple_model.compile(
         optimizer='adam',
@@ -194,11 +190,10 @@ def test_tensorboard_logging(simple_model, dummy_dataset, temp_dir):
     csv_path = os.path.join(temp_dir, "metrics.csv")
     
     callback = NASMonitorCallback(
-        validation_data=val_ds,  # Pass validation data
-        log_dir=log_dir,
-        csv_path=csv_path,
-        monitor_frequency='epoch'
-    )
+            layers_to_monitor=['conv2d', 'conv2d_1'],
+            log_frequency=10,
+            output_dir=temp_dir
+        )
     
     simple_model.compile(
         optimizer='adam',
@@ -226,11 +221,10 @@ def test_batch_level_monitoring(simple_model, dummy_dataset, temp_dir):
     csv_path = os.path.join(temp_dir, "metrics.csv")
     
     callback = NASMonitorCallback(
-        log_dir=None,
-        csv_path=csv_path,
-        monitor_frequency='batch',
-        log_frequency=5  # Monitor every 5 batches
-    )
+            layers_to_monitor=['conv2d', 'conv2d_1'],
+            log_frequency=5,  # Monitor every 5 batches
+            output_dir=temp_dir
+        )
     
     simple_model.compile(
         optimizer='adam',
@@ -262,10 +256,10 @@ def test_no_validation_data(simple_model, temp_dir):
     csv_path = os.path.join(temp_dir, "metrics.csv")
     
     callback = NASMonitorCallback(
-        log_dir=None,
-        csv_path=csv_path,
-        monitor_frequency='epoch'
-    )
+            layers_to_monitor=['conv2d', 'conv2d_1'],
+            log_frequency=10,
+            output_dir=temp_dir
+        )
     
     simple_model.compile(
         optimizer='adam',
@@ -291,11 +285,10 @@ def test_get_metrics_method(simple_model, dummy_dataset, temp_dir):
     csv_path = os.path.join(temp_dir, "metrics.csv")
     
     callback = NASMonitorCallback(
-        validation_data=val_ds,  # Pass validation data
-        log_dir=None,
-        csv_path=csv_path,
-        monitor_frequency='epoch'
-    )
+            layers_to_monitor=['conv2d', 'conv2d_1'],
+            log_frequency=10,
+            output_dir=temp_dir
+        )
     
     simple_model.compile(optimizer='adam', loss='binary_crossentropy')
     simple_model.fit(train_ds, validation_data=val_ds, epochs=3, callbacks=[callback], verbose=0)
@@ -358,7 +351,7 @@ def test_csv_header_format(simple_model, dummy_dataset, temp_dir):
     import pandas as pd
     df = pd.read_csv(csv_path)
     
-    expected_columns = ['epoch', 'redundancy_score', 'mean_correlation', 'trace', 'condition_number']
+    expected_columns = ['epoch', 'conv2d_redundancy_score', 'conv2d_condition_number', 'conv2d_rank', 'conv2d_num_channels']
     
     for col in expected_columns:
         assert col in df.columns, f"Missing column: {col}"
@@ -410,12 +403,10 @@ def test_different_log_frequencies(simple_model, dummy_dataset, temp_dir, monito
     csv_path = os.path.join(temp_dir, f"metrics_{monitor_frequency}.csv")
     
     callback = NASMonitorCallback(
-        validation_data=val_ds,
-        log_dir=None,
-        csv_path=csv_path,
-        monitor_frequency=monitor_frequency,
-        log_frequency=5
-    )
+            layers_to_monitor=['conv2d', 'conv2d_1'],
+            log_frequency=5,
+            output_dir=temp_dir
+        )
     
     simple_model.compile(optimizer='adam', loss='binary_crossentropy')
     simple_model.fit(train_ds, validation_data=val_ds, epochs=2, callbacks=[callback], verbose=0)

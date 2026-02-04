@@ -30,32 +30,42 @@ Target: ESP32-S3 (520KB SRAM, 8MB PSRAM)
 2. **Live NAS Integration**: Novel real-time redundancy monitoring during training
 3. **Microcontroller Deployment**: End-to-end ESP32-S3 inference pipeline
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 ```bash
 git clone https://github.com/yourusername/Nano-U.git
 cd Nano-U
-python -m venv .venv && source .venv/bin/activate
-pip install tensorflow numpy opencv-python PyYAML
+python -m venv .venv-tf && source .venv-tf/bin/activate  # or .venv on Windows
+pip install -r requirements.txt
 ```
 
-### Basic Training
+### Training (single experiment)
 ```bash
-# Train student model with knowledge distillation
-python src/train.py --model nano_u --distill --enable-nas
-
-# Run hyperparameter experiments
-python scripts/run_experiments.py --phase 4.1
+# From config: run one experiment by name (e.g. quick_test, standard, distillation)
+python src/train.py --config config/experiments.yaml --experiment quick_test --output results/
 ```
 
-### ESP32 Deployment
+### Running experiments (recommended)
 ```bash
-# Quantize model
-python src/quantize.py --model-name nano_u --output models/nano_u_int8.tflite
+# List experiments
+python scripts/run_experiments.py --config config/experiments.yaml --list
 
-# Deploy to ESP32-S3
-cd esp_flash && cargo build --release
+# Run one experiment
+python scripts/run_experiments.py --experiment quick_test --output results/
+```
+
+### Entry points (code)
+- **Models**: `from src.models import create_nano_u, create_bu_net, create_model_from_config`
+- **Training**: `from src.train import train_model, train_single_model, train_with_distillation`
+- **Experiments**: `scripts/run_experiments.py` is the single entry point to run experiments; it loads config, creates an output dir, and calls `train_model`. No separate `src/experiment.py` — see [REFACTURING_DOCUMENTATION.md](REFACTURING_DOCUMENTATION.md) for API and migration.
+- **Config**: `config/experiments.yaml` — one file for all experiment settings
+
+### Testing
+```bash
+# From project root (with venv activated)
+pytest tests/ -v
+# Integration tests (pipeline, NAS, model size): tests/test_pipeline.py
 ```
 
 ## 📊 Key Findings
@@ -67,13 +77,12 @@ cd esp_flash && cargo build --release
 | Quantized Size | - | ~10KB | 98.6% |
 | Target Latency | - | <100ms | - |
 
-## 🔧 Research Status
+## Research Status
 
-- ✅ **Architecture Design**: Depthwise separable CNN implemented
-- ✅ **Training Pipeline**: Knowledge distillation with NAS monitoring
-- ✅ **Quantization**: INT8 TensorFlow Lite conversion
-- ⚠️ **Runtime Issues**: Model instantiation bugs (see [DEVELOPMENT.md](DEVELOPMENT.md))
-- ⏳ **Hardware Validation**: ESP32-S3 benchmarking pending
+- **Architecture**: Depthwise separable U-Net (Functional API) in `src/models/`
+- **Training**: Unified pipeline in `src/train.py`; experiments via `scripts/run_experiments.py`
+- **NAS**: Lightweight callback in `src/nas.py` (redundancy metrics per epoch)
+- **Config**: Single `config/experiments.yaml`; old configs: `python scripts/migrate_config.py old.yaml new.yaml`
 
 ## 📚 Documentation
 

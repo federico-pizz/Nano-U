@@ -1,0 +1,249 @@
+# Unified configuration for Nano-U experiments
+
+# Global settings
+project:
+  name: "nano-u"
+  version: "1.0.0"
+  description: "Ultra-lightweight U-Net for microcontroller-based autonomous navigation"
+
+# Data configuration
+data:
+  # Input shape (height, width, channels)
+  input_shape: [48, 64, 3]
+  
+  # Number of output classes (1 for binary segmentation)
+  num_classes: 1
+  
+  # Normalization parameters
+  normalization:
+    mean: [0.5, 0.5, 0.5]
+    std: [0.5, 0.5, 0.5]
+  
+  # Data splitting strategy
+  split:
+    train: 0.7
+    validation: 0.2
+    test: 0.1
+  
+  # Dataset paths
+  paths:
+    raw_datasets:
+      - name: "tomatoes_scene1"
+        images: "data/TinyAgri/Tomatoes/scene1"
+        masks: "data/masks/Tomatoes/scene1"
+      - name: "tomatoes_scene2"
+        images: "data/TinyAgri/Tomatoes/scene2"
+        masks: "data/masks/Tomatoes/scene2"
+      - name: "crops_scene1"
+        images: "data/TinyAgri/Crops/scene1"
+        masks: "data/masks/Crops/scene1"
+
+# Model configurations
+models:
+  nano_u:
+    class: "create_nano_u"
+    filters: [16, 32]
+    bottleneck: 64
+    description: "Ultra-lightweight U-Net for microcontrollers"
+    
+  bu_net:
+    class: "create_bu_net"
+    filters: [32, 64, 128]
+    bottleneck: 256
+    description: "Teacher model for knowledge distillation"
+
+# Training configurations
+training:
+  # Common training parameters (anchor for merge)
+  common: &common
+    epochs: 50
+    batch_size: 16
+    learning_rate: 0.001
+    early_stopping: true
+    patience: 10
+    checkpoint_path: "checkpoints/"
+    log_dir: "logs/"
+    tensorboard: true
+    
+  # Standard training
+  standard: &training_standard
+    <<: *common
+    model_name: "nano_u"
+    use_distillation: false
+    use_nas: false
+    layers_to_monitor: ["conv2d", "conv2d_1"]
+    nas_frequency: 10
+    
+  # Knowledge distillation training
+  distillation: &training_distillation
+    <<: *common
+    model_name: "nano_u"
+    use_distillation: true
+    teacher_weights: "models/bu_net_weights.h5"
+    alpha: 0.3
+    temperature: 4.0
+    epochs: 100
+    learning_rate: 0.0005
+    
+  # NAS monitoring training
+  nas: &training_nas
+    <<: *common
+    model_name: "nano_u"
+    use_distillation: false
+    use_nas: true
+    layers_to_monitor: ["conv2d", "conv2d_1", "conv2d_2"]
+    nas_frequency: 5
+    
+  # Distillation with NAS
+  distillation_nas: &training_distillation_nas
+    <<: *common
+    model_name: "nano_u"
+    use_distillation: true
+    teacher_weights: "models/bu_net_weights.h5"
+    alpha: 0.3
+    temperature: 4.0
+    use_nas: true
+    layers_to_monitor: ["conv2d", "conv2d_1", "conv2d_2"]
+    nas_frequency: 5
+    epochs: 100
+    learning_rate: 0.0005
+
+# Experiment configurations
+experiments:
+  default:
+    <<: *training_standard
+    output_dir: "results/default/"
+    description: "Standard training for Nano-U"
+    
+  distillation:
+    <<: *training_distillation
+    output_dir: "results/distillation/"
+    description: "Knowledge distillation training"
+    
+  nas:
+    <<: *training_nas
+    output_dir: "results/nas/"
+    description: "NAS monitoring during training"
+    
+  distillation_nas:
+    <<: *training_distillation_nas
+    output_dir: "results/distillation_nas/"
+    description: "Knowledge distillation with NAS monitoring"
+    
+  # Quick test experiment
+  quick_test:
+    <<: *training_standard
+    output_dir: "results/quick_test/"
+    description: "Quick test with minimal epochs"
+    epochs: 2
+    batch_size: 4
+    
+  # Hyperparameter sweep experiment
+  hyperparameter_sweep:
+    <<: *training_standard
+    output_dir: "results/hyperparameter_sweep/"
+    description: "Hyperparameter sweep for optimization"
+    learning_rate: 0.0005
+    batch_size: 8
+    
+  # ESP32 deployment experiment
+  esp32_deployment:
+    <<: *training_standard
+    output_dir: "results/esp32_deployment/"
+    description: "Training for ESP32 deployment"
+    learning_rate: 0.0002
+    batch_size: 8
+    use_nas: true
+    layers_to_monitor: ["conv2d", "conv2d_1"]
+
+# Model evaluation configurations
+evaluation:
+  # Standard evaluation
+  standard:
+    batch_size: 16
+    metrics:
+      - "iou"
+      - "precision"
+      - "recall"
+      - "f1_score"
+    
+  # Detailed evaluation
+  detailed:
+    batch_size: 8
+    metrics:
+      - "iou"
+      - "precision"
+      - "recall"
+      - "f1_score"
+      - "accuracy"
+      - "binary_crossentropy"
+
+# Hyperparameter search space
+hyperparameter_search:
+  learning_rate:
+    values: [0.001, 0.0005, 0.0002]
+    description: "Learning rate values to search"
+  
+  batch_size:
+    values: [8, 16, 32]
+    description: "Batch size values to search"
+  
+  alpha:
+    values: [0.1, 0.3, 0.5]
+    description: "Distillation weight values to search"
+  
+  temperature:
+    values: [2.0, 4.0, 6.0]
+    description: "Temperature values to search"
+
+# Model constraints and requirements
+constraints:
+  # Parameter limits for microcontroller deployment
+  esp32:
+    max_parameters: 50000
+    max_memory: 200000  # bytes for quantized model
+    min_iou: 0.7
+    
+  # General model requirements
+  general:
+    min_epochs: 2
+    max_epochs: 200
+    min_batch_size: 1
+    max_batch_size: 64
+    
+# Performance benchmarks
+benchmarks:
+  # Training time benchmarks
+  training_time:
+    target: "< 10 minutes for 50 epochs"
+    units: "minutes"
+    
+  # Memory usage benchmarks
+  memory_usage:
+    target: "< 2GB RAM during training"
+    units: "GB"
+    
+  # Model size benchmarks
+  model_size:
+    target: "< 500KB for quantized model"
+    units: "KB"
+
+# Documentation and metadata
+documentation:
+  api_reference: true
+  usage_examples: true
+  troubleshooting_guide: true
+  changelog: true
+
+# Development settings
+development:
+  debug_mode: false
+  verbose_logging: false
+  enable_profiling: false
+  
+# Production settings
+production:
+  debug_mode: false
+  verbose_logging: false
+  enable_profiling: false
+  enable_monitoring: true

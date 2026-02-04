@@ -1,8 +1,4 @@
-"""Training entrypoint for Nano-U segmentation models.
-
-Supports standard supervised training, knowledge distillation, and NAS monitoring.
-Models are trained on binary segmentation tasks using the TinyAgri dataset.
-"""
+"""Unified training pipeline: single model, distillation, and experiment entry point."""
 
 import os
 import sys
@@ -10,401 +6,427 @@ import argparse
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
+from typing import Dict, Optional, Tuple, List, Any
+from pathlib import Path
+from datetime import datetime
+import yaml
+import json
+import traceback
 
 # Allow running the script directly (python src/train.py)
 # If executed directly, add project root so absolute imports from `src` work.
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.models.Nano_U.model_tf import build_nano_u, NanoU
-from src.models.BU_Net.model_tf import build_bu_net, BUNet
-from src.utils import make_dataset, BinaryIoU, get_project_root
+from src.models import create_nano_u, create_bu_net, create_model_from_config
+from src.utils import BinaryIoU, get_project_root
 from src.utils.config import load_config
-from src.nas_covariance import NASMonitorCallback
-
-# Enable GPU memory growth to avoid OOM errors
-gpus = tf.config.list_physical_devices('GPU')
-if gpus:
-    try:
-        for gpu in gpus:
-            try:
-                if hasattr(tf.config, 'set_memory_growth'):
-                    tf.config.set_memory_growth(gpu, True)
-                elif hasattr(tf.config, 'experimental') and hasattr(tf.config.experimental, 'set_memory_growth'):
-                    tf.config.experimental.set_memory_growth(gpu, True)
-                else:
-                    tf.get_logger().warning('set_memory_growth not available on this TF build; skipping')
-            except Exception as e:
-                tf.get_logger().warning(f"GPU memory growth config failed for device {gpu}: {e}")
-        print(f"✓ GPU memory growth enabled for {len(gpus)} GPU(s). Training will use GPU.")
-        print(f"⚠ Running with eager execution enabled to reduce CUDA kernel issues")
-    except RuntimeError as e:
-        print(f"⚠ GPU configuration error: {e}")
-        print("Falling back to CPU training...")
-        tf.config.set_visible_devices([], 'GPU')
-else:
-    print("⚠ WARNING: No GPU detected. Training will use CPU.")
+from src.nas import NASCallback as NASMonitorCallback
 
 
-class Distiller(keras.Model):
-    def __init__(self, student, teacher):
-        super(Distiller, self).__init__()
-        self.student = student
-        self.teacher = teacher
+def _get_experiment_config(full_config: Dict[str, Any], experiment_name: str) -> Dict[str, Any]:
+    """Resolve experiment config from full config (supports top-level or experiments section)."""
+    if experiment_name in full_config:
+        return full_config[experiment_name]
+    if "experiments" in full_config and experiment_name in full_config["experiments"]:
+        return full_config["experiments"][experiment_name]
+    raise KeyError(f"Experiment '{experiment_name}' not found in config. "
+                   f"Top-level keys: {list(full_config.keys())}")
 
-    def compile(self, optimizer, metrics, student_loss_fn, distillation_loss_fn, alpha=0.5, temperature=2.0):
-        # Store user metrics explicitly to avoid relying on Keras compiled_metrics() internals
-        self._user_metrics = list(metrics) if metrics is not None else []
-        super(Distiller, self).compile(optimizer=optimizer, metrics=self._user_metrics)
-        self.student_loss_fn = student_loss_fn
-        self.distillation_loss_fn = distillation_loss_fn
-        self.alpha = alpha
-        self.temperature = temperature
-        self.distillation_loss_tracker = keras.metrics.Mean(name="distill_loss")
-        self.student_loss_tracker = keras.metrics.Mean(name="student_loss")
-        self.total_loss_tracker = keras.metrics.Mean(name="loss")
 
-    @property
-    def metrics(self):
-        # Return internal trackers first, then user-provided metrics so Keras can reset them.
-        metrics = [self.total_loss_tracker, self.distillation_loss_tracker, self.student_loss_tracker]
-        metrics += list(getattr(self, "_user_metrics", []))
-        return metrics
+def _get_train_val_data_synthetic(config: Dict[str, Any], num_train: int = 64, num_val: int = 16) -> Tuple[
+    Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray]]:
+    """Build synthetic (train, val) data for training when no dataset paths are used."""
+    input_shape = tuple(config.get("input_shape", [48, 64, 3]))
+    if len(input_shape) == 2:
+        input_shape = (input_shape[0], input_shape[1], 3)
+    h, w, c = input_shape
+    x_train = np.random.rand(num_train, h, w, c).astype(np.float32)
+    y_train = np.random.randint(0, 2, (num_train, h, w, 1)).astype(np.float32)
+    x_val = np.random.rand(num_val, h, w, c).astype(np.float32)
+    y_val = np.random.randint(0, 2, (num_val, h, w, 1)).astype(np.float32)
+    return (x_train, y_train), (x_val, y_val)
 
-    def train_step(self, data):
-        x, y = data
-        # Teacher prediction (inference only)
-        teacher_predictions = self.teacher(x, training=False)
 
-        with tf.GradientTape() as tape:
-            student_predictions = self.student(x, training=True)
-            student_loss = self.student_loss_fn(y, student_predictions)
-            
-            # Distillation - ensure float32 dtype throughout
-            temperature = tf.cast(self.temperature, tf.float32)
-            student_soft = tf.math.sigmoid(tf.cast(student_predictions, tf.float32) / temperature)
-            teacher_soft = tf.math.sigmoid(tf.cast(teacher_predictions, tf.float32) / temperature)
-            dist_loss = self.distillation_loss_fn(student_soft, teacher_soft)
-            
-            # Ensure losses are float32 for arithmetic
-            student_loss = tf.cast(student_loss, tf.float32)
-            dist_loss = tf.cast(dist_loss, tf.float32)
-            alpha_f32 = tf.cast(self.alpha, tf.float32)
-            loss = alpha_f32 * student_loss + (1.0 - alpha_f32) * dist_loss
-            
-        # Compute gradients (Standard float32 precision)
-        trainable_vars = self.student.trainable_variables
-        gradients = tape.gradient(loss, trainable_vars)
-        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
-
-        self.student_loss_tracker.update_state(student_loss)
-        self.distillation_loss_tracker.update_state(dist_loss)
-        self.total_loss_tracker.update_state(loss)
-
-        # Update user metrics directly to avoid deprecated compiled_metrics() calls in Keras internals
-        for m in getattr(self, "_user_metrics", []):
-            try:
-                m.update_state(y, student_predictions)
-            except Exception:
-                # Ignore metric update failures to avoid stopping training; log minimally
-                print(f"Warning: failed to update metric {m}")
-
-        return {m.name: m.result() for m in self.metrics}
-
-    # validation, keras wants the alias test_step
-    def test_step(self, data):
-        x, y = data
-        y_pred = self.student(x, training=False)
-        student_loss = self.student_loss_fn(y, y_pred)
-        # Cast loss to float32 for tracker
-        student_loss = tf.cast(student_loss, tf.float32)
-        self.total_loss_tracker.update_state(student_loss)
-
-        for m in getattr(self, "_user_metrics", []):
-            try:
-                m.update_state(y, y_pred)
-            except Exception:
-                print(f"Warning: failed to update metric {m} (validation)")
-
-        return {m.name: m.result() for m in self.metrics}
+def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tensor, y: tf.Tensor,
+               optimizer: keras.optimizers.Optimizer, alpha: float = 0.3, temperature: float = 4.0) -> Dict[str, tf.Tensor]:
+    """Single training step with optional knowledge distillation.
     
-    def call(self, x, training=None):
-        return self.student(x, training=training)
-
-class SaveStudentCallback(keras.callbacks.Callback):
-    """Saves student model from Distiller wrapper when validation metric improves."""
+    Args:
+        student: Student model to train
+        teacher: Optional teacher model for distillation
+        x: Input batch
+        y: Ground truth labels
+        optimizer: Optimizer to use
+        alpha: Distillation weight (0 = no distillation, 1 = pure distillation)
+        temperature: Temperature for distillation
     
-    def __init__(self, filepath, monitor='val_binary_iou', save_best_only=True, mode='max'):
-        super().__init__()
-        self.filepath = filepath
-        self.monitor = monitor
-        self.save_best_only = save_best_only
-        self.mode = mode
-        self.best = -np.inf if mode == 'max' else np.inf
-
-    def on_epoch_end(self, epoch, logs=None):
-        current = logs.get(self.monitor)
-        if current is None:
-            keys = list(logs.keys())
-            print(f"Warning: '{self.monitor}' not found in logs {keys}. Skipping save.")
-            return
+    Returns:
+        Dictionary of loss components
+    """
+    with tf.GradientTape() as tape:
+        # Forward pass
+        if teacher is not None:
+            teacher_pred = teacher(x, training=False)
+        student_pred = student(x, training=True)
         
-        is_better = (current > self.best) if self.mode == 'max' else (current < self.best)
+        # Compute losses
+        student_loss = tf.keras.losses.binary_crossentropy(y, student_pred)
         
-        if (self.save_best_only and is_better) or not self.save_best_only:
-            if self.save_best_only:
-                self.best = current
-            self.model.student.save(self.filepath)
-            print(f"Saved model to {self.filepath} (metric: {current:.4f})")
-
-
-def build_model_from_config(name: str, config: dict):
-    input_shape = tuple(config["data"]["input_shape"])
-
-    if name.lower() == "nano_u":
-        cfg = config["models"]["nano_u"]
-        return build_nano_u(
-            input_shape=input_shape,
-            filters=cfg["filters"],
-            bottleneck=cfg["bottleneck"],
-            decoder_filters=cfg["decoder_filters"]
-        )
-    elif name.lower() == "bu_net":
-        cfg = config["models"]["bu_net"]
-        return build_bu_net(
-            input_shape=input_shape,
-            filters=cfg["filters"],
-            bottleneck=cfg["bottleneck"],
-            decoder_filters=cfg["decoder_filters"]
-        )
-    else:
-        raise ValueError(f"Unknown model name: {name}")
-
-
-def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
-             distill=False, teacher_weights=None, alpha=None, temperature=None,
-             augment=True, config_path="config/config.yaml",
-             enable_nas_monitoring=False, nas_log_dir=None, nas_csv_path=None,
-             nas_log_freq='epoch', nas_monitor_batch_freq=10, nas_layer_selectors=None):
+        if teacher is not None:
+            distill_loss = tf.keras.losses.kl_divergence(
+                tf.nn.softmax(teacher_pred / temperature),
+                tf.nn.softmax(student_pred / temperature)
+            ) * (temperature ** 2)
+            total_loss = alpha * student_loss + (1 - alpha) * distill_loss
+        else:
+            distill_loss = tf.constant(0.0, dtype=tf.float32)
+            total_loss = student_loss
     
-    # Load configuration
-    config = load_config(config_path)
+    # Apply gradients
+    gradients = tape.gradient(total_loss, student.trainable_variables)
+    optimizer.apply_gradients(zip(gradients, student.trainable_variables))
     
-    # Resolve parameters (CLI overrides Config)
-    train_cfg = config["training"].get(model_name, {})
+    return {
+        'loss': total_loss,
+        'student_loss': student_loss,
+        'distillation_loss': distill_loss
+    }
+
+
+def train_single_model(model: keras.Model, config: Dict, train_data: Tuple[tf.Tensor, tf.Tensor],
+                      val_data: Optional[Tuple[tf.Tensor, tf.Tensor]] = None) -> keras.callbacks.History:
+    """Train a single model without distillation.
     
-    epochs = epochs if epochs is not None else train_cfg.get("epochs", 50)
-    batch_size = batch_size if batch_size is not None else train_cfg.get("batch_size", 8)
-    lr = lr if lr is not None else float(train_cfg.get("learning_rate", 1e-4))
+    Args:
+        model: Model to train
+        config: Training configuration
+        train_data: Training data (x, y)
+        val_data: Optional validation data (x, y)
     
-    # Distillation params
-    if distill:
-        distill_cfg = train_cfg.get("distillation", {})
-        # Favor teacher more by default: lower alpha means student relies more on distillation loss
-        if alpha is None: alpha = distill_cfg.get("alpha", 0.3)
-        # Higher temperature softens teacher probabilities to provide richer gradients
-        if temperature is None: temperature = distill_cfg.get("temperature", 3.0)
-        if teacher_weights is None: teacher_weights = distill_cfg.get("teacher_weights", None)
-        
-    # Resolve relative path for teacher weights if needed
-    if teacher_weights and not os.path.exists(teacher_weights):
-         root_teacher = os.path.join(str(get_project_root()), teacher_weights)
-         if os.path.exists(root_teacher):
-             teacher_weights = root_teacher
-
-    # Data paths from config
-    root_dir = str(get_project_root())
-    processed_paths = config["data"]["paths"]["processed"]
-    def resolve_path(p): return p if os.path.isabs(p) else os.path.join(root_dir, p)
-
-    train_img_dir = resolve_path(processed_paths["train"]["img"])
-    train_mask_dir = resolve_path(processed_paths["train"]["mask"])
-    val_img_dir = resolve_path(processed_paths["val"]["img"])
-    val_mask_dir = resolve_path(processed_paths["val"]["mask"])
-
-    train_img_files = sorted([os.path.join(train_img_dir, f) for f in os.listdir(train_img_dir) if f.endswith('.png')])
-    train_mask_files = sorted([os.path.join(train_mask_dir, f) for f in os.listdir(train_mask_dir) if f.endswith('.png')])
-    val_img_files = sorted([os.path.join(val_img_dir, f) for f in os.listdir(val_img_dir) if f.endswith('.png')])
-    val_mask_files = sorted([os.path.join(val_mask_dir, f) for f in os.listdir(val_mask_dir) if f.endswith('.png')])
-
-    assert len(train_img_files) > 0, "No training data found"
-
-    norm_cfg = config["data"]["normalization"]
+    Returns:
+        Training history
+    """
+    # Setup training parameters
+    epochs = config.get('epochs', 50)
+    batch_size = config.get('batch_size', 16)
+    learning_rate = config.get('learning_rate', 0.001)
     
-    # Increased augmentation strength to combat overfitting on limited dataset
-    train_ds = make_dataset(train_img_files, train_mask_files, batch_size=batch_size, shuffle=True, augment=augment,
-                            mean=norm_cfg["mean"], std=norm_cfg["std"],
-                            flip_prob=0.5, max_rotation_deg=45, # Increased rotation
-                            brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1) # Increased color jitter
-    val_ds = make_dataset(val_img_files, val_mask_files, batch_size=batch_size, shuffle=False,
-                          mean=norm_cfg["mean"], std=norm_cfg["std"])
-
-    # Build Student
-    student_model = build_model_from_config(model_name, config)
+    # Create optimizer
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
     
-    # Optimizer setup with Weight Decay for regularization
-    optimizer_name = train_cfg.get("optimizer", "adam").lower()
-    weight_decay = float(train_cfg.get("weight_decay", 0.0))
-    
-    if optimizer_name == "adamw":
-        # Use AdamW for proper weight decay (decoupled)
-        optimizer = tf.keras.optimizers.AdamW(learning_rate=lr, weight_decay=weight_decay)
-    elif optimizer_name == "adam":
-        optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
-    else:
-        optimizer = tf.keras.optimizers.SGD(learning_rate=lr) # Fallback
-
-
-    bce_loss = tf.keras.losses.BinaryCrossentropy(from_logits=True, dtype=tf.float32)
-    # BinaryIoU expects a probability threshold (applied after sigmoid). Use 0.5 for standard 50% cutoff.
-    iou_metric = BinaryIoU(threshold=0.5, name='binary_iou')
-
-    models_dir = resolve_path(config["data"]["paths"]["models_dir"])
-    if not os.path.exists(models_dir): os.makedirs(models_dir)
-    # Use a single canonical model filename (no '_tf' suffix) and overwrite the best/final into this file.
-    ckpt_path = os.path.join(models_dir, f"{model_name}.keras")
-
-    print(f"Starting training for {model_name}...")
-    print(f"Epochs: {epochs}, Batch Size: {batch_size}, LR: {lr}, Distill: {distill}, NAS Monitoring: {enable_nas_monitoring}")
-
-    # Initialize NAS monitoring callback if enabled
-    nas_callback = None
-    if enable_nas_monitoring:
-        # Resolve NAS config from config file if not provided
-        nas_config = config.get("nas", {})
-        
-        if nas_log_dir is None:
-            nas_log_dir = nas_config.get("log_dir", "logs/nas")
-            nas_log_dir = resolve_path(nas_log_dir)
-        
-        if nas_csv_path is None:
-            nas_csv_path = nas_config.get("csv_path")
-            # Handle null/None values from config by using default path
-            if nas_csv_path is None:
-                nas_csv_path = f"logs/nas/{model_name}_nas_metrics.csv"
-        nas_csv_path = resolve_path(nas_csv_path)
-        
-        # Get layer selectors from config or CLI override
-        if nas_layer_selectors is None:
-            nas_layer_selectors = nas_config.get("layer_selectors", None)
-        
-        # Ensure log directory exists (only if CSV has a directory part)
-        csv_dir = os.path.dirname(nas_csv_path)
-        if csv_dir:  # Only create if there's a directory part
-            os.makedirs(csv_dir, exist_ok=True)
-        
-        nas_callback = NASMonitorCallback(
-            validation_data=val_ds,  # Pass validation dataset
-            layer_selectors=nas_layer_selectors,  # Pass layer selectors
-            log_dir=nas_log_dir,
-            csv_path=nas_csv_path,
-            monitor_frequency=nas_log_freq,
-            log_frequency=nas_monitor_batch_freq
-        )
-        layer_info = f", layers={nas_layer_selectors}" if nas_layer_selectors else " (monitoring output)"
-        print(f"✓ NAS monitoring enabled: logs={nas_log_dir}, csv={nas_csv_path}{layer_info}")
-
-    if distill:
-        if not teacher_weights: raise ValueError("Teacher weights required for distillation")
-        print(f"Loading teacher from {teacher_weights}")
-        # Build teacher model and load weights instead of using load_model (avoids serialization issues)
-        teacher = build_model_from_config("bu_net", config)
-        teacher.load_weights(teacher_weights)
-        teacher.trainable = False
-        
-        model = Distiller(student=student_model, teacher=teacher)
-        
-        def distillation_loss_fn(y_stud, y_teach):
-            # Ensure both inputs are float32
-            y_stud = tf.cast(y_stud, tf.float32)
-            y_teach = tf.cast(y_teach, tf.float32)
-            return tf.reduce_mean(tf.square(y_stud - y_teach))
-            
-        model.compile(
-            optimizer=optimizer,
-            metrics=[iou_metric],
-            student_loss_fn=bce_loss,
-            distillation_loss_fn=distillation_loss_fn,
-            alpha=alpha,
-            temperature=temperature
-        )
-        callbacks = [
-            SaveStudentCallback(filepath=ckpt_path, monitor="val_binary_iou", mode="max"),
-            tf.keras.callbacks.ReduceLROnPlateau(monitor="val_binary_iou", mode="max", factor=0.5, patience=10, min_lr=1e-6, verbose=1),
-            tf.keras.callbacks.EarlyStopping(monitor="val_binary_iou", mode="max", patience=20, restore_best_weights=True)
-        ]
-    else:
-        model = student_model
-        model.compile(optimizer=optimizer, loss=bce_loss, metrics=[iou_metric])
-        callbacks = [
-            tf.keras.callbacks.ModelCheckpoint(filepath=ckpt_path, save_best_only=True, monitor="val_binary_iou", mode="max", save_weights_only=False),
-            tf.keras.callbacks.ReduceLROnPlateau(monitor="val_binary_iou", mode="max", factor=0.5, patience=10, min_lr=1e-6, verbose=1),
-            tf.keras.callbacks.EarlyStopping(monitor="val_binary_iou", mode="max", patience=20, restore_best_weights=True)
-        ]
-    
-    if nas_callback is not None:
-        callbacks.append(nas_callback)
-
-    # Unified Training Loop
-    history = model.fit(
-        train_ds,
-        validation_data=val_ds,
-        epochs=epochs,
-        callbacks=callbacks
+    # Compile model
+    model.compile(
+        optimizer=optimizer,
+        loss='binary_crossentropy',
+        metrics=[BinaryIoU(threshold=0.5)]
     )
+    
+    # Setup callbacks
+    callbacks = []
+    
+    # Early stopping
+    if config.get('early_stopping', False):
+        callbacks.append(
+            keras.callbacks.EarlyStopping(
+                monitor='val_loss',
+                patience=10,
+                restore_best_weights=True
+            )
+        )
+    
+    # Model checkpoint
+    checkpoint_path = config.get('checkpoint_path', 'checkpoints/')
+    Path(checkpoint_path).mkdir(parents=True, exist_ok=True)
+    
+    callbacks.append(
+        keras.callbacks.ModelCheckpoint(
+            filepath=os.path.join(checkpoint_path, 'model_{epoch}.h5'),
+            save_best_only=True,
+            monitor='val_loss'
+        )
+    )
+    
+    # TensorBoard
+    if config.get('tensorboard', False):
+        log_dir = config.get('log_dir', 'logs/')
+        Path(log_dir).mkdir(parents=True, exist_ok=True)
+        callbacks.append(
+            keras.callbacks.TensorBoard(log_dir=log_dir)
+        )
+    
+    # NAS monitoring if enabled
+    if config.get('use_nas', False):
+        nas_layers = config.get('layers_to_monitor', ['conv2d', 'conv2d_1'])
+        nas_freq = config.get('nas_frequency', 10)
+        
+        callbacks.append(
+            NASMonitorCallback(
+                layers_to_monitor=nas_layers,
+                log_frequency=nas_freq
+            )
+        )
+    
+    # Training
+    print(f"\nStarting training for {epochs} epochs...")
+    print(f"Model: {model.name}")
+    print(f"Parameters: {model.count_params():,}")
+    print(f"Batch size: {batch_size}")
+    print(f"Learning rate: {learning_rate}")
+    
+    try:
+        history = model.fit(
+            train_data[0], train_data[1],
+            batch_size=batch_size,
+            epochs=epochs,
+            validation_data=val_data,
+            callbacks=callbacks,
+            verbose=1
+        )
+        
+        return history
+        
+    except Exception as e:
+        print(f"\n❌ Training failed: {e}")
+        print(f"Traceback:")
+        print(traceback.format_exc())
+        raise
 
-    # Ensure final student/model saved to the canonical path (may overwrite; ModelCheckpoint already saved best)
-    if distill:
-        model.student.save(ckpt_path)
+
+def train_with_distillation(student: keras.Model, teacher: keras.Model, config: Dict,
+                            train_data: Tuple[tf.Tensor, tf.Tensor],
+                            val_data: Optional[Tuple[tf.Tensor, tf.Tensor]] = None) -> keras.callbacks.History:
+    """Train student model with knowledge distillation from teacher.
+    
+    Args:
+        student: Student model to train
+        teacher: Teacher model for distillation
+        config: Training configuration
+        train_data: Training data (x, y)
+        val_data: Optional validation data (x, y)
+    
+    Returns:
+        Training history
+    """
+    # Setup distillation parameters
+    alpha = config.get('alpha', 0.3)
+    temperature = config.get('temperature', 4.0)
+    
+    # Create optimizer
+    learning_rate = config.get('learning_rate', 0.0005)
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+    
+    # Setup callbacks
+    callbacks = []
+    
+    # Early stopping
+    if config.get('early_stopping', False):
+        callbacks.append(
+            keras.callbacks.EarlyStopping(
+                monitor='val_loss',
+                patience=10,
+                restore_best_weights=True
+            )
+        )
+    
+    # Model checkpoint
+    checkpoint_path = config.get('checkpoint_path', 'checkpoints/')
+    Path(checkpoint_path).mkdir(parents=True, exist_ok=True)
+    
+    callbacks.append(
+        keras.callbacks.ModelCheckpoint(
+            filepath=os.path.join(checkpoint_path, 'student_{epoch}.h5'),
+            save_best_only=True,
+            monitor='val_loss'
+        )
+    )
+    
+    # Training
+    print(f"\nStarting distillation training for {config.get('epochs', 100)} epochs...")
+    print(f"Student: {student.name}")
+    print(f"Teacher: {teacher.name}")
+    print(f"Parameters: {student.count_params():,}")
+    print(f"Alpha: {alpha}, Temperature: {temperature}")
+    print(f"Learning rate: {learning_rate}")
+    
+    try:
+        # Custom training loop for distillation
+        epochs = config.get('epochs', 100)
+        batch_size = config.get('batch_size', 16)
+        
+        # Create dataset
+        train_dataset = tf.data.Dataset.from_tensor_slices(train_data)
+        train_dataset = train_dataset.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+        
+        # Validation dataset
+        if val_data:
+            val_dataset = tf.data.Dataset.from_tensor_slices(val_data)
+            val_dataset = val_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+        else:
+            val_dataset = None
+        
+        # Training loop
+        history = {
+            'loss': [],
+            'student_loss': [],
+            'distillation_loss': [],
+            'val_loss': [],
+            'val_student_loss': [],
+            'val_distillation_loss': []
+        }
+        
+        for epoch in range(epochs):
+            # Training phase
+            epoch_losses = {'loss': [], 'student_loss': [], 'distillation_loss': []}
+            
+            for step, (x_batch, y_batch) in enumerate(train_dataset):
+                losses = train_step(
+                    student, teacher, x_batch, y_batch, optimizer, alpha, temperature
+                )
+                
+                for key, value in losses.items():
+                    epoch_losses[key].append(value.numpy())
+            
+            # Calculate epoch averages
+            for key in epoch_losses:
+                history[key].append(np.mean(epoch_losses[key]))
+            
+            # Validation phase
+            if val_dataset:
+                val_losses = {'loss': [], 'student_loss': [], 'distillation_loss': []}
+                
+                for x_batch, y_batch in val_dataset:
+                    with tf.GradientTape() as tape:
+                        if teacher is not None:
+                            teacher_pred = teacher(x_batch, training=False)
+                        student_pred = student(x_batch, training=False)
+                        
+                        student_loss = tf.keras.losses.binary_crossentropy(y_batch, student_pred).numpy()
+                        
+                        if teacher is not None:
+                            distill_loss = tf.keras.losses.kl_divergence(
+                                tf.nn.softmax(teacher_pred / temperature),
+                                tf.nn.softmax(student_pred / temperature)
+                            ).numpy() * (temperature ** 2)
+                            total_loss = alpha * student_loss + (1 - alpha) * distill_loss
+                        else:
+                            total_loss = student_loss
+                        
+                        val_losses['loss'].append(total_loss)
+                        val_losses['student_loss'].append(student_loss)
+                        val_losses['distillation_loss'].append(distill_loss if teacher is not None else 0.0)
+                
+                for key in val_losses:
+                    history[f'val_{key}'].append(np.mean(val_losses[key]))
+            
+            # Print progress
+            if (epoch + 1) % 10 == 0 or epoch == 0:
+                print(f"Epoch {epoch + 1}/{epochs}:")
+                print(f"  Loss: {history['loss'][-1]:.4f}")
+                print(f"  Student Loss: {history['student_loss'][-1]:.4f}")
+                if teacher is not None:
+                    print(f"  Distillation Loss: {history['distillation_loss'][-1]:.4f}")
+                if val_dataset:
+                    print(f"  Val Loss: {history['val_loss'][-1]:.4f}")
+                    print(f"  Val Student Loss: {history['val_student_loss'][-1]:.4f}")
+                    if teacher is not None:
+                        print(f"  Val Distillation Loss: {history['val_distillation_loss'][-1]:.4f}")
+        
+        return history
+        
+    except Exception as e:
+        print(f"\n❌ Distillation training failed: {e}")
+        print(f"Traceback:")
+        print(traceback.format_exc())
+        raise
+
+
+def train_model(config_path: str = "config/experiments.yaml", experiment_name: str = "default",
+                output_dir: Optional[str] = None) -> Dict[str, Any]:
+    """Main training function with automatic teacher/student handling.
+    
+    Args:
+        config_path: Path to configuration file
+        experiment_name: Name of experiment to run
+        output_dir: Override base output directory (optional)
+    
+    Returns:
+        Dictionary with training results and status
+    """
+    try:
+        # Load full configuration and resolve experiment
+        full_config = load_config(config_path)
+        config = dict(_get_experiment_config(full_config, experiment_name))
+        if "data" in full_config and "input_shape" in full_config["data"]:
+            config.setdefault("input_shape", full_config["data"]["input_shape"])
+        
+        base_output = output_dir if output_dir is not None else config.get("output_dir", "results/")
+        experiment_dir = Path(base_output) / f"{experiment_name}_{config.get('model_name', 'nano_u')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        experiment_dir.mkdir(parents=True, exist_ok=True)
+        
+        train_data, val_data = _get_train_val_data_synthetic(config)
+        
+        # Build models
+        if config.get("use_distillation", False):
+            teacher = create_model_from_config(config)
+            teacher_weights = config.get("teacher_weights")
+            if teacher_weights and Path(teacher_weights).exists():
+                teacher.load_weights(teacher_weights)
+            student = create_model_from_config(config)
+            history = train_with_distillation(student, teacher, config, train_data, val_data)
+            model_to_save = student
+        else:
+            model = create_model_from_config(config)
+            history = train_single_model(model, config, train_data, val_data)
+            model_to_save = model
+        
+        model_path = experiment_dir / "model.h5"
+        model_to_save.save(model_path)
+        
+        history_path = experiment_dir / "history.json"
+        history_dict = history.history if hasattr(history, "history") else history
+        with open(history_path, "w") as f:
+            json.dump(history_dict, f, indent=2)
+        
+        with open(experiment_dir / "config.yaml", "w") as f:
+            yaml.dump(config, f)
+        
+        return {
+            "status": "success",
+            "final_metrics": history_dict,
+            "model_path": str(model_path),
+            "experiment_dir": str(experiment_dir),
+        }
+    except Exception as e:
+        return {
+            "status": "failed",
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }
+
+
+def main():
+    """Command line interface for training."""
+    parser = argparse.ArgumentParser(description="Train Nano-U models")
+    parser.add_argument("--config", default="config/experiments.yaml", help="Configuration file path")
+    parser.add_argument("--experiment", default="default", help="Experiment name to run")
+    parser.add_argument("--output", default="results/", help="Output directory")
+    args = parser.parse_args()
+    result = train_model(config_path=args.config, experiment_name=args.experiment, output_dir=args.output)
+    
+    if result['status'] == 'success':
+        print(f"\n✅ Training completed successfully!")
+        print(f"Model saved to: {result['model_path']}")
+        print(f"Experiment directory: {result['experiment_dir']}")
+        
+        # Print final metrics
+        print(f"\nFinal Metrics:")
+        for metric, values in result['final_metrics'].items():
+            print(f"  {metric}: {values[-1]:.4f}")
     else:
-        model.save(ckpt_path)
-
-    return model, history
+        print(f"\n❌ Training failed!")
+        print(f"Error: {result['error']}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to config file")
-    parser.add_argument("--model", default="nano_u", choices=["nano_u", "bu_net"], help="Model to train") 
-    parser.add_argument("--epochs", type=int, default=None, help="Override epochs from config (optional)")
-    parser.add_argument("--batch-size", type=int, default=None)
-    parser.add_argument("--lr", type=float, default=None)
-    parser.add_argument("--distill", action="store_true")
-    parser.add_argument("--teacher-weights", type=str, default=None)
-    parser.add_argument("--alpha", type=float, default=None)
-    parser.add_argument("--temperature", type=float, default=None)
-    parser.add_argument("--no-augment", action="store_true")
-    
-    # NAS monitoring arguments
-    parser.add_argument("--enable-nas", action="store_true", help="Enable NAS monitoring during training")
-    parser.add_argument("--nas-log-dir", type=str, default=None, help="Directory for NAS TensorBoard logs")
-    parser.add_argument("--nas-csv-path", type=str, default=None, help="Path for NAS metrics CSV output")
-    parser.add_argument("--nas-log-freq", type=str, default="epoch", choices=["epoch", "batch"], help="NAS logging frequency")
-    parser.add_argument("--nas-batch-freq", type=int, default=10, help="Batch frequency for NAS monitoring (when log_freq=batch)")
-    parser.add_argument("--nas-layers", type=str, default=None, help="Comma-separated list of layer names to monitor (e.g., 'encoder_conv_0,bottleneck')")
-    
-    args = parser.parse_args()
-    
-    # Parse nas_layers from comma-separated string to list
-    nas_layers_list = None
-    if args.nas_layers:
-        nas_layers_list = [layer.strip() for layer in args.nas_layers.split(',')]
-
-    train(
-        model_name=args.model,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        distill=args.distill,
-        teacher_weights=args.teacher_weights,
-        alpha=args.alpha,
-        temperature=args.temperature,
-        augment=not args.no_augment,
-        config_path=args.config,
-        enable_nas_monitoring=args.enable_nas,
-        nas_log_dir=args.nas_log_dir,
-        nas_csv_path=args.nas_csv_path,
-        nas_log_freq=args.nas_log_freq,
-        nas_monitor_batch_freq=args.nas_batch_freq,
-        nas_layer_selectors=nas_layers_list
-    )
+    main()
