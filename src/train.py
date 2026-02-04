@@ -1,17 +1,7 @@
-"""train.py
-Lightweight training entrypoint for Nano-U models.
+"""Training entrypoint for Nano-U segmentation models.
 
-Overview for non-TensorFlow developers:
-- This module builds a Keras model (student) and optionally a larger teacher.
-- Knowledge distillation is supported via the Distiller class: the student is trained
-  with a combination of the standard supervised loss (binary crossentropy) and
-  a distillation loss computed between softened teacher and student outputs.
-- Training uses tf.data datasets produced by make_dataset; outputs are logits
-  (raw scores) and the code applies sigmoid where needed to get probabilities.
-
-Key design notes:
-- Keep file I/O and dataset construction outside model code (see src/utils/data.py).
-- Metrics operate on probabilities (sigmoid applied internally where appropriate).
+Supports standard supervised training, knowledge distillation, and NAS monitoring.
+Models are trained on binary segmentation tasks using the TinyAgri dataset.
 """
 
 import os
@@ -26,8 +16,8 @@ from tensorflow import keras
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.models.Nano_U.model_tf import build_nano_u
-from src.models.BU_Net.model_tf import build_bu_net
+from src.models.Nano_U.model_tf import build_nano_u, NanoU
+from src.models.BU_Net.model_tf import build_bu_net, BUNet
 from src.utils import make_dataset, BinaryIoU, get_project_root
 from src.utils.config import load_config
 from src.nas_covariance import NASMonitorCallback
@@ -47,8 +37,11 @@ if gpus:
             except Exception as e:
                 tf.get_logger().warning(f"GPU memory growth config failed for device {gpu}: {e}")
         print(f"✓ GPU memory growth enabled for {len(gpus)} GPU(s). Training will use GPU.")
+        print(f"⚠ Running with eager execution enabled to reduce CUDA kernel issues")
     except RuntimeError as e:
         print(f"⚠ GPU configuration error: {e}")
+        print("Falling back to CPU training...")
+        tf.config.set_visible_devices([], 'GPU')
 else:
     print("⚠ WARNING: No GPU detected. Training will use CPU.")
 
@@ -87,12 +80,17 @@ class Distiller(keras.Model):
             student_predictions = self.student(x, training=True)
             student_loss = self.student_loss_fn(y, student_predictions)
             
-            # Distillation
-            student_soft = tf.math.sigmoid(student_predictions / self.temperature)
-            teacher_soft = tf.math.sigmoid(teacher_predictions / self.temperature)
+            # Distillation - ensure float32 dtype throughout
+            temperature = tf.cast(self.temperature, tf.float32)
+            student_soft = tf.math.sigmoid(tf.cast(student_predictions, tf.float32) / temperature)
+            teacher_soft = tf.math.sigmoid(tf.cast(teacher_predictions, tf.float32) / temperature)
             dist_loss = self.distillation_loss_fn(student_soft, teacher_soft)
             
-            loss = self.alpha * student_loss + (1 - self.alpha) * dist_loss
+            # Ensure losses are float32 for arithmetic
+            student_loss = tf.cast(student_loss, tf.float32)
+            dist_loss = tf.cast(dist_loss, tf.float32)
+            alpha_f32 = tf.cast(self.alpha, tf.float32)
+            loss = alpha_f32 * student_loss + (1.0 - alpha_f32) * dist_loss
             
         # Compute gradients (Standard float32 precision)
         trainable_vars = self.student.trainable_variables
@@ -118,6 +116,8 @@ class Distiller(keras.Model):
         x, y = data
         y_pred = self.student(x, training=False)
         student_loss = self.student_loss_fn(y, y_pred)
+        # Cast loss to float32 for tracker
+        student_loss = tf.cast(student_loss, tf.float32)
         self.total_loss_tracker.update_state(student_loss)
 
         for m in getattr(self, "_user_metrics", []):
@@ -128,28 +128,13 @@ class Distiller(keras.Model):
 
         return {m.name: m.result() for m in self.metrics}
     
-    def call(self, x):
-        return self.student(x)
+    def call(self, x, training=None):
+        return self.student(x, training=training)
 
 class SaveStudentCallback(keras.callbacks.Callback):
-    """
-    Custom Keras callback to save the student model during distillation training.
+    """Saves student model from Distiller wrapper when validation metric improves."""
     
-    This callback monitors a specified validation metric and saves the student model
-    (from the Distiller wrapper) whenever the metric improves. It's designed for
-    knowledge distillation where we want to save only the lightweight student model,
-    not the entire Distiller object.
-    """
     def __init__(self, filepath, monitor='val_binary_iou', save_best_only=True, mode='max'):
-        """
-        Initialize the callback.
-        
-        Args:
-            filepath (str): Path where to save the student model (e.g., 'models/nano_u_tf_best.keras').
-            monitor (str): Name of the metric to monitor (e.g., 'val_binary_iou').
-            save_best_only (bool): If True, save only when the metric improves.
-            mode (str): 'max' for metrics that should increase (e.g., IoU), 'min' for decrease.
-        """
         super().__init__()
         self.filepath = filepath
         self.monitor = monitor
@@ -158,30 +143,19 @@ class SaveStudentCallback(keras.callbacks.Callback):
         self.best = -np.inf if mode == 'max' else np.inf
 
     def on_epoch_end(self, epoch, logs=None):
-        """
-        Called at the end of each epoch. Check if the monitored metric improved and save if needed.
-        
-        Args:
-            epoch (int): Current epoch number.
-            logs (dict): Dictionary of metrics from the current epoch.
-        """
         current = logs.get(self.monitor)
         if current is None:
-            # Fallback if metric not found (e.g., string mismatch in logs)
             keys = list(logs.keys())
-            print(f"\nWarning: '{self.monitor}' not found in logs {keys}. Skipping save check.")
+            print(f"Warning: '{self.monitor}' not found in logs {keys}. Skipping save.")
             return
         
-        # Determine if current value is better than best
         is_better = (current > self.best) if self.mode == 'max' else (current < self.best)
         
-        # Save if always saving or if improved
         if (self.save_best_only and is_better) or not self.save_best_only:
             if self.save_best_only:
-                self.best = current  # Update best value
-            # Save the student model (not the Distiller wrapper)
+                self.best = current
             self.model.student.save(self.filepath)
-            print(f"\nMetric {self.monitor} improved. Saved student model to {self.filepath}")
+            print(f"Saved model to {self.filepath} (metric: {current:.4f})")
 
 
 def build_model_from_config(name: str, config: dict):
@@ -281,7 +255,7 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
         optimizer = tf.keras.optimizers.SGD(learning_rate=lr) # Fallback
 
 
-    bce_loss = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+    bce_loss = tf.keras.losses.BinaryCrossentropy(from_logits=True, dtype=tf.float32)
     # BinaryIoU expects a probability threshold (applied after sigmoid). Use 0.5 for standard 50% cutoff.
     iou_metric = BinaryIoU(threshold=0.5, name='binary_iou')
 
@@ -333,12 +307,17 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
     if distill:
         if not teacher_weights: raise ValueError("Teacher weights required for distillation")
         print(f"Loading teacher from {teacher_weights}")
-        teacher = keras.models.load_model(teacher_weights, compile=False)
+        # Build teacher model and load weights instead of using load_model (avoids serialization issues)
+        teacher = build_model_from_config("bu_net", config)
+        teacher.load_weights(teacher_weights)
         teacher.trainable = False
         
         model = Distiller(student=student_model, teacher=teacher)
         
         def distillation_loss_fn(y_stud, y_teach):
+            # Ensure both inputs are float32
+            y_stud = tf.cast(y_stud, tf.float32)
+            y_teach = tf.cast(y_teach, tf.float32)
             return tf.reduce_mean(tf.square(y_stud - y_teach))
             
         model.compile(
@@ -354,21 +333,17 @@ def train(model_name="nano_u", epochs=None, batch_size=None, lr=None,
             tf.keras.callbacks.ReduceLROnPlateau(monitor="val_binary_iou", mode="max", factor=0.5, patience=10, min_lr=1e-6, verbose=1),
             tf.keras.callbacks.EarlyStopping(monitor="val_binary_iou", mode="max", patience=20, restore_best_weights=True)
         ]
-        # Add NAS callback if enabled
-        if nas_callback is not None:
-            callbacks.append(nas_callback)
     else:
         model = student_model
         model.compile(optimizer=optimizer, loss=bce_loss, metrics=[iou_metric])
         callbacks = [
-            # Save the best model to a single canonical path (overwrite previous).
             tf.keras.callbacks.ModelCheckpoint(filepath=ckpt_path, save_best_only=True, monitor="val_binary_iou", mode="max", save_weights_only=False),
             tf.keras.callbacks.ReduceLROnPlateau(monitor="val_binary_iou", mode="max", factor=0.5, patience=10, min_lr=1e-6, verbose=1),
             tf.keras.callbacks.EarlyStopping(monitor="val_binary_iou", mode="max", patience=20, restore_best_weights=True)
         ]
-        # Add NAS callback if enabled
-        if nas_callback is not None:
-            callbacks.append(nas_callback)
+    
+    if nas_callback is not None:
+        callbacks.append(nas_callback)
 
     # Unified Training Loop
     history = model.fit(

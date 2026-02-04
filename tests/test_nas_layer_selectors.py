@@ -95,10 +95,7 @@ def test_nas_monitor_with_layer_selectors():
         print(f"✓ Training completed")
         
         # Check that CSV was created and has data
-        if not os.path.exists(csv_path):
-            print(f"✗ FAIL: CSV file not created at {csv_path}")
-            return False
-        
+        assert os.path.exists(csv_path), f"CSV file not created at {csv_path}"
         print(f"✓ CSV file created at {csv_path}")
         
         # Read CSV and verify metrics
@@ -110,9 +107,7 @@ def test_nas_monitor_with_layer_selectors():
         # Check for required columns
         required_cols = ['epoch', 'redundancy_score', 'mean_correlation']
         for col in required_cols:
-            if col not in df.columns:
-                print(f"✗ FAIL: Missing required column '{col}'")
-                return False
+            assert col in df.columns, f"Missing required column '{col}'"
         
         print(f"✓ All required columns present: {list(df.columns)}")
         
@@ -125,13 +120,10 @@ def test_nas_monitor_with_layer_selectors():
         print(f"  Correlation: mean={np.mean(correlation_values):.6f}, std={np.std(correlation_values):.6f}")
         
         # Check that metrics are not NaN (they may be zero for certain architectures)
-        if np.all(np.isnan(redundancy_values)):
-            print("✗ FAIL: All redundancy values are NaN!")
-            return False
+        assert not np.all(np.isnan(redundancy_values)), "All redundancy values are NaN!"
         
         print(f"✓ Metrics are valid (not NaN)")
         print(f"✓ TEST 1 PASSED\n")
-        return True
         
     finally:
         # Clean up temporary directory
@@ -151,9 +143,7 @@ def test_layer_detection():
     
     print(f"✓ Found {len(conv_blocks)} conv block layers")
     
-    if len(conv_blocks) == 0:
-        print("✗ FAIL: No conv block layers found!")
-        return False
+    assert len(conv_blocks) > 0, "No conv block layers found!"
     
     # Show some examples
     print(f"\nSample layers:")
@@ -163,7 +153,6 @@ def test_layer_detection():
         print(f"  ... and {len(conv_blocks) - 5} more")
     
     print(f"\n✓ TEST 2 PASSED\n")
-    return True
 
 
 def test_nas_callback_without_layer_selectors():
@@ -202,13 +191,10 @@ def test_nas_callback_without_layer_selectors():
         model.fit(dataset, epochs=1, callbacks=[callback], verbose=0)
         
         # Check CSV was created
-        if not os.path.exists(csv_path):
-            print(f"✗ FAIL: CSV file not created")
-            return False
+        assert os.path.exists(csv_path), "CSV file not created"
         
         print(f"✓ CSV file created")
         print(f"✓ TEST 3 PASSED\n")
-        return True
         
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
