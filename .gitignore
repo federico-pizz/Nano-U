@@ -23,6 +23,7 @@ ENV/
 
 # --- IDE / Editors ---
 .vscode/
+.cursor/
 .idea/
 *.swp
 *~
@@ -45,11 +46,14 @@ models/
 
 # Results: Ignore logs, figures, and predictions
 results/
+logs/
+nas_logs/
 
 # Legacy / Old folder content
 # We ignore data and models inside 'old' to prevent accidental large commits
 old/data/
 old/models/
+old_nano_u/
 
 # --- Rust (from previous context) ---
 /target/
@@ -73,4 +77,3 @@ esp_flash/venv/
 esp_flash/input_data/
 esp_flash/output_data/
 esp_flash/.cargo/
-models/*.tflite
