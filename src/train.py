@@ -50,21 +50,29 @@ def _get_train_val_data_synthetic(config: Dict[str, Any], num_train: int = 64, n
 
 
 def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tensor, y: tf.Tensor,
-               optimizer: keras.optimizers.Optimizer, alpha: float = 0.3, temperature: float = 4.0) -> Dict[str, tf.Tensor]:
-    """Single training step with optional knowledge distillation.
+               optimizer: keras.optimizers.Optimizer, alpha: float = 0.3, temperature: float = 4.0,
+               bce_loss_fn=None, mse_loss_fn=None) -> Dict[str, tf.Tensor]:
+    """Custom training step for knowledge distillation.
     
     Args:
-        student: Student model to train
-        teacher: Optional teacher model for distillation
+        student: Student model
+        teacher: Optional teacher model
         x: Input batch
-        y: Ground truth labels
-        optimizer: Optimizer to use
-        alpha: Distillation weight (0 = no distillation, 1 = pure distillation)
-        temperature: Temperature for distillation
-    
+        y: Ground truth masks
+        optimizer: Optimizer
+        alpha: Weight for student loss (1-alpha for distillation)
+        temperature: Distillation temperature
+        bce_loss_fn: BinaryCrossentropy loss object
+        mse_loss_fn: MeanSquaredError loss object
+        
     Returns:
         Dictionary of loss components
     """
+    if bce_loss_fn is None:
+        bce_loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+    if mse_loss_fn is None:
+        mse_loss_fn = tf.keras.losses.MeanSquaredError()
+
     with tf.GradientTape() as tape:
         # Forward pass
         if teacher is not None:
@@ -72,17 +80,26 @@ def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tenso
         student_pred = student(x, training=True)
         
         # Compute losses
-        student_loss = tf.keras.losses.binary_crossentropy(y, student_pred)
+        student_loss = bce_loss_fn(y, student_pred)
         
         if teacher is not None:
-            distill_loss = tf.keras.losses.kullback_leibler_divergence(
-                tf.nn.softmax(teacher_pred / temperature),
-                tf.nn.softmax(student_pred / temperature)
-            ) * (temperature ** 2)
+            # Distillation loss: MSE between sigmoided (softened) outputs
+            # This matches the "logic" of the old implementation
+            # We use mean of squared differences for robustness across shapes
+            distill_loss = tf.reduce_mean(
+                tf.math.squared_difference(
+                    tf.nn.sigmoid(teacher_pred / temperature),
+                    tf.nn.sigmoid(student_pred / temperature)
+                )
+            )
             total_loss = alpha * student_loss + (1 - alpha) * distill_loss
         else:
             distill_loss = tf.constant(0.0, dtype=tf.float32)
             total_loss = student_loss
+        
+        # Scale total loss for better training stability if needed
+        # (old implementation used sum reduction implicitly in BCEWithLogitsLoss sometimes, 
+        # but here we use mean for consistency with current pipeline)
     
     # Apply gradients
     gradients = tape.gradient(total_loss, student.trainable_variables)
@@ -119,7 +136,7 @@ def train_single_model(model: keras.Model, config: Dict, train_data: Tuple[tf.Te
     # Compile model
     model.compile(
         optimizer=optimizer,
-        loss='binary_crossentropy',
+        loss=keras.losses.BinaryCrossentropy(from_logits=True),
         metrics=[BinaryIoU(threshold=0.5)]
     )
     
@@ -268,13 +285,19 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
             val_dataset = None
         
         # Training loop
+        # Loss objects and metrics
+        bce_loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+        mse_loss_fn = tf.keras.losses.MeanSquaredError()
+        val_iou_metric = BinaryIoU(threshold=0.5)
+
         history = {
             'loss': [],
             'student_loss': [],
             'distillation_loss': [],
             'val_loss': [],
             'val_student_loss': [],
-            'val_distillation_loss': []
+            'val_distillation_loss': [],
+            'val_iou': []
         }
         
         for epoch in range(epochs):
@@ -283,7 +306,8 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
             
             for step, (x_batch, y_batch) in enumerate(train_dataset):
                 losses = train_step(
-                    student, teacher, x_batch, y_batch, optimizer, alpha, temperature
+                    student, teacher, x_batch, y_batch, optimizer, alpha, temperature,
+                    bce_loss_fn, mse_loss_fn
                 )
                 
                 for key, value in losses.items():
@@ -296,30 +320,37 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
             # Validation phase
             if val_dataset:
                 val_losses = {'loss': [], 'student_loss': [], 'distillation_loss': []}
+                val_iou_metric.reset_state()
                 
                 for x_batch, y_batch in val_dataset:
-                    with tf.GradientTape() as tape:
-                        if teacher is not None:
-                            teacher_pred = teacher(x_batch, training=False)
-                        student_pred = student(x_batch, training=False)
-                        
-                        student_loss = tf.keras.losses.binary_crossentropy(y_batch, student_pred).numpy()
-                        
-                        if teacher is not None:
-                            distill_loss = tf.keras.losses.kullback_leibler_divergence(
-                                tf.nn.softmax(teacher_pred / temperature),
-                                tf.nn.softmax(student_pred / temperature)
-                            ).numpy() * (temperature ** 2)
-                            total_loss = alpha * student_loss + (1 - alpha) * distill_loss
-                        else:
-                            total_loss = student_loss
-                        
-                        val_losses['loss'].append(total_loss)
-                        val_losses['student_loss'].append(student_loss)
-                        val_losses['distillation_loss'].append(distill_loss if teacher is not None else 0.0)
+                    if teacher is not None:
+                        teacher_pred = teacher(x_batch, training=False)
+                    student_pred = student(x_batch, training=False)
+                    
+                    student_loss = bce_loss_fn(y_batch, student_pred).numpy()
+                    
+                    if teacher is not None:
+                        # Distillation loss: MSE between sigmoided outputs
+                        distill_loss = tf.reduce_mean(
+                            tf.math.squared_difference(
+                                tf.nn.sigmoid(teacher_pred / temperature),
+                                tf.nn.sigmoid(student_pred / temperature)
+                            )
+                        ).numpy()
+                        total_loss = alpha * student_loss + (1 - alpha) * distill_loss
+                    else:
+                        total_loss = student_loss
+                    
+                    val_losses['loss'].append(float(total_loss))
+                    val_losses['student_loss'].append(float(student_loss))
+                    val_losses['distillation_loss'].append(float(distill_loss) if teacher is not None else 0.0)
+                    
+                    # Update IoU
+                    val_iou_metric.update_state(y_batch, student_pred)
                 
                 for key in val_losses:
                     history[f'val_{key}'].append(float(np.mean(val_losses[key])))
+                history['val_iou'].append(float(val_iou_metric.result().numpy()))
             
             # Print progress
             if (epoch + 1) % 10 == 0 or epoch == 0:

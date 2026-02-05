@@ -251,9 +251,15 @@ def test_model_inference(nano_u_model: Model, input_data: tf.Tensor):
     output = nano_u_model(input_data, training=False)
     assert output is not None
     assert output.shape == (1, 48, 64, 1)
-    assert tf.reduce_max(output).numpy() <= 1.0  # Sigmoid output
-    assert tf.reduce_min(output).numpy() >= 0.0
-
+    
+    # Check if last layer has sigmoid activation
+    # In some models (like those for microflow), sigmoid is omitted for compatibility
+    last_layer = nano_u_model.layers[-1]
+    has_sigmoid = hasattr(last_layer, 'activation') and last_layer.activation == tf.keras.activations.sigmoid
+    
+    if has_sigmoid:
+        assert tf.reduce_max(output).numpy() <= 1.0
+        assert tf.reduce_min(output).numpy() >= 0.0
 
 
 def test_model_inference_bu_net(bu_net_model: Model, input_data: tf.Tensor):
@@ -261,8 +267,14 @@ def test_model_inference_bu_net(bu_net_model: Model, input_data: tf.Tensor):
     output = bu_net_model(input_data, training=False)
     assert output is not None
     assert output.shape == (1, 48, 64, 1)
-    assert tf.reduce_max(output).numpy() <= 1.0  # Sigmoid output
-    assert tf.reduce_min(output).numpy() >= 0.0
+    
+    # Check if last layer has sigmoid activation
+    last_layer = bu_net_model.layers[-1]
+    has_sigmoid = hasattr(last_layer, 'activation') and last_layer.activation == tf.keras.activations.sigmoid
+    
+    if has_sigmoid:
+        assert tf.reduce_max(output).numpy() <= 1.0
+        assert tf.reduce_min(output).numpy() >= 0.0
 
 
 # =============================================================================

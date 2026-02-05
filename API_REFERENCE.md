@@ -1,96 +1,77 @@
 # API Reference
 
-Current entry points after refactoring. See [REFACTURING_DOCUMENTATION.md](REFACTURING_DOCUMENTATION.md) for migration and usage details.
+Current entry points and module documentation for the Nano-U exploration framework.
+
+## Pipeline (`src.pipeline`)
+
+The primary entry point for automated research workflows.
+
+- **run_training_pipeline**(config_name, config_path='config/experiments.yaml', output_dir='results/')  
+  Runs a single training experiment with clean result management and logging.
+- **run_pipeline_sweep**(experiment_configs, config_path='config/experiments.yaml', output_dir='results/sweeps/')  
+  Executes multiple training pipelines sequentially with automatic failure handling.
+- **run_end_to_end_pipeline**(config_path='config/experiments.yaml', output_base='results/')  
+  Executes the full automated flow: Teacher training → Student distillation → Benchmarking.
+- **run_nas_search**(config_path='config/experiments.yaml', output_dir='results/nas_search/')  
+  Runs an evolutionary Architecture Search to find the optimal Nano-U configuration.
 
 ## Models (`src.models`)
 
-```python
-from src.models import (
-    create_nano_u,
-    create_bu_net,
-    create_nano_u_functional,
-    create_bu_net_functional,
-    create_model_from_config,
-    count_parameters,
-    get_model_summary,
-    get_model_config,
-    validate_model_serialization,
-)
-```
+Core architecture builders and utilities.
 
 - **create_nano_u**(input_shape=(48,64,3), filters=[16,32], bottleneck=64, name='nano_u') → Model  
+  Creates the ultra-lightweight student model.
 - **create_bu_net**(input_shape=(48,64,3), filters=[32,64,128], bottleneck=256, name='bu_net') → Model  
-- **create_model_from_config**(config) → Model — config must include `model_name`, optional `input_shape`, `filters`, `bottleneck`  
+  Creates the teacher model.
+- **create_model_from_config**(config) → Model  
+  Builds a model based on a configuration dictionary.
 - **count_parameters**(model) → int  
+  Returns total trainable parameter count.
 - **get_model_summary**(model) → str  
-- **get_model_config**(model) → dict  
-- **validate_model_serialization**(model) → bool  
+  Returns a detailed string summary of the architecture.
 
 ## Training (`src.train`)
 
-```python
-from src.train import train_model, train_single_model, train_with_distillation, train_step
-```
+Low-level training primitives and custom loops.
 
 - **train_model**(config_path='config/experiments.yaml', experiment_name='default', output_dir=None) → dict  
-  Loads config, resolves experiment (top-level or `experiments.<name>`), runs training with synthetic data if no dataset paths. Returns `{status, final_metrics, model_path, experiment_dir}` or `{status: 'failed', error, traceback}`.
-
+  High-level entry point resolving experiment settings and calling appropriate training functions.
 - **train_single_model**(model, config, train_data, val_data=None) → History  
+  Standard Keras training loop with integrated callbacks.
 - **train_with_distillation**(student, teacher, config, train_data, val_data=None) → History  
+  Custom training loop for knowledge distillation.
 - **train_step**(student, teacher, x, y, optimizer, alpha=0.3, temperature=4.0) → dict  
+  TensorFlow primitive for a single gradient update with distillation.
 
-CLI: `python src/train.py --config config/experiments.yaml --experiment quick_test --output results/`
+## Evaluation (`src.evaluate`)
 
-## NAS (`src.nas`)
+Verification and visualization of model performance.
 
-```python
-from src.nas import compute_layer_redundancy, compute_nas_metrics, NASCallback, validate_nas_computation, analyze_model_redundancy
-```
-
-- **compute_layer_redundancy**(activations, eps=1e-6) → dict  
-  Returns `redundancy_score`, `condition_number`, `rank`, `num_channels` (SVD-based, stable).
-
-- **NASCallback**(layers_to_monitor=None, log_frequency=10, output_dir='nas_logs/', **kwargs)  
-  Epoch-level callback: at end of each epoch writes redundancy metrics to `output_dir/metrics.csv`. Extra kwargs ignored.
-
-- **validate_nas_computation**() → bool  
-- **analyze_model_redundancy**(model, x, layers_to_monitor=None) → dict  
-
-## Experiments (`src.experiment` and `scripts/run_experiments.py`)
-
-- **run_experiment**(config_name, config_path='config/experiments.yaml', output_dir='results/') → dict  
-- **run_experiment_sweep**(experiment_configs, config_path=..., output_dir=...) → list  
-
-CLI:  
-`python scripts/run_experiments.py --list`  
-`python scripts/run_experiments.py --experiment quick_test --output results/`
+- **evaluate_and_plot**(model_name, config_path, batch_size=8, threshold=0.5, samples_to_plot=6, out_path=None)  
+  Runs full test set evaluation, computes IOU/Dice/Focal metrics, and generates prediction visualizations.
 
 ## Benchmarks (`src.benchmarks`)
 
+Inference performance and quantization validation.
+
 - **benchmark_inference**(model, input_shape=(48,64,3)) → dict  
+  Measures average latency (ms) and throughput (FPS).
 - **validate_tflite_optimization**(model) → dict  
-- **MemoryProfilingCallback**() — Keras callback for resource monitoring.
+  Converts to TFLite and verifies quantized model size.
+- **MemoryProfilingCallback**()  
+  Keras callback for monitoring system and GPU memory usage.
 
-## Config
+## NAS (`src.nas`)
 
-- **config/experiments.yaml** — Single file; experiments under `experiments:` (e.g. `quick_test`, `standard`, `distillation`).  
-- **scripts/migrate_config.py** — Migrate old flat YAML to new format:  
-  `python scripts/migrate_config.py old_config.yaml new_config.yaml`
+Neural Architecture Search and redundancy monitoring.
 
-## Config loading (`src.utils.config`)
+- **compute_layer_redundancy**(activations, eps=1e-6) → dict  
+  SVD-based stability analysis for feature map redundancy.
+- **NASCallback**(layers_to_monitor=None, log_frequency=10)  
+  Callback for real-time redundancy monitoring during training.
 
-```python
-from src.utils.config import load_config
-full = load_config("config/experiments.yaml")  # full dict; experiments in full["experiments"]
-```
+## CLI Entry Points
 
-## Data (`src.data`)
-
-```python
-from src.data import make_dataset, get_synthetic_data
-# make_dataset(img_files, mask_files, batch_size=8, ...) → tf.data.Dataset
-```
-
----
-
-Last updated: 2026-02-04
+- `python scripts/run_pipeline.py --config config/experiments.yaml --experiment [name]`
+- `python src/evaluate.py --model-name nano_u --config config/experiments.yaml`
+- `python scripts/migrate_config.py old_config.yaml new_config.yaml`

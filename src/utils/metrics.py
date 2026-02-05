@@ -9,6 +9,13 @@ class BinaryIoU(tf.keras.metrics.Metric):
         self.fn = self.add_weight(name="fn", initializer="zeros")
 
     def update_state(self, y_true, y_pred, sample_weight=None):
+        # Auto-detect logits: if values are outside [0.0, 1.0], apply sigmoid
+        # Use graph-compatible operations
+        max_val = tf.reduce_max(y_pred)
+        min_val = tf.reduce_min(y_pred)
+        is_logit = tf.logical_or(min_val < -0.1, max_val > 1.1)
+        
+        y_pred = tf.where(is_logit, tf.nn.sigmoid(y_pred), y_pred)
         y_pred = tf.cast(y_pred > self.threshold, tf.float32)
         y_true = tf.cast(y_true > 0.5, tf.float32)
         tp = tf.reduce_sum(y_true * y_pred)

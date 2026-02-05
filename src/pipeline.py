@@ -129,7 +129,18 @@ def run_end_to_end_pipeline(config_path: str = "config/experiments.yaml",
         student_keras = Path(output_base) / "distillation_nas" / "nano_u.keras"
         
         if student_keras.exists():
+            # Copy keras model to models/
+            shutil.copy(student_keras, models_dir / "nano_u.keras")
+            print(f"✅ Success: Copied student model to {models_dir / 'nano_u.keras'}")
+            
             benchmark_res = run_benchmarks(str(student_keras))
+            
+            # Copy TFLite model to models/ if it exists
+            tflite_src = student_keras.parent / "model.tflite"
+            if tflite_src.exists():
+                shutil.copy(tflite_src, models_dir / "nano_u.tflite")
+                print(f"✅ Success: Copied TFLite model to {models_dir / 'nano_u.tflite'}")
+                
             print(f"✅ Success: Benchmarking complete. TFLite model generated.")
         else:
             raise FileNotFoundError(f"Could not find trained student model at {student_keras}")
