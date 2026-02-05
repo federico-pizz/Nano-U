@@ -2,7 +2,7 @@
 
 import tensorflow as tf
 import numpy as np
-from typing import Dict, List, Optional, Tuple, DefaultDict, Union
+from typing import Dict, List, Optional, Tuple, DefaultDict, Union, Any
 from collections import defaultdict
 import pandas as pd
 from pathlib import Path
@@ -166,8 +166,8 @@ class NASCallback(tf.keras.callbacks.Callback):
         if self.log_dir:
             self.writer = tf.summary.create_file_writer(self.log_dir)
             
-        self.redundancy_history: List[Dict[str, float]] = []
-        self.metrics: DefaultDict[str, List[float]] = defaultdict(list)
+        self.redundancy_history: List[Dict[str, Any]] = []
+        self.metrics: DefaultDict[str, List[Any]] = defaultdict(list)
         self.batch_count = 0
 
     def _get_batch(self):
@@ -205,7 +205,7 @@ class NASCallback(tf.keras.callbacks.Callback):
         if x_batch is None:
             return
             
-        row = {"epoch" if isinstance(identifier, int) else "step": identifier}
+        row: Dict[str, Union[int, str, float]] = {"epoch" if isinstance(identifier, int) else "step": identifier}
         for name in self.layers_to_monitor:
             try:
                 layer = self.model.get_layer(name)
@@ -286,3 +286,128 @@ def get_nas_summary(metrics: Dict[str, Dict[str, float]]) -> str:
         summary.append(f"  Rank: {layer_metrics['rank']}/{layer_metrics['num_channels']}")
     
     return "\n".join(summary)
+
+
+import random
+from src.models.builders import create_searchable_nano_u, BLOCK_MAP, get_block_map
+
+class NASSearcher:
+    """Evolutionary NAS Searcher for Nano-U architectures."""
+    
+    def __init__(
+        self,
+        input_shape: Tuple[int, int, int],
+        filters: List[int],
+        bottleneck: int,
+        population_size: int = 4,
+        generations: int = 3,
+        mutation_rate: float = 0.2,
+        efficiency_weight: float = 0.5,
+        output_dir: str = "results/nas_search/",
+        **kwargs
+    ):
+        self.input_shape = input_shape
+        self.filters = filters
+        self.bottleneck = bottleneck
+        self.population_size = population_size
+        self.generations = generations
+        self.mutation_rate = mutation_rate
+        self.efficiency_weight = efficiency_weight
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.block_map = get_block_map(legacy_mode=True) # Nano-U is always sequential
+        self.num_blocks = len(self.block_map)
+        self.arch_len = 4  # [enc1, enc2, enc3, bottleneck]
+        
+    def generate_random_arch(self) -> List[int]:
+        return [random.randint(0, self.num_blocks - 1) for _ in range(self.arch_len)]
+    
+    def mutate(self, arch: List[int]) -> List[int]:
+        new_arch = list(arch)
+        for i in range(len(new_arch)):
+            if random.random() < self.mutation_rate:
+                new_arch[i] = random.randint(0, self.num_blocks - 1)
+        return new_arch
+    
+    def calculate_efficiency(self, model: tf.keras.Model) -> float:
+        """Calculate efficiency score based on total parameters. Lower is better, but we return normalized [0, 1]."""
+        total_params = model.count_params()
+        # Assume a baseline Nano-U (~10k-20k params)
+        # Higher score means MORE efficient (fewer params)
+        return 1.0 / (1.0 + total_params / 50000.0)
+
+    def search(self, train_fn, validation_data):
+        """Run evolutionary search loop.
+        
+        Args:
+            train_fn: A function(model, epochs) -> history that trains the model
+            validation_data: Data to evaluate candidate performance
+        """
+        # Initial population
+        population = [self.generate_random_arch() for _ in range(self.population_size)]
+        history = []
+        
+        for gen in range(self.generations):
+            print(f"\n🧬 Generation {gen+1}/{self.generations}")
+            scores = []
+            
+            for i, arch in enumerate(population):
+                print(f"  Testing arch {i+1}/{self.population_size}: {arch}")
+                
+                # Create and compile model
+                model = create_searchable_nano_u(
+                    input_shape=self.input_shape,
+                    filters=self.filters,
+                    bottleneck_filters=self.bottleneck,
+                    arch_seq=arch,
+                    name=f"nas_gen{gen}_idx{i}"
+                )
+                
+                # Calculate efficiency (static)
+                eff_score = self.calculate_efficiency(model)
+                
+                # Train model for a few epochs (proxy task)
+                hist = train_fn(model, epochs=2)
+                
+                # Get performance (e.g., final val accuracy or IoU)
+                perf_score = hist.history.get('val_accuracy', hist.history.get('accuracy', [0]))[-1]
+                if 'val_iou' in hist.history:
+                    perf_score = hist.history['val_iou'][-1]
+                
+                # Combined fitness
+                fitness = (1.0 - self.efficiency_weight) * perf_score + self.efficiency_weight * eff_score
+                
+                scores.append({
+                    "arch": arch,
+                    "fitness": float(fitness),
+                    "performance": float(perf_score),
+                    "efficiency": float(eff_score),
+                    "params": int(model.count_params())
+                })
+                
+                print(f"    Fitness: {fitness:.4f} (Perf: {perf_score:.4f}, Eff: {eff_score:.4f}, Params: {model.count_params()})")
+            
+            # Sort by fitness
+            scores.sort(key=lambda x: x['fitness'], reverse=True)
+            history.append(scores)
+            
+            # Save progress
+            pd.DataFrame(scores).to_csv(self.output_dir / f"gen_{gen}_results.csv")
+            
+            # Elite reproduction + Mutation
+            best_arch = scores[0]['arch']
+            next_population = [best_arch]  # Elitism
+            
+            while len(next_population) < self.population_size:
+                # Select from top 2
+                parent = scores[random.randint(0, min(1, len(scores)-1))]['arch']
+                next_population.append(self.mutate(parent))
+            
+            population = next_population
+            
+        return {
+            "best_arch": scores[0]['arch'],
+            "best_fitness": scores[0]['fitness'],
+            "history": history
+        }

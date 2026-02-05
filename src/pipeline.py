@@ -152,3 +152,57 @@ def run_end_to_end_pipeline(config_path: str = "config/experiments.yaml",
             "error": str(e),
             "traceback": traceback.format_exc()
         }
+from src.nas import NASSearcher
+
+
+def run_nas_search(config_path: str = "config/experiments.yaml", 
+                  output_dir: str = "results/nas_search/") -> Dict[str, Any]:
+    """Run evolutionary NAS search to find the best Nano-U architecture."""
+    full_config = load_config(config_path)
+    data_cfg = full_config.get("data", {})
+    training_cfg = full_config.get("training", {}).get("common", {})
+    
+    # Setup NAS parameters
+    nas_cfg = full_config.get("training", {}).get("nas", {})
+    
+    searcher = NASSearcher(
+        input_shape=tuple(data_cfg.get("input_shape", [48, 64, 3])),
+        filters=full_config.get("models", {}).get("nano_u", {}).get("filters", [16, 32, 64]),
+        bottleneck=full_config.get("models", {}).get("nano_u", {}).get("bottleneck", 64),
+        population_size=nas_cfg.get("population_size", 4),
+        generations=nas_cfg.get("generations", 3),
+        output_dir=output_dir
+    )
+    
+    def train_proxy(model, epochs):
+        """Proxy training function for NAS evaluation."""
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=training_cfg.get("learning_rate", 0.001)),
+            loss='binary_crossentropy',
+            metrics=['accuracy']
+        )
+        # We need data here - simplified for now, assuming data loader exists
+        from src.data import load_datasets
+        train_ds, val_ds, _ = load_datasets(config_path)
+        
+        return model.fit(
+            train_ds,
+            validation_data=val_ds,
+            epochs=epochs,
+            verbose=0
+        )
+
+    print("\n" + "="*50)
+    print("🧬 STARTING EVOLUTIONARY NAS SEARCH")
+    print("="*50)
+    
+    results = searcher.search(train_proxy, None)
+    
+    print("\n🏆 Best Architecture Found:", results["best_arch"])
+    
+    # Save best arch to a config file for later full training
+    best_arch_path = Path(output_dir) / "best_arch.json"
+    with open(best_arch_path, "w") as f:
+        json.dump(results, f, indent=2)
+        
+    return results

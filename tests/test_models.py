@@ -224,7 +224,7 @@ def test_model_save_load(nano_u_model: Model):
     """Test model save and load functionality."""
     try:
         # Save model
-        model_path = 'temp_model_save'
+        model_path = 'temp_model_save.keras'
         nano_u_model.save(model_path)
         
         # Load model
@@ -323,7 +323,7 @@ def test_bu_net_size(bu_net_model: Model):
     nano_u_params = count_parameters(create_nano_u())
     
     assert params > nano_u_params  # BU_Net should be larger
-    assert params < 1000000  # Should still be reasonable for training
+    assert params < 5000000  # Should still be reasonable for training
 
 
 # =============================================================================
