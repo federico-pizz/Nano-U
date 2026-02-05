@@ -56,17 +56,20 @@ from src.nas import compute_layer_redundancy, compute_nas_metrics, NASCallback, 
 - **validate_nas_computation**() → bool  
 - **analyze_model_redundancy**(model, x, layers_to_monitor=None) → dict  
 
-## Experiments (`scripts/run_experiments.py`)
-
-Single entry point for running experiments from config.
+## Experiments (`src.experiment` and `scripts/run_experiments.py`)
 
 - **run_experiment**(config_name, config_path='config/experiments.yaml', output_dir='results/') → dict  
 - **run_experiment_sweep**(experiment_configs, config_path=..., output_dir=...) → list  
-- **get_available_experiments**(config_path=...) → list  
 
 CLI:  
 `python scripts/run_experiments.py --list`  
 `python scripts/run_experiments.py --experiment quick_test --output results/`
+
+## Benchmarks (`src.benchmarks`)
+
+- **benchmark_inference**(model, input_shape=(48,64,3)) → dict  
+- **validate_tflite_optimization**(model) → dict  
+- **MemoryProfilingCallback**() — Keras callback for resource monitoring.
 
 ## Config
 
@@ -81,10 +84,10 @@ from src.utils.config import load_config
 full = load_config("config/experiments.yaml")  # full dict; experiments in full["experiments"]
 ```
 
-## Data (`src.utils`)
+## Data (`src.data`)
 
 ```python
-from src.utils import make_dataset, BinaryIoU
+from src.data import make_dataset, get_synthetic_data
 # make_dataset(img_files, mask_files, batch_size=8, ...) → tf.data.Dataset
 ```
 

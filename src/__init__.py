@@ -15,4 +15,5 @@ from .models import (
     get_model_config
 )
 
-from .utils import make_dataset, BinaryIoU
+from .utils import BinaryIoU
+from .data import make_dataset

@@ -21,6 +21,7 @@ if __name__ == "__main__" and __package__ is None:
 from src.models import create_nano_u, create_bu_net, create_model_from_config
 from src.utils import BinaryIoU, get_project_root
 from src.utils.config import load_config
+from src.data import make_dataset, get_synthetic_data
 from src.nas import NASCallback as NASMonitorCallback
 
 
@@ -74,7 +75,7 @@ def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tenso
         student_loss = tf.keras.losses.binary_crossentropy(y, student_pred)
         
         if teacher is not None:
-            distill_loss = tf.keras.losses.kl_divergence(
+            distill_loss = tf.keras.losses.kullback_leibler_divergence(
                 tf.nn.softmax(teacher_pred / temperature),
                 tf.nn.softmax(student_pred / temperature)
             ) * (temperature ** 2)
@@ -135,15 +136,16 @@ def train_single_model(model: keras.Model, config: Dict, train_data: Tuple[tf.Te
             )
         )
     
-    # Model checkpoint
-    checkpoint_path = config.get('checkpoint_path', 'checkpoints/')
-    Path(checkpoint_path).mkdir(parents=True, exist_ok=True)
+    # Model checkpoint - always save as best_model.keras in output_dir
+    output_dir = config.get('output_dir', 'results/')
+    checkpoint_path = os.path.join(output_dir, "best_model.keras")
     
     callbacks.append(
         keras.callbacks.ModelCheckpoint(
-            filepath=os.path.join(checkpoint_path, 'model_{epoch}.h5'),
+            filepath=checkpoint_path,
             save_best_only=True,
-            monitor='val_loss'
+            monitor='val_loss',
+            verbose=1
         )
     )
     
@@ -229,15 +231,15 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
             )
         )
     
-    # Model checkpoint
-    checkpoint_path = config.get('checkpoint_path', 'checkpoints/')
-    Path(checkpoint_path).mkdir(parents=True, exist_ok=True)
+    # Model checkpoint - always save as best_model.keras in output_dir
+    checkpoint_path = os.path.join(config.get('output_dir', 'results/'), "best_model.keras")
     
     callbacks.append(
         keras.callbacks.ModelCheckpoint(
-            filepath=os.path.join(checkpoint_path, 'student_{epoch}.h5'),
+            filepath=checkpoint_path,
             save_best_only=True,
-            monitor='val_loss'
+            monitor='val_loss',
+            verbose=1
         )
     )
     
@@ -287,9 +289,9 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
                 for key, value in losses.items():
                     epoch_losses[key].append(value.numpy())
             
-            # Calculate epoch averages
+            # Calculate epoch averages - convert to standard float for JSON serialization
             for key in epoch_losses:
-                history[key].append(np.mean(epoch_losses[key]))
+                history[key].append(float(np.mean(epoch_losses[key])))
             
             # Validation phase
             if val_dataset:
@@ -304,7 +306,7 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
                         student_loss = tf.keras.losses.binary_crossentropy(y_batch, student_pred).numpy()
                         
                         if teacher is not None:
-                            distill_loss = tf.keras.losses.kl_divergence(
+                            distill_loss = tf.keras.losses.kullback_leibler_divergence(
                                 tf.nn.softmax(teacher_pred / temperature),
                                 tf.nn.softmax(student_pred / temperature)
                             ).numpy() * (temperature ** 2)
@@ -317,7 +319,7 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
                         val_losses['distillation_loss'].append(distill_loss if teacher is not None else 0.0)
                 
                 for key in val_losses:
-                    history[f'val_{key}'].append(np.mean(val_losses[key]))
+                    history[f'val_{key}'].append(float(np.mean(val_losses[key])))
             
             # Print progress
             if (epoch + 1) % 10 == 0 or epoch == 0:
@@ -360,28 +362,114 @@ def train_model(config_path: str = "config/experiments.yaml", experiment_name: s
         if "data" in full_config and "input_shape" in full_config["data"]:
             config.setdefault("input_shape", full_config["data"]["input_shape"])
         
-        base_output = output_dir if output_dir is not None else config.get("output_dir", "results/")
-        experiment_dir = Path(base_output) / f"{experiment_name}_{config.get('model_name', 'nano_u')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        if output_dir is not None:
+            experiment_dir = Path(output_dir)
+        else:
+            base_output = Path(config.get("output_dir", "results/"))
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            experiment_dir = base_output / f"{experiment_name}_{config.get('model_name', 'nano_u')}_{timestamp}"
+        
         experiment_dir.mkdir(parents=True, exist_ok=True)
+
+        # Data loading
+        data_paths = full_config.get("data", {}).get("paths", {})
+        processed = data_paths.get("processed", {})
         
-        train_data, val_data = _get_train_val_data_synthetic(config)
+        if not isinstance(processed, dict) or "train" not in processed:
+            raise ValueError("❌ 'data.paths.processed.train' not found in configuration. Processed data is required.")
+
+        print("📂 Loading data from processed paths...")
+        train_cfg = processed.get("train", {})
+        val_cfg = processed.get("val", {})
         
+        t_img_dir = Path(train_cfg.get("img", ""))
+        t_mask_dir = Path(train_cfg.get("mask", ""))
+        v_img_dir = Path(val_cfg.get("img", ""))
+        v_mask_dir = Path(val_cfg.get("mask", ""))
+        
+        if not t_img_dir.exists() or not t_mask_dir.exists():
+            raise FileNotFoundError(f"❌ Training directories not found: {t_img_dir} or {t_mask_dir}")
+
+        train_img_files = [str(f) for f in t_img_dir.glob("*.png")]
+        train_mask_files = [str(f) for f in t_mask_dir.glob("*.png")]
+        
+        if not train_img_files:
+            raise FileNotFoundError(f"❌ No training images found in {t_img_dir}")
+        if len(train_img_files) != len(train_mask_files):
+            raise ValueError(f"❌ Mismatch in training images ({len(train_img_files)}) and masks ({len(train_mask_files)})")
+            
+        print(f"✅ Found {len(train_img_files)} training pairs.")
+        
+        if v_img_dir.exists() and v_mask_dir.exists():
+            val_img_files = [str(f) for f in v_img_dir.glob("*.png")]
+            val_mask_files = [str(f) for f in v_mask_dir.glob("*.png")]
+            if len(val_img_files) == len(val_mask_files) and val_img_files:
+                print(f"✅ Found {len(val_img_files)} validation pairs.")
+            else:
+                print("⚠️ Validation data skipped (mismatch or empty).")
+                val_img_files, val_mask_files = [], []
+
+        batch_size = config.get("batch_size", 16)
+        train_ds = make_dataset(
+            train_img_files, train_mask_files, 
+            batch_size=batch_size, augment=config.get("augment", False)
+        )
+        if val_img_files:
+            val_ds = make_dataset(
+                val_img_files, val_mask_files, 
+                batch_size=batch_size, augment=False
+            )
+        else:
+            val_ds = None
+            
+        train_data = (train_ds, None)
+        val_data = val_ds
+
+       
         # Build models
         if config.get("use_distillation", False):
-            teacher = create_model_from_config(config)
+            # Create teacher model - use specific name if provided, otherwise default to bu_net
+            teacher_name = config.get("teacher_model_name", "bu_net")
+            teacher_config = config.copy()
+            teacher_config["model_name"] = teacher_name
+            
+            print(f"👨‍🏫 Creating teacher model: {teacher_name}")
+            teacher = create_model_from_config(teacher_config)
+            
             teacher_weights = config.get("teacher_weights")
             if teacher_weights and Path(teacher_weights).exists():
+                print(f"📦 Loading teacher weights from: {teacher_weights}")
                 teacher.load_weights(teacher_weights)
+            else:
+                print(f"⚠️ Teacher weights not found at: {teacher_weights}. Using random initialization.")
+                
             student = create_model_from_config(config)
+            
+            # Handle dataset vs numpy tuple for distillation
+            if isinstance(train_data[0], tf.data.Dataset):
+                # Distillation currently expects (x, y) tuple
+                print("⚠️ Distillation with tf.data.Dataset not fully optimized, converting to single batch.")
+                for x, y in train_data[0].take(1):
+                    train_data = (x, y)
+                if val_data:
+                    for x, y in val_data.take(1):
+                        val_data = (x, y)
+            
             history = train_with_distillation(student, teacher, config, train_data, val_data)
             model_to_save = student
         else:
             model = create_model_from_config(config)
+            # fit handles both (x, y) and dataset
             history = train_single_model(model, config, train_data, val_data)
             model_to_save = model
         
-        model_path = experiment_dir / "model.h5"
+        model_path = experiment_dir / f"{config.get('model_name', 'model')}.keras"
         model_to_save.save(model_path)
+        
+        # Clean up best_model.keras if it exists since we just saved the final one
+        checkpoint_path = experiment_dir / "best_model.keras"
+        if checkpoint_path.exists():
+            checkpoint_path.unlink()
         
         history_path = experiment_dir / "history.json"
         history_dict = history.history if hasattr(history, "history") else history
@@ -395,6 +483,7 @@ def train_model(config_path: str = "config/experiments.yaml", experiment_name: s
             "status": "success",
             "final_metrics": history_dict,
             "model_path": str(model_path),
+            "model_name": config.get("model_name", "model"),
             "experiment_dir": str(experiment_dir),
         }
     except Exception as e:

@@ -5,9 +5,8 @@ import tensorflow as tf
 from tensorflow import keras
 
 from src.utils import get_project_root
-from src.models.Nano_U.model_tf import build_nano_u
-from src.models.BU_Net.model_tf import build_bu_net
-from src.utils.data import make_dataset
+from src.models import create_nano_u, create_bu_net
+from src.data import make_dataset
 from src.utils.config import load_config
 
 
@@ -27,19 +26,17 @@ def build_model_from_config(name: str, config: dict):
     
     if name.lower() == "nano_u":
         cfg = config["models"]["nano_u"]
-        return build_nano_u(
+        return create_nano_u(
             input_shape=input_shape,
             filters=cfg["filters"],
-            bottleneck=cfg["bottleneck"],
-            decoder_filters=cfg["decoder_filters"]
+            bottleneck=cfg["bottleneck"]
         )
     elif name.lower() == "bu_net":
         cfg = config["models"]["bu_net"]
-        return build_bu_net(
+        return create_bu_net(
             input_shape=input_shape,
             filters=cfg["filters"],
-            bottleneck=cfg["bottleneck"],
-            decoder_filters=cfg["decoder_filters"]
+            bottleneck=cfg["bottleneck"]
         )
     else:
         raise ValueError(f"Unknown model name: {name}")

@@ -27,16 +27,17 @@ data:
   
   # Dataset paths
   paths:
-    raw_datasets:
-      - name: "tomatoes_scene1"
-        images: "data/TinyAgri/Tomatoes/scene1"
-        masks: "data/masks/Tomatoes/scene1"
-      - name: "tomatoes_scene2"
-        images: "data/TinyAgri/Tomatoes/scene2"
-        masks: "data/masks/Tomatoes/scene2"
-      - name: "crops_scene1"
-        images: "data/TinyAgri/Crops/scene1"
-        masks: "data/masks/Crops/scene1"
+    processed: 
+      root: "data/processed_data"
+      train:
+        img: "data/processed_data/train/img"
+        mask: "data/processed_data/train/mask"
+      val:
+        img: "data/processed_data/val/img"
+        mask: "data/processed_data/val/mask"
+      test:
+        img: "data/processed_data/test/img"
+        mask: "data/processed_data/test/mask"
 
 # Model configurations
 models:
@@ -79,7 +80,7 @@ training:
     <<: *common
     model_name: "nano_u"
     use_distillation: true
-    teacher_weights: "models/bu_net_weights.h5"
+    teacher_weights: "models/bu_net.keras"
     alpha: 0.3
     temperature: 4.0
     epochs: 100
@@ -99,13 +100,13 @@ training:
     <<: *common
     model_name: "nano_u"
     use_distillation: true
-    teacher_weights: "models/bu_net_weights.h5"
+    teacher_weights: "models/bu_net.keras"
     alpha: 0.3
     temperature: 4.0
     use_nas: true
     layers_to_monitor: ["conv2d", "conv2d_1", "conv2d_2"]
     nas_frequency: 5
-    epochs: 100
+    epochs: 50
     learning_rate: 0.0005
 
 # Experiment configurations
@@ -130,12 +131,22 @@ experiments:
     output_dir: "results/distillation_nas/"
     description: "Knowledge distillation with NAS monitoring"
     
+  bu_net_nas:
+    <<: *training_standard
+    model_name: "bu_net"
+    use_nas: true
+    layers_to_monitor: ["conv2d", "conv2d_1", "conv2d_2"]
+    nas_frequency: 5
+    output_dir: "results/bu_net_nas/"
+    description: "Teacher model (BU-Net) training with NAS monitoring"
+    epochs: 50
+    
   # Quick test experiment
   quick_test:
     <<: *training_standard
     output_dir: "results/quick_test/"
     description: "Quick test with minimal epochs"
-    epochs: 2
+    epochs: 50
     batch_size: 4
     
   # Hyperparameter sweep experiment

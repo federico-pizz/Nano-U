@@ -575,11 +575,12 @@ result = train_model(config_path="config/experiments.yaml", experiment_name="deb
 - Streamlined experiment runner
 
 ### Migration Notes
-- All model definitions moved to `src/models.py`
+- All model definitions moved to `src/models/` package
 - Training pipeline simplified in `src/train.py`
 - NAS system redesigned in `src/nas.py`
 - Configuration unified in `config/experiments.yaml`
-- Experiment runner streamlined in `scripts/run_experiments.py`
+- Experiment runner logic moved to `src/experiment.py`
+- Data pipeline consolidated in `src/data.py`
 - Comprehensive tests in `tests/test_pipeline.py`
 
 ## Support

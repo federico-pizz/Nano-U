@@ -2,7 +2,7 @@
 
 import tensorflow as tf
 import numpy as np
-from typing import Dict, List, Optional, Tuple, DefaultDict
+from typing import Dict, List, Optional, Tuple, DefaultDict, Union
 from collections import defaultdict
 import pandas as pd
 from pathlib import Path
@@ -147,51 +147,93 @@ class NASCallback(tf.keras.callbacks.Callback):
     def __init__(
         self,
         layers_to_monitor: List[str] = None,
-        log_frequency: int = 10,
+        log_frequency: int = 1,
         output_dir: str = "nas_logs/",
+        validation_data: Optional[Union[tf.data.Dataset, Tuple[np.ndarray, np.ndarray]]] = None,
+        monitor_frequency: str = "epoch",
+        log_dir: str = None,
         **kwargs,
     ):
         super().__init__()
-        # Ignore unknown kwargs (e.g. validation_data, csv_path, monitor_frequency from tests)
         self.layers_to_monitor = layers_to_monitor or ["conv2d", "conv2d_1"]
         self.log_frequency = log_frequency
         self.output_dir = str(output_dir)
+        self.monitor_frequency = monitor_frequency # 'epoch' or 'batch'
+        self.validation_data = validation_data
+        self.log_dir = log_dir
+        
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+        if self.log_dir:
+            self.writer = tf.summary.create_file_writer(self.log_dir)
+            
         self.redundancy_history: List[Dict[str, float]] = []
         self.metrics: DefaultDict[str, List[float]] = defaultdict(list)
         self.batch_count = 0
 
     def _get_batch(self):
-        """Get a batch for metrics (validation data or test data)."""
-        if hasattr(self.model, "validation_data") and self.model.validation_data is not None:
+        """Get a batch for metrics (validation data or training data)."""
+        val = None
+        if self.validation_data is not None:
+            val = self.validation_data
+        elif hasattr(self.model, "validation_data") and self.model.validation_data is not None:
             val = self.model.validation_data
-            if isinstance(val, (list, tuple)) and len(val) > 0:
-                return val[0][: min(16, len(val[0]))]
+            
+        if val is not None:
+            if isinstance(val, tf.data.Dataset):
+                for x, _ in val.take(1):
+                    return x[: min(16, tf.shape(x)[0])]
+            elif isinstance(val, (list, tuple)) and len(val) > 0:
+                x = val[0]
+                return x[: min(16, len(x))]
+                
+        # Fallback to test batch if set by unit tests
         if hasattr(self, "_test_x_batch"):
             return self._test_x_batch
         return None
 
+    def on_batch_end(self, batch: int, logs: Optional[Dict[str, float]] = None):
+        self.batch_count += 1
+        if self.monitor_frequency == "batch" and self.batch_count % self.log_frequency == 0:
+            self._compute_and_log(f"step_{self.batch_count}")
+
     def on_epoch_end(self, epoch: int, logs: Optional[Dict[str, float]] = None):
+        if self.monitor_frequency == "epoch" and (epoch + 1) % self.log_frequency == 0:
+            self._compute_and_log(epoch)
+
+    def _compute_and_log(self, identifier: Union[int, str]):
         x_batch = self._get_batch()
         if x_batch is None:
             return
-        row = {"epoch": epoch}
+            
+        row = {"epoch" if isinstance(identifier, int) else "step": identifier}
         for name in self.layers_to_monitor:
             try:
                 layer = self.model.get_layer(name)
+                # Ensure we handle functional model correctly
                 inter = tf.keras.Model(inputs=self.model.input, outputs=layer.output)
-                act = inter(x_batch)
+                act = inter(x_batch, training=False)
                 r = compute_layer_redundancy(act)
                 row[f"{name}_redundancy_score"] = r["redundancy_score"]
                 row[f"{name}_condition_number"] = r["condition_number"]
                 row[f"{name}_rank"] = float(r["rank"])
                 row[f"{name}_num_channels"] = float(r["num_channels"])
-            except (ValueError, KeyError):
+            except (ValueError, KeyError) as e:
+                print(f"⚠️ NAS monitor skipping layer {name}: {e}")
                 continue
+                
         self.redundancy_history.append(row)
         for k, v in row.items():
-            if k != "epoch":
+            if k not in ["epoch", "step"]:
                 self.metrics[k].append(v)
+                
+        if self.log_dir:
+            with self.writer.as_default():
+                step = identifier if isinstance(identifier, int) else self.batch_count
+                for k, v in row.items():
+                    if k not in ["epoch", "step"]:
+                        tf.summary.scalar(f"nas/{k}", v, step=step)
+            self.writer.flush()
+                
         csv_path = Path(self.output_dir) / "metrics.csv"
         pd.DataFrame(self.redundancy_history).to_csv(csv_path, index=False)
 

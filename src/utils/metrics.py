@@ -9,7 +9,7 @@ class BinaryIoU(tf.keras.metrics.Metric):
         self.fn = self.add_weight(name="fn", initializer="zeros")
 
     def update_state(self, y_true, y_pred, sample_weight=None):
-        y_pred = tf.cast(tf.math.sigmoid(y_pred) > self.threshold, tf.float32)
+        y_pred = tf.cast(y_pred > self.threshold, tf.float32)
         y_true = tf.cast(y_true > 0.5, tf.float32)
         tp = tf.reduce_sum(y_true * y_pred)
         fp = tf.reduce_sum((1 - y_true) * y_pred)
