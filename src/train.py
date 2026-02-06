@@ -390,6 +390,16 @@ def train_model(config_path: str = "config/experiments.yaml", experiment_name: s
         # Load full configuration and resolve experiment
         full_config = load_config(config_path)
         config = dict(_get_experiment_config(full_config, experiment_name))
+        
+        # Merge model-specific config if available
+        model_name = config.get("model_name", "nano_u")
+        if "models" in full_config and model_name in full_config["models"]:
+            model_config = full_config["models"][model_name]
+            # Update config with model defaults if not overridden in experiment
+            for key, value in model_config.items():
+                if key not in config:
+                    config[key] = value
+
         if "data" in full_config and "input_shape" in full_config["data"]:
             config.setdefault("input_shape", full_config["data"]["input_shape"])
         
@@ -463,6 +473,12 @@ def train_model(config_path: str = "config/experiments.yaml", experiment_name: s
             teacher_name = config.get("teacher_model_name", "bu_net")
             teacher_config = config.copy()
             teacher_config["model_name"] = teacher_name
+            
+            # Re-apply teacher defaults from full_config to override student settings
+            if "models" in full_config and teacher_name in full_config["models"]:
+                print(f"🔄 Re-applying default configuration for teacher: {teacher_name}")
+                teacher_defaults = full_config["models"][teacher_name]
+                teacher_config.update(teacher_defaults)
             
             print(f"👨‍🏫 Creating teacher model: {teacher_name}")
             teacher = create_model_from_config(teacher_config)

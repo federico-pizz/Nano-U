@@ -1,0 +1,75 @@
+==========================================
+Stack Usage Analysis Workflow
+Repository root: /home/fefe/Projects/Nano-U
+==========================================
+Sourcing ESP-IDF environment from /home/fefe/export-esp.sh
+
+[1/4] Building project for ESP32-S3...
+Preparing test data...
+Preparing test data...
+Source: /home/fefe/Projects/Nano-U/data/processed_data/test/img
+Dest:   /home/fefe/Projects/Nano-U/esp_flash/src/bin/input_images.bin
+Found 185 images. Using first 50.
+✓ Packed 50 images into input_images.bin (460800 bytes).
+   Compiling prova_s3 v0.1.0 (/home/fefe/Projects/Nano-U/esp_flash)
+warning: unused variable: `ptr`
+   --> src/bin/analysis.rs:178:25
+    |
+178 |                     let ptr = batch.as_mut_ptr() as *mut f32; // Buffer4D usually implements Deref/as_ptr
+    |                         ^^^ help: if this is intentional, prefix it with an underscore: `_ptr`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: `prova_s3` (bin "analysis") generated 1 warning
+    Finished `release` profile [optimized + debuginfo] target(s) in 4.10s
+✓ Build complete
+
+Starting analysis...
+/home/fefe/Projects/Nano-U/esp_flash/run_inference.py:107: SyntaxWarning: 'continue' in a 'finally' block
+  continue
+[90m[[0m2026-02-06T11:33:51Z [32mINFO [0m[90m][0m Serial port: '/dev/ttyACM0'
+[90m[[0m2026-02-06T11:33:51Z [32mINFO [0m[90m][0m Connecting...
+[90m[[0m2026-02-06T11:33:51Z [32mINFO [0m[90m][0m Using flash stub
+Error:   [31m×[0m ESP-IDF App Descriptor (https://docs.espressif.com/
+  [31m│[0m projects/esp-idf/en/stable/esp32/api-reference/system/
+  [31m│[0m app_image_format.html#application-description) missing in
+  [31m│[0m your`esp-hal` application.
+  [31m│[0m 
+  [31m│[0m                 You may need to add the
+  [31m│[0m `esp_bootloader_esp_idf::esp_app_desc!()` macro to your
+  [31m│[0m application, see https://docs.espressif.com/projects/rust/
+  [31m│[0m esp-bootloader-esp-idf/latest for more information.
+
+[90m[[0m2026-02-06T11:33:51Z [32mINFO [0m[90m][0m Serial port: '/dev/ttyACM0'
+[90m[[0m2026-02-06T11:33:51Z [32mINFO [0m[90m][0m Connecting...
+[90m[[0m2026-02-06T11:33:52Z [32mINFO [0m[90m][0m Using flash stub
+Error:   [31m×[0m ESP-IDF App Descriptor (https://docs.espressif.com/
+  [31m│[0m projects/esp-idf/en/stable/esp32/api-reference/system/
+  [31m│[0m app_image_format.html#application-description) missing in
+  [31m│[0m your`esp-hal` application.
+  [31m│[0m 
+  [31m│[0m                 You may need to add the
+  [31m│[0m `esp_bootloader_esp_idf::esp_app_desc!()` macro to your
+  [31m│[0m application, see https://docs.espressif.com/projects/rust/
+  [31m│[0m esp-bootloader-esp-idf/latest for more information.
+
+[90m[[0m2026-02-06T11:33:52Z [32mINFO [0m[90m][0m Serial port: '/dev/ttyACM0'
+[90m[[0m2026-02-06T11:33:52Z [32mINFO [0m[90m][0m Connecting...
+[90m[[0m2026-02-06T11:33:52Z [32mINFO [0m[90m][0m Using flash stub
+Error:   [31m×[0m ESP-IDF App Descriptor (https://docs.espressif.com/
+  [31m│[0m projects/esp-idf/en/stable/esp32/api-reference/system/
+  [31m│[0m app_image_format.html#application-description) missing in
+  [31m│[0m your`esp-hal` application.
+  [31m│[0m 
+  [31m│[0m                 You may need to add the
+  [31m│[0m `esp_bootloader_esp_idf::esp_app_desc!()` macro to your
+  [31m│[0m application, see https://docs.espressif.com/projects/rust/
+  [31m│[0m esp-bootloader-esp-idf/latest for more information.
+
+Executing: espflash flash --monitor target/xtensa-esp32s3-none-elf/release/analysis (Attempt 1/3)
+Logging to: stack_log.txt
+Executing: espflash flash --monitor target/xtensa-esp32s3-none-elf/release/analysis (Attempt 2/3)
+Logging to: stack_log.txt
+Executing: espflash flash --monitor target/xtensa-esp32s3-none-elf/release/analysis (Attempt 3/3)
+Logging to: stack_log.txt
+Did not complete successfully after retries.

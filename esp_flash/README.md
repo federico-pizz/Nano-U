@@ -22,3 +22,4 @@ Notes
 -----
 - Models were moved to the repository root `models/` directory.
 - Large ephemeral artifacts (target/, venvs) were removed from this directory during merge.
+- See [RUST_ESP32S3_NOSTD.md](RUST_ESP32S3_NOSTD.md) for details on Rust setup and optimization.

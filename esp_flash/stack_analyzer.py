@@ -16,9 +16,14 @@ def parse_log_output(filename):
     """
     peaks = []
     total_stack = 0
+    # Regex to strip ANSI escape codes
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     
     with open(filename, 'r') as f:
         for line in f:
+            # Strip ANSI codes and whitespace
+            line = ansi_escape.sub('', line).strip()
+            
             if "STACK_PEAK:" in line:
                 try:
                     val = int(line.split("STACK_PEAK:")[1].strip())

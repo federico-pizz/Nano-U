@@ -1,61 +1,9 @@
-[2026-01-03T16:13:52Z INFO ] Serial port: '/dev/ttyUSB0'
-[2026-01-03T16:13:52Z INFO ] Connecting...
-[2026-01-03T16:13:53Z INFO ] Using flash stub
-Chip type:         esp32s3 (revision v0.2)
-Crystal frequency: 40 MHz
-Flash size:        16MB
-Features:          WiFi, BLE, Embedded Flash
-MAC address:       dc:b4:d9:04:54:7c
-App/part. size:    188,336/16,384,000 bytes, 1.15%
-[2026-01-03T16:13:54Z INFO ] Flashing has completed!
-Commands:
-    CTRL+R    Reset chip
-    CTRL+C    Exit
+[90m[[0m2026-02-06T11:40:01Z [32mINFO [0m[90m][0m Serial port: '/dev/ttyACM0'
+[90m[[0m2026-02-06T11:40:01Z [32mINFO [0m[90m][0m Connecting...
+[90m[[0m2026-02-06T11:40:01Z [32mINFO [0m[90m][0m Using flash stub
+Error:   [31m×[0m ESP-IDF App Descriptor (https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/
+  [31m│[0m app_image_format.html#application-description) missing in your`esp-hal` application.
+  [31m│[0m 
+  [31m│[0m                 You may need to add the `esp_bootloader_esp_idf::esp_app_desc!()` macro to your application, see
+  [31m│[0m https://docs.espressif.com/projects/rust/esp-bootloader-esp-idf/latest for more information.
 
-ESP-ROM:esp32s3-20210327
-Build:Mar 27 2021
-rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)
-SPIWP:0xee
-mode:DIO, clock div:2
-load:0x3fce2820,len:0x158c
-load:0x403c8700,len:0xd24
-load:0x403cb700,len:0x2f34
-entry 0x403c8924
-I (29) boot: ESP-IDF v5.5.1-838-gd66ebb86d2e 2nd stage bootloader
-I (30) boot: compile time Nov 26 2025 12:27:56
-I (30) boot: Multicore bootloader
-I (31) boot: chip revision: v0.2
-I (34) boot: efuse block revision: v1.3
-I (38) boot.esp32s3: Boot SPI Speed : 40MHz
-I (42) boot.esp32s3: SPI Mode       : DIO
-I (45) boot.esp32s3: SPI Flash Size : 16MB
-I (49) boot: Enabling RNG early entropy source...
-I (54) boot: Partition Table:
-I (56) boot: ## Label            Usage          Type ST Offset   Length
-I (63) boot:  0 nvs              WiFi data        01 02 00009000 00006000
-I (69) boot:  1 phy_init         RF data          01 01 0000f000 00001000
-I (76) boot:  2 factory          factory app      00 00 00010000 00fa0000
-I (82) boot: End of partition table
-I (86) esp_image: segment 0: paddr=00010020 vaddr=3c000020 size=125ech ( 75244) map
-I (111) esp_image: segment 1: paddr=00022614 vaddr=3fc89644 size=00590h (  1424) load
-I (112) esp_image: segment 2: paddr=00022bac vaddr=40378000 size=01644h (  5700) load
-I (117) esp_image: segment 3: paddr=000241f8 vaddr=00000000 size=0be20h ( 48672) 
-I (135) esp_image: segment 4: paddr=00030020 vaddr=42020020 size=0df64h ( 57188) map
-I (150) boot: Loaded app from partition at offset 0x10000
-I (150) boot: Disabling RNG early entropy source...
-System Init. Clock: Max. Starting Inference...
-Allocating Input...
-Stack painted from 0x3fc89e7c to 0x3fcc9e10 (262036 bytes)
-Running Inference Iteration 1...
-Inference done in 13545 ms
-STACK_PEAK:323996
-STACK_TOTAL:334468
-Running Inference Iteration 2...
-Inference done in 13543 ms
-STACK_PEAK:323996
-STACK_TOTAL:334468
-Running Inference Iteration 3...
-Inference done in 13544 ms
-STACK_PEAK:323996
-STACK_TOTAL:334468
-ANALYSIS_DONE

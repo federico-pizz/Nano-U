@@ -10,11 +10,19 @@ echo "=========================================="
 echo "Stack Usage Analysis Workflow"
 echo "Repository root: $REPO_ROOT"
 echo "=========================================="
+
+# Source ESP-IDF environment if available
+if [ -f "$HOME/export-esp.sh" ]; then
+    echo "Sourcing ESP-IDF environment from $HOME/export-esp.sh"
+    source "$HOME/export-esp.sh"
+fi
+
 echo ""
 
 # Step 1: Build the project (run inside esp_flash)
 echo "[1/4] Building project for ESP32-S3..."
 cd "$SCRIPT_DIR"
+
 cargo build --release --bin analysis
 if [ $? -ne 0 ]; then
     echo "Error: Build failed!"
@@ -24,55 +32,15 @@ echo "✓ Build complete"
 echo ""
 
 # Step 2: Run on Device and Capture Output
-echo "[2/4] Flashing and running on device..."
-LOG="$REPO_ROOT/stack_log.txt"
-echo "Capturing output to $LOG..."
+LOG="stack_log.txt"
 
-# Remove old log
-rm -f "$LOG"
+# Run analysis wrapper (handles execution, logging, and termination)
+echo "Starting analysis..."
+python3 "$SCRIPT_DIR/run_inference.py"
+EXIT_CODE=$?
 
-# Run in background (use espflash to avoid cargo run TTY issues)
-espflash flash --monitor target/xtensa-esp32s3-none-elf/release/analysis < /dev/null > "$LOG" 2>&1 &
-PID=$!
-
-echo "Waiting for analysis to complete (PID: $PID)..."
-
-# Wait loop
-MAX_RETRIES=300 # 300 seconds timeout (5 minutes)
-COUNT=0
-SUCCESS=0
-
-while [ $COUNT -lt $MAX_RETRIES ]; do
-    if grep -q "ANALYSIS_DONE" "$LOG"; then
-        echo "✓ Analysis finished successfully!"
-        SUCCESS=1
-        break
-    fi
-
-    # Check if process died early
-    if ! kill -0 $PID 2>/dev/null; then
-        echo "Error: Process exited unexpectedly."
-        break
-    fi
-
-    sleep 1
-    ((COUNT++))
-    echo -n "."
-done
-echo ""
-
-# Kill the process (espflash monitor)
-pkill -P $PID 2>/dev/null || true
-kill $PID 2>/dev/null || true
-wait $PID 2>/dev/null || true
-
-# Restore terminal settings just in case
-stty sane 2>/dev/null || true
-
-if [ $SUCCESS -eq 0 ]; then
-    echo "Error: Analysis timed out or failed."
-    echo "Last 50 lines of log:"
-    tail -n 50 "$LOG"
+if [ $EXIT_CODE -ne 0 ]; then
+    echo "Error: Analysis failed or timed out."
     exit 1
 fi
 

@@ -43,8 +43,8 @@ data:
 models:
   nano_u:
     class: "create_nano_u"
-    filters: [16, 32]
-    bottleneck: 64
+    filters: [8, 16]
+    bottleneck: 32
     description: "Ultra-lightweight U-Net for microcontrollers"
     
   bu_net:

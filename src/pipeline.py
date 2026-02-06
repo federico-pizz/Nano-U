@@ -130,18 +130,24 @@ def run_end_to_end_pipeline(config_path: str = "config/experiments.yaml",
         
         if student_keras.exists():
             # Copy keras model to models/
-            shutil.copy(student_keras, models_dir / "nano_u.keras")
-            print(f"✅ Success: Copied student model to {models_dir / 'nano_u.keras'}")
+            target_keras = models_dir / "nano_u.keras"
+            shutil.copy(student_keras, target_keras)
+            print(f"✅ Success: Copied student model to {target_keras}")
             
-            benchmark_res = run_benchmarks(str(student_keras))
+            # Explicitly run quantization
+            from src.quantize_model import quantize_model
+            target_tflite = models_dir / "nano_u.tflite"
+            success = quantize_model(str(target_keras), str(target_tflite))
             
-            # Copy TFLite model to models/ if it exists
-            tflite_src = student_keras.parent / "model.tflite"
-            if tflite_src.exists():
-                shutil.copy(tflite_src, models_dir / "nano_u.tflite")
-                print(f"✅ Success: Copied TFLite model to {models_dir / 'nano_u.tflite'}")
-                
-            print(f"✅ Success: Benchmarking complete. TFLite model generated.")
+            if success:
+                 print(f"✅ Success: Quantization complete: {target_tflite}")
+            else:
+                 print(f"❌ Error: Quantization failed for {target_keras}")
+
+            # Run benchmarks (optional, but good for verification)
+            benchmark_res = run_benchmarks(str(target_keras))
+            
+            print(f"✅ Success: Benchmarking complete.")
         else:
             raise FileNotFoundError(f"Could not find trained student model at {student_keras}")
             

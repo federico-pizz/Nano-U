@@ -4,25 +4,26 @@
 
 // --- Imports ---
 use esp_backtrace as _;
-use esp_hal::{
-    clock::CpuClock,
-    main,
-    delay::Delay,
-};
+use esp_hal::{clock::CpuClock, delay::Delay, main, rtc_cntl::Rtc, timer::timg::TimerGroup};
 use esp_println::println;
 
 // --- Bootloader ---
 esp_bootloader_esp_idf::esp_app_desc!();
 
 // Microflow & Math
-use microflow::buffer::{Buffer4D, Buffer2D}; // Use Buffer4D for images (Batch, H, W, Channel)
+use microflow::buffer::{Buffer2D, Buffer4D}; // Use Buffer4D for images (Batch, H, W, Channel)
 use microflow::model;
 
 // --- Model Definition ---
 // Ensure "models/dummy1.tflite" exists in your project root!
-// The macro assumes Input: 48x48x3 and Output: 48x48x1
-#[model("models/dummy5.tflite")]
+// The macro assumes Input: 48x64x3 and Output: 48x64x1 (based on nano_u_quant)
+#[model("models/nano_u.tflite")]
 struct UNet;
+
+// --- Static Buffer ---
+// We allocate this in .bss to avoid stack overflow.
+// Option is used to allow initialization at runtime (though strictly we could use maybe_uninit)
+static mut INPUT_BUFFER: Option<Buffer4D<f32, 1, 48, 64, 3>> = None;
 
 unsafe extern "C" {
     // These symbols are defined in the linker script (stack.x)
@@ -40,13 +41,13 @@ unsafe fn paint_stack() {
     unsafe {
         core::arch::asm!("mov {0}, a1", out(reg) sp);
     }
-    
+
     let stack_end = { core::ptr::addr_of!(_stack_end) as usize };
-    
+
     // Leave a safety margin of 256 bytes below current SP to avoid corrupting active frames
     let paint_end = sp - 256;
     let paint_start = stack_end + STACK_BOTTOM_MARGIN;
-    
+
     if paint_end > paint_start {
         let len = paint_end - paint_start;
         let ptr = paint_start as *mut u8;
@@ -54,7 +55,10 @@ unsafe fn paint_stack() {
         unsafe {
             core::ptr::write_bytes(ptr, STACK_PATTERN, len);
         }
-        println!("Stack painted from 0x{:x} to 0x{:x} ({} bytes)", paint_start, paint_end, len);
+        println!(
+            "Stack painted from 0x{:x} to 0x{:x} ({} bytes)",
+            paint_start, paint_end, len
+        );
     } else {
         println!("Error: Stack overflow imminent or invalid SP!");
     }
@@ -64,18 +68,18 @@ unsafe fn paint_stack() {
 unsafe fn measure_stack() -> usize {
     let stack_end = { core::ptr::addr_of!(_stack_end) as usize };
     let stack_start = { core::ptr::addr_of!(_stack_start) as usize };
-    
+
     // Start scanning from the painted region
     let scan_start = stack_end + STACK_BOTTOM_MARGIN;
     let ptr = scan_start as *const u8;
-    
+
     // The size of the area we are scanning (from bottom margin up to top)
-    // Note: We are scanning the whole stack space above the margin, 
+    // Note: We are scanning the whole stack space above the margin,
     // not just what we painted. If we reach unpainted territory (used stack), we stop.
     let scan_len = stack_start - scan_start;
 
     let mut used_bytes = 0;
-    
+
     // Scan from bottom (scan_start) upwards
     for i in 0..scan_len {
         if unsafe { *ptr.add(i) } != STACK_PATTERN {
@@ -90,59 +94,109 @@ unsafe fn measure_stack() -> usize {
             break;
         }
     }
-    
+
     used_bytes
 }
 
 #[main]
+#[allow(static_mut_refs)]
 fn main() -> ! {
     // 1. Init System at Max Speed (240MHz) for Inference
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let _peripherals = esp_hal::init(config);
+    let peripherals = esp_hal::init(config);
     let delay = Delay::new();
 
-    println!("System Init. Clock: Max. Starting Inference...");
+    // Disable Watchdog Timers
+    let mut rtc = Rtc::new(peripherals.LPWR);
+    rtc.swd.disable();
+    rtc.rwdt.disable();
 
-    // 2. Prepare Input Data (48x48x3)
-    // We create it here. NOTE: This lives on the STACK.
-    // Ensure your stack size is > 50KB in .cargo/config.toml
-    println!("Allocating Input...");
-    
-    // Create a 48x48 matrix where each element is [f32; 3] (RGB)
-    // We initialize it with dummy values (e.g., 0.5)
-    let input_image = Buffer2D::<[f32; 3], 48, 48>::from_element([0.5, 0.5, 0.5]);
-    
-    // Microflow expects a 4D Batch: [Batch, Row, Col, Channel] -> [1, 48, 48, 3]
-    let input_batch: Buffer4D<f32, 1, 48, 48, 3> = [input_image];
+    let mut timg0 = TimerGroup::new(peripherals.TIMG0);
+    timg0.wdt.disable();
 
-    unsafe { paint_stack(); }
+    let mut timg1 = TimerGroup::new(peripherals.TIMG1);
+    timg1.wdt.disable();
+
+    println!("System Init. Clock: Max. WDT Disabled. Starting Inference...");
+
+    // 2. Prepare Input Data (48x64x3)
+    // We use a STATIC buffer to avoid stack overflow.
+    println!("Allocating Input in STATIC memory...");
+
+    unsafe {
+        if INPUT_BUFFER.is_none() {
+            // Initialize the static buffer
+            // 48x64x3, initialized to 0.5
+            let input_image = Buffer2D::<[f32; 3], 48, 64>::from_element([0.5, 0.5, 0.5]);
+            INPUT_BUFFER = Some([input_image]);
+        }
+    }
+
+    unsafe {
+        paint_stack();
+    }
+
+    // Load raw image data (50 images, 48x64x3, u8)
+    // Load raw image data (50 images, 48x64x3, u8)
+    // Generated by build.rs in OUT_DIR
+    const RAW_IMAGES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/input_images.bin"));
+    const IMG_SIZE: usize = 48 * 64 * 3;
 
     // Run a finite number of iterations
-    for i in 0..3 {
+    for i in 0..50 {
         println!("Running Inference Iteration {}...", i + 1);
+
+        unsafe {
+            if let Some(ref mut batch) = INPUT_BUFFER {
+                let start_idx = i * IMG_SIZE;
+                // Safety check
+                if start_idx + IMG_SIZE <= RAW_IMAGES.len() {
+                    let img_data = &RAW_IMAGES[start_idx..start_idx + IMG_SIZE];
+
+                    // Buffer4D is typically wrapped, but let's access memory directly to be efficient and simple.
+                    // INPUT_BUFFER is static mut Option<Buffer4D>
+                    // batch is &mut Buffer4D
+
+                    // We cast to f32 pointer.
+                    let ptr = batch.as_mut_ptr() as *mut f32;
+
+                    for j in 0..IMG_SIZE {
+                        // Normalize 0..255 -> 0.0..1.0
+                        *ptr.add(j) = img_data[j] as f32 / 255.0;
+                    }
+                }
+            }
+        }
+
         let start = esp_hal::time::Instant::now();
 
         // 3. Run Prediction
-        // The macro generates `predict` which takes the input by value.
-        let _output_batch = UNet::predict(input_batch);
+        // We access the static buffer. Note: passing it to predict might still copy it to stack
+        // depending on Microflow's implementation, but we save the double allocation in main.
+        let input = unsafe { INPUT_BUFFER.as_ref().unwrap() };
+
+        // Note: UNet::predict takes ownership (copy) if defined by standard macro.
+        // There is no easy way to avoid this copy without changing Microflow traits.
+        // However, we avoid holding `input_batch` AND `input_image` on main stack simultaneously during setup.
+        let _output_batch = UNet::predict(*input);
 
         let duration = start.elapsed();
         println!("Inference done in {} ms", duration.as_millis());
-        
+
         unsafe {
             let peak_stack = measure_stack();
             println!("STACK_PEAK:{}", peak_stack);
-            
+
             let stack_start = core::ptr::addr_of!(_stack_start) as usize;
             let stack_end = core::ptr::addr_of!(_stack_end) as usize;
             println!("STACK_TOTAL:{}", stack_start - stack_end);
         }
-        
+
         delay.delay_millis(500);
     }
-    
+
     println!("ANALYSIS_DONE");
-    
+
     loop {
         delay.delay_millis(1000);
     }
