@@ -15,7 +15,7 @@ import tensorflow as tf
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.models import create_nano_u, create_model_from_config, count_parameters
-from src.train import train_model, train_single_model, _get_experiment_config, _get_train_val_data_synthetic
+from src.train import train_model, train_single_model, _get_experiment_config
 from src.utils.config import load_config
 from src.nas import compute_layer_redundancy, validate_nas_computation, NASCallback
 
@@ -29,8 +29,8 @@ def test_model_instantiation():
     assert model.optimizer is not None
 
 
-def test_training_pipeline_synthetic():
-    """Short training run with synthetic data (2 epochs, small batch)."""
+def test_training_pipeline_dummy():
+    """Short training run with dummy data (2 epochs, small batch)."""
     config = {
         "model_name": "nano_u",
         "input_shape": [48, 64, 3],
@@ -38,9 +38,18 @@ def test_training_pipeline_synthetic():
         "batch_size": 4,
         "learning_rate": 0.001,
     }
-    train_data, val_data = _get_train_val_data_synthetic(config, num_train=16, num_val=8)
+    
+    # Generate isolated dummy datasets for the test
+    x_train = np.random.rand(16, 48, 64, 3).astype(np.float32)
+    y_train = np.random.randint(0, 2, (16, 48, 64, 1)).astype(np.float32)
+    x_val = np.random.rand(8, 48, 64, 3).astype(np.float32)
+    y_val = np.random.randint(0, 2, (8, 48, 64, 1)).astype(np.float32)
+    
+    train_ds = tf.data.Dataset.from_tensor_slices((x_train, y_train)).batch(4)
+    val_ds = tf.data.Dataset.from_tensor_slices((x_val, y_val)).batch(4)
+    
     model = create_model_from_config(config)
-    history = train_single_model(model, config, train_data, val_data)
+    history = train_single_model(model, config, train_ds, val_ds)
     assert "loss" in history.history
     assert len(history.history["loss"]) == 2
 
@@ -81,7 +90,7 @@ def test_experiment_config_resolution():
 
 
 def test_train_model_quick(tmp_path):
-    """train_model runs without error for quick_test (uses synthetic data)."""
+    """train_model runs without error for quick_test (uses dummy data)."""
     path = os.path.join(os.path.dirname(__file__), "..", "config", "experiments.yaml")
     if not os.path.exists(path):
         pytest.skip("config/experiments.yaml not found")

@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
-from typing import Dict, Optional, Tuple, List, Any
+from typing import Dict, Optional, Tuple, List, Any, Union
 from pathlib import Path
 from datetime import datetime
 import yaml
@@ -21,7 +21,7 @@ if __name__ == "__main__" and __package__ is None:
 from src.models import create_nano_u, create_bu_net, create_model_from_config
 from src.utils import BinaryIoU, get_project_root
 from src.utils.config import load_config
-from src.data import make_dataset, get_synthetic_data
+from src.data import make_dataset
 from src.nas import NASCallback as NASMonitorCallback
 
 
@@ -33,20 +33,6 @@ def _get_experiment_config(full_config: Dict[str, Any], experiment_name: str) ->
         return full_config["experiments"][experiment_name]
     raise KeyError(f"Experiment '{experiment_name}' not found in config. "
                    f"Top-level keys: {list(full_config.keys())}")
-
-
-def _get_train_val_data_synthetic(config: Dict[str, Any], num_train: int = 64, num_val: int = 16) -> Tuple[
-    Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray]]:
-    """Build synthetic (train, val) data for training when no dataset paths are used."""
-    input_shape = tuple(config.get("input_shape", [48, 64, 3]))
-    if len(input_shape) == 2:
-        input_shape = (input_shape[0], input_shape[1], 3)
-    h, w, c = input_shape
-    x_train = np.random.rand(num_train, h, w, c).astype(np.float32)
-    y_train = np.random.randint(0, 2, (num_train, h, w, 1)).astype(np.float32)
-    x_val = np.random.rand(num_val, h, w, c).astype(np.float32)
-    y_val = np.random.randint(0, 2, (num_val, h, w, 1)).astype(np.float32)
-    return (x_train, y_train), (x_val, y_val)
 
 
 def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tensor, y: tf.Tensor,
@@ -112,18 +98,22 @@ def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tenso
     }
 
 
-def train_single_model(model: keras.Model, config: Dict, train_data: Tuple[tf.Tensor, tf.Tensor],
-                      val_data: Optional[Tuple[tf.Tensor, tf.Tensor]] = None) -> keras.callbacks.History:
-    """Train a single model without distillation.
-    
+def train_single_model(
+    model: keras.Model,
+    config: Dict,
+    train_data: Union[tf.data.Dataset, Tuple[tf.Tensor, tf.Tensor]],
+    val_data: Optional[Union[tf.data.Dataset, Tuple[tf.Tensor, tf.Tensor]]] = None,
+) -> keras.callbacks.History:
+    """Train a single model using Keras .fit().
+
     Args:
-        model: Model to train
-        config: Training configuration
-        train_data: Training data (x, y)
-        val_data: Optional validation data (x, y)
-    
+        model: Compiled Keras model.
+        config: Training configuration dict.
+        train_data: Either a ``tf.data.Dataset`` or a ``(x, y)`` tuple.
+        val_data: Optional validation data in either format.
+
     Returns:
-        Training history
+        Keras History object.
     """
     # Setup training parameters
     epochs = config.get('epochs', 50)
@@ -153,9 +143,9 @@ def train_single_model(model: keras.Model, config: Dict, train_data: Tuple[tf.Te
             )
         )
     
-    # Model checkpoint - always save as best_model.keras in output_dir
-    output_dir = config.get('output_dir', 'results/')
-    checkpoint_path = os.path.join(output_dir, "best_model.keras")
+    # Model checkpoint - always save as temp_model.keras in models/
+    Path("models").mkdir(parents=True, exist_ok=True)
+    checkpoint_path = os.path.join("models", "temp_model.keras")
     
     callbacks.append(
         keras.callbacks.ModelCheckpoint(
@@ -193,15 +183,26 @@ def train_single_model(model: keras.Model, config: Dict, train_data: Tuple[tf.Te
     print(f"Batch size: {batch_size}")
     print(f"Learning rate: {learning_rate}")
     
+    # Fit — accept both tf.data.Dataset and (x, y) tuple
+    is_dataset = isinstance(train_data, tf.data.Dataset)
     try:
-        history = model.fit(
-            train_data[0], train_data[1],
-            batch_size=batch_size,
-            epochs=epochs,
-            validation_data=val_data,
-            callbacks=callbacks,
-            verbose=1
-        )
+        if is_dataset:
+            history = model.fit(
+                train_data,
+                epochs=epochs,
+                validation_data=val_data,
+                callbacks=callbacks,
+                verbose=1,
+            )
+        else:
+            history = model.fit(
+                train_data[0], train_data[1],
+                batch_size=batch_size,
+                epochs=epochs,
+                validation_data=val_data,
+                callbacks=callbacks,
+                verbose=1,
+            )
         
         return history
         
@@ -213,16 +214,16 @@ def train_single_model(model: keras.Model, config: Dict, train_data: Tuple[tf.Te
 
 
 def train_with_distillation(student: keras.Model, teacher: keras.Model, config: Dict,
-                            train_data: Tuple[tf.Tensor, tf.Tensor],
-                            val_data: Optional[Tuple[tf.Tensor, tf.Tensor]] = None) -> keras.callbacks.History:
+                            train_data: Union[Tuple[tf.Tensor, tf.Tensor], tf.data.Dataset],
+                            val_data: Optional[Union[Tuple[tf.Tensor, tf.Tensor], tf.data.Dataset]] = None) -> keras.callbacks.History:
     """Train student model with knowledge distillation from teacher.
     
     Args:
         student: Student model to train
         teacher: Teacher model for distillation
         config: Training configuration
-        train_data: Training data (x, y)
-        val_data: Optional validation data (x, y)
+        train_data: Training data (x, y) or tf.data.Dataset
+        val_data: Optional validation data (x, y) or tf.data.Dataset
     
     Returns:
         Training history
@@ -248,8 +249,9 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
             )
         )
     
-    # Model checkpoint - always save as best_model.keras in output_dir
-    checkpoint_path = os.path.join(config.get('output_dir', 'results/'), "best_model.keras")
+    # Model checkpoint - always save as temp_model.keras in models/
+    Path("models").mkdir(parents=True, exist_ok=True)
+    checkpoint_path = os.path.join("models", "temp_model.keras")
     
     callbacks.append(
         keras.callbacks.ModelCheckpoint(
@@ -274,13 +276,20 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
         batch_size = config.get('batch_size', 16)
         
         # Create dataset
-        train_dataset = tf.data.Dataset.from_tensor_slices(train_data)
-        train_dataset = train_dataset.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+        # Create dataset
+        if isinstance(train_data, tf.data.Dataset):
+            train_dataset = train_data
+        else:
+            train_dataset = tf.data.Dataset.from_tensor_slices(train_data)
+            train_dataset = train_dataset.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
         
         # Validation dataset
-        if val_data:
-            val_dataset = tf.data.Dataset.from_tensor_slices(val_data)
-            val_dataset = val_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+        if val_data is not None:
+            if isinstance(val_data, tf.data.Dataset):
+                val_dataset = val_data
+            else:
+                val_dataset = tf.data.Dataset.from_tensor_slices(val_data)
+                val_dataset = val_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
         else:
             val_dataset = None
         
@@ -290,7 +299,7 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
         mse_loss_fn = tf.keras.losses.MeanSquaredError()
         val_iou_metric = BinaryIoU(threshold=0.5)
 
-        history = {
+        history: Dict[str, List[float]] = {
             'loss': [],
             'student_loss': [],
             'distillation_loss': [],
@@ -302,7 +311,7 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
         
         for epoch in range(epochs):
             # Training phase
-            epoch_losses = {'loss': [], 'student_loss': [], 'distillation_loss': []}
+            epoch_losses: Dict[str, List[float]] = {'loss': [], 'student_loss': [], 'distillation_loss': []}
             
             for step, (x_batch, y_batch) in enumerate(train_dataset):
                 losses = train_step(
@@ -311,15 +320,19 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
                 )
                 
                 for key, value in losses.items():
+                    if key not in epoch_losses:
+                        epoch_losses[key] = []
                     epoch_losses[key].append(value.numpy())
             
             # Calculate epoch averages - convert to standard float for JSON serialization
             for key in epoch_losses:
+                if key not in history:
+                    history[key] = []
                 history[key].append(float(np.mean(epoch_losses[key])))
             
             # Validation phase
             if val_dataset:
-                val_losses = {'loss': [], 'student_loss': [], 'distillation_loss': []}
+                val_losses: Dict[str, List[float]] = {'loss': [], 'student_loss': [], 'distillation_loss': []}
                 val_iou_metric.reset_state()
                 
                 for x_batch, y_batch in val_dataset:
@@ -337,19 +350,24 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
                                 tf.nn.sigmoid(student_pred / temperature)
                             )
                         ).numpy()
-                        total_loss = alpha * student_loss + (1 - alpha) * distill_loss
+                        total_loss = float(alpha * student_loss + (1 - alpha) * distill_loss)
                     else:
-                        total_loss = student_loss
+                        distill_loss = 0.0
+                        total_loss = float(student_loss)
                     
-                    val_losses['loss'].append(float(total_loss))
+                    val_losses['loss'].append(total_loss)
                     val_losses['student_loss'].append(float(student_loss))
-                    val_losses['distillation_loss'].append(float(distill_loss) if teacher is not None else 0.0)
+                    val_losses['distillation_loss'].append(float(distill_loss))
                     
                     # Update IoU
                     val_iou_metric.update_state(y_batch, student_pred)
                 
                 for key in val_losses:
+                    if f'val_{key}' not in history:
+                        history[f'val_{key}'] = []
                     history[f'val_{key}'].append(float(np.mean(val_losses[key])))
+                if 'val_iou' not in history:
+                    history['val_iou'] = []
                 history['val_iou'].append(float(val_iou_metric.result().numpy()))
             
             # Print progress
@@ -441,6 +459,8 @@ def train_model(config_path: str = "config/experiments.yaml", experiment_name: s
             
         print(f"✅ Found {len(train_img_files)} training pairs.")
         
+        val_img_files: List[str] = []
+        val_mask_files: List[str] = []
         if v_img_dir.exists() and v_mask_dir.exists():
             val_img_files = [str(f) for f in v_img_dir.glob("*.png")]
             val_mask_files = [str(f) for f in v_mask_dir.glob("*.png")]
@@ -452,18 +472,17 @@ def train_model(config_path: str = "config/experiments.yaml", experiment_name: s
 
         batch_size = config.get("batch_size", 16)
         train_ds = make_dataset(
-            train_img_files, train_mask_files, 
+            train_img_files, train_mask_files,
             batch_size=batch_size, augment=config.get("augment", False)
         )
+        val_ds: Optional[tf.data.Dataset] = None
         if val_img_files:
             val_ds = make_dataset(
-                val_img_files, val_mask_files, 
+                val_img_files, val_mask_files,
                 batch_size=batch_size, augment=False
             )
-        else:
-            val_ds = None
-            
-        train_data = (train_ds, None)
+
+        train_data = train_ds
         val_data = val_ds
 
        
@@ -492,16 +511,7 @@ def train_model(config_path: str = "config/experiments.yaml", experiment_name: s
                 
             student = create_model_from_config(config)
             
-            # Handle dataset vs numpy tuple for distillation
-            if isinstance(train_data[0], tf.data.Dataset):
-                # Distillation currently expects (x, y) tuple
-                print("⚠️ Distillation with tf.data.Dataset not fully optimized, converting to single batch.")
-                for x, y in train_data[0].take(1):
-                    train_data = (x, y)
-                if val_data:
-                    for x, y in val_data.take(1):
-                        val_data = (x, y)
-            
+            # Distillation can now correctly handle tf.data.Dataset transparently
             history = train_with_distillation(student, teacher, config, train_data, val_data)
             model_to_save = student
         else:

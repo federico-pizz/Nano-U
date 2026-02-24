@@ -1,4 +1,4 @@
-"""Consolidated data pipeline: dataset preparation, augmentation, and synthetic data."""
+"""Consolidated data pipeline: dataset preparation and augmentation."""
 
 import os
 import re
@@ -7,6 +7,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers
 from typing import List, Tuple, Optional, Union
+
 
 def sorted_by_frame(files: List[str]) -> List[str]:
     """Sort files by frame number in filename."""
@@ -43,9 +44,10 @@ def _augment_pair(img, mask, flip_prob=0.5, max_rotation_deg=20,
     
     return img, mask
 
-def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 8, 
+def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 8,
                  shuffle: bool = True, augment: bool = False,
-                 mean: List[float] = [0.5, 0.5, 0.5], std: List[float] = [0.5, 0.5, 0.5],
+                 mean: Union[List[float], np.ndarray] = [0.5, 0.5, 0.5],
+                 std: Union[List[float], np.ndarray] = [0.5, 0.5, 0.5],
                  **augment_kwargs) -> tf.data.Dataset:
     """Create a TensorFlow dataset from image and mask files."""
     if len(img_files) != len(mask_files):
@@ -86,10 +88,3 @@ def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 
                     num_parallel_calls=tf.data.AUTOTUNE)
     return ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
-def get_synthetic_data(input_shape: Tuple[int, int, int] = (48, 64, 3), 
-                       num_samples: int = 64) -> Tuple[np.ndarray, np.ndarray]:
-    """Generate synthetic data for testing and quick runs."""
-    h, w, c = input_shape
-    x = np.random.rand(num_samples, h, w, c).astype(np.float32)
-    y = np.random.randint(0, 2, (num_samples, h, w, 1)).astype(np.float32)
-    return x, y

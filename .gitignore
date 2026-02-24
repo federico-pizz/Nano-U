@@ -23,7 +23,6 @@ ENV/
 
 # --- IDE / Editors ---
 .vscode/
-.cursor/
 .idea/
 *.swp
 *~
@@ -43,6 +42,7 @@ models/
 # Exception: You can track the README or .gitkeep in models if it exists
 !models/.gitkeep
 !models/README.md
+temp_model_save.keras
 
 # Results: Ignore logs, figures, and predictions
 results/

@@ -21,12 +21,12 @@ def test_nas_searcher_initialization():
     )
     assert searcher.population_size == 2
     assert searcher.generations == 1
-    assert searcher.arch_len == 4
+    assert searcher.arch_len == 7  # default for Nano-U: [enc1,enc2,enc3,bottn,dec1,dec2,dec3]
 
 def test_generate_random_arch():
     searcher = NASSearcher((48, 64, 3), [16, 32, 64], 64)
     arch = searcher.generate_random_arch()
-    assert len(arch) == 4
+    assert len(arch) == 7  # default arch_len == 7 for Nano-U
     assert all(0 <= x < searcher.num_blocks for x in arch)
 
 def test_mutate():
@@ -63,10 +63,11 @@ def test_nas_search_loop(tmp_path):
     def dummy_train(model, epochs):
         class DummyHist:
             def __init__(self):
-                self.history = {'accuracy': [0.5, 0.6], 'val_accuracy': [0.5, 0.55]}
+                # Use val_iou so the fitness scorer picks it up correctly
+                self.history = {'val_iou': [0.5, 0.55], 'val_accuracy': [0.5, 0.55]}
         return DummyHist()
-    
-    results = searcher.search(dummy_train, None)
+
+    results = searcher.search(dummy_train)  # search() takes only train_fn
     
     assert "best_arch" in results
     assert len(results["history"]) == 1

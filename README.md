@@ -1,118 +1,123 @@
-# Nano-U: Ultra-Low-Power CNN for Microcontroller Real-Time Segmentation
+# Nano-U 🔬🌱
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue)
-![TensorFlow 2.21+](https://img.shields.io/badge/tensorflow-2.21+-blue)
-![ESP32-S3](https://img.shields.io/badge/target-ESP32--S3-green)
-![Research](https://img.shields.io/badge/status-research-orange)
+> Ultra-low-power CNN for real-time semantic segmentation on energy-constrained microcontrollers (e.g. ESP32-S3). 
 
-> **Research Goal**: Real-time semantic segmentation for autonomous navigation on energy-constrained microcontrollers (ESP32-S3) with <100ms latency and <1W power consumption.
+**Nano-U** is designed specifically for agricultural robotics and edge-AI scenarios where extreme parameter efficiency, low latency, and power consumption are critical. Through Evolutionary Neural Architecture Search (NAS), Knowledge Distillation, and robust INT8 Quantization, it delivers accurate semantic segmentation within a budget of less than 3,000 parameters.
 
 ---
 
-## 🔬 Overview
+## Key Features 🚀
 
-**Nano-U** investigates extreme CNN miniaturization for edge robotics:
-
-| Feature | Description |
-|---------|-------------|
-| **Knowledge Distillation** | 180K → 41K parameters (77% reduction) |
-| **Depthwise Separable Convs** | Optimized for MCU memory constraints |
-| **INT8 Quantization** | ~10KB final model size |
-| **Microflow Compatible** | Rust-based `no_std` inference engine |
+- **Evolutionary NAS**: Custom evolutionary search optimizing for both high binary IoU and minimal structural redundancy via SVD profiling. 
+- **Knowledge Distillation**: Train a high-capacity Teacher (BU-Net) and distill its visual priors into the tiny Nano-U Student model.
+- **Microflow / Bare-Metal Friendly**: Strict adherence to operations supported by target MCUs. Full INT8 TFLite export ensures compatibility with constraint environments.
+- **Config-Driven Pipelines**: Easily define hyperparameter sweeps, architecture specifications, and training regimes through structured YAML files.
 
 ---
 
-## 🚀 Quick Start
+## Project Structure 📁
 
-### Installation
+```text
+Nano-U/
+├── config/                  # Global and experiment-level configuration
+│   ├── config.yaml          # Dataset paths, model shapes, global paths
+│   └── experiments.yaml     # Pre-defined experiments (standard, distillation, nas, quick_test)
+├── src/                     # Core library code
+│   ├── models/              # Model builders, layer primitives, and architecture definitions
+│   ├── data.py              # tf.data.Dataset pipelines and augmentation
+│   ├── evaluate.py          # Model visualization and evaluation tools
+│   ├── nas.py               # Evolutionary Search and Redundancy metrics
+│   ├── pipeline.py          # Training and search orchestrators
+│   ├── quantize_model.py    # Representative dataset calibration and INT8 conversion
+│   └── train.py             # Training loops (Standard & Distillation)
+├── scripts/                 # CLI Entry Points
+│   ├── nas_search.py        # Run Evolutionary NAS to find the best block sequence
+│   ├── train_standard.py    # Train and export models (e.g., standard training, quick_test)
+│   └── train_distillation.py# Student-Teacher knowledge distillation pipeline
+├── tests/                   # Pytest suite
+└── esp_flash/               # Microcontroller firmware, memory safety, and native inference
+```
+
+---
+
+## Quick Start 🛠
+
+### 1. Installation
+
+Ensure you have Python 3.12+ and set up your virtual environment:
+
 ```bash
-git clone https://github.com/yourusername/Nano-U.git
-cd Nano-U
-python -m venv .venv-tf && source .venv-tf/bin/activate
+python -m venv .venv-tf
+source .venv-tf/bin/activate
 pip install -r requirements.txt
 ```
 
-### Run Full Pipeline
+### 2. Run a Quick Verification Test
+
+Train Nano-U for 2 epochs to ensure the environment, datasets, and pipelines are configured correctly:
+
 ```bash
-# Training → Distillation → Quantization → Benchmarking
-python scripts/run_pipeline.py --full
+python scripts/train_standard.py --experiment quick_test
 ```
 
-### Individual Commands
+---
+
+## Workflows and CLI 🎛
+
+### Standard Training
+
+Train models from scratch or load specific experiments defined in `config/experiments.yaml`.
+
 ```bash
-# List available experiments
-python scripts/run_pipeline.py --list
+# Train using the default configuration
+python scripts/train_standard.py
 
-# Run specific experiment
-python scripts/run_pipeline.py --experiment quick_test
-
-# Evaluate model
-python src/evaluate.py --model-name nano_u
+# Specify an experiment and target model
+python scripts/train_standard.py --experiment standard_training --model nano_u
 ```
 
----
+### Evolutionary Neural Architecture Search (NAS)
 
-## 📁 Project Structure
+Discover the optimal arrangement of parameter-efficient blocks. The search engine selects from four distinct block primitives:
+1. `depthwise_sep_conv` (Lightest, MCU-safe baseline)
+2. `triple_conv` (Highest capacity, 3-layer composition)
+3. `residual_dw_conv` (Accuracy-focused PW→DW→PW with BatchNorm and skip connection)
+4. `bottleneck_dw_conv` (Inverted residual expansion + DW + projection)
 
-```
-Nano-U/
-├── src/                    # Python source code
-│   ├── models/             # Model architectures (Nano-U, BU-Net)
-│   ├── utils/              # Utilities (metrics, callbacks)
-│   ├── train.py            # Training logic with distillation
-│   ├── nas.py              # Neural Architecture Search
-│   ├── evaluate.py         # Model evaluation
-│   ├── quantize_model.py   # INT8 quantization
-│   └── benchmarks.py       # Performance benchmarking
-├── esp_flash/              # ESP32-S3 Rust inference (see esp_flash/README.md)
-├── config/                 # YAML configuration files
-│   ├── config.yaml         # Main training config
-│   └── experiments.yaml    # Experiment definitions
-├── scripts/                # Pipeline automation
-├── models/                 # Saved models (.keras, .tflite)
-├── data/                   # Training datasets
-├── tests/                  # Unit tests
-└── notebooks/              # Jupyter notebooks
-```
-
----
-
-## 📊 Results
-
-| Metric | Teacher (BU-Net) | Student (Nano-U) | Reduction |
-|--------|------------------|------------------|-----------|
-| Parameters | 180K | 41K | - |
-| Model Size | ~720KB | ~164KB | **77%** |
-| Quantized | — | ~10KB | **98.6%** |
-
----
-
-## 🛠️ Development
-
-### Run Tests
 ```bash
-pytest tests/ -v
+python scripts/nas_search.py \
+    --model nano_u \
+    --experiment default \
+    --output results/nas_search/
 ```
 
-### Configuration
-Edit `config/config.yaml` for training parameters and `config/experiments.yaml` for experiment definitions.
+### Knowledge Distillation
+
+Train the BU-Net teacher, transfer knowledge via soft-targets, and train the Nano-U student.
+
+```bash
+python scripts/train_distillation.py --experiment distillation_nas
+```
 
 ---
 
-## 📚 Documentation
+## Inference and Export 📦
 
-- **[API_REFERENCE.md](API_REFERENCE.md)** – API and CLI documentation
-- **[DEVELOPMENT.md](DEVELOPMENT.md)** – Development guide and roadmap
-- **[esp_flash/README.md](esp_flash/README.md)** – ESP32-S3 deployment guide
+Post-training quantization is automatically triggered after successful training and NAS workflows. To manually quantize a `.keras` model to full INT8 precision utilizing the exact processed validation dataset for proper scale calibration:
+
+```bash
+python src/quantize_model.py path/to/model.keras path/to/model.tflite
+```
+
+### MCU Deployment
+Check the `esp_flash/` directory for Rust code (`no_std`), memory optimization strategies, IRAM execution scripts, and stack analysis required for loading the `.tflite` directly to the ESP32-S3.
 
 ---
 
-## 📜 License
+## Running Tests 🧪
 
-MIT License – see [LICENSE](LICENSE)
+To verify the integrity of model building, quantization, data pipelines, and evolutionary search components:
 
----
-
-**Last Updated**: 2026-02-07  
-**Status**: Active Research
+```bash
+python -m pytest tests/ -v
+```

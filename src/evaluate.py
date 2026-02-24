@@ -236,9 +236,7 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
         else:
             out_np = np.array(outputs)
 
-        print(f"[debug] model outputs dtype={out_np.dtype}, min={out_np.min():.6f}, max={out_np.max():.6f}")
         is_prob = out_np.min() >= -1e-6 and out_np.max() <= 1.0 + 1e-6
-        print(f"[debug] is_prob decision: {is_prob}")
 
         if is_prob:
             probs = tf.convert_to_tensor(out_np, dtype=tf.float32)

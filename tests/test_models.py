@@ -12,7 +12,6 @@ from typing import Tuple, List, Dict, Any
 from src.models import (
     create_nano_u,
     create_bu_net,
-    create_nano_u_functional,
     create_bu_net_functional,
     create_model_from_config,
     get_model_summary,
@@ -61,7 +60,7 @@ def config() -> Dict[str, Any]:
 
 @pytest.fixture
 def input_data() -> tf.Tensor:
-    """Create synthetic input data for model testing."""
+    """Create dummy input data for model testing."""
     return tf.random.normal((1, 48, 64, 3))
 
 
@@ -99,19 +98,11 @@ def test_model_from_config(config: Dict[str, Any], nano_u_model: Model):
 
 
 
-def test_functional_api_compatibility():
-    """Test that functional API versions match the main implementations."""
-    # Test NanoU functional API
-    functional_nano_u = create_nano_u_functional()
-    regular_nano_u = create_nano_u()
-    
-    assert functional_nano_u.input_shape == regular_nano_u.input_shape
-    assert functional_nano_u.output_shape == regular_nano_u.output_shape
-    
-    # Test BU_Net functional API
+def test_bu_net_functional_api():
+    """Test that create_bu_net_functional produces the same I/O shape as create_bu_net."""
     functional_bu_net = create_bu_net_functional()
     regular_bu_net = create_bu_net()
-    
+
     assert functional_bu_net.input_shape == regular_bu_net.input_shape
     assert functional_bu_net.output_shape == regular_bu_net.output_shape
 
@@ -247,7 +238,7 @@ def test_model_save_load(nano_u_model: Model):
 
 
 def test_model_inference(nano_u_model: Model, input_data: tf.Tensor):
-    """Test model inference with synthetic data."""
+    """Test model inference with dummy data."""
     output = nano_u_model(input_data, training=False)
     assert output is not None
     assert output.shape == (1, 48, 64, 1)
@@ -263,7 +254,7 @@ def test_model_inference(nano_u_model: Model, input_data: tf.Tensor):
 
 
 def test_model_inference_bu_net(bu_net_model: Model, input_data: tf.Tensor):
-    """Test BU_Net inference with synthetic data."""
+    """Test BU_Net inference with dummy data."""
     output = bu_net_model(input_data, training=False)
     assert output is not None
     assert output.shape == (1, 48, 64, 1)

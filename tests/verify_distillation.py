@@ -16,7 +16,7 @@ def verify_distillation():
     student = create_nano_u(input_shape=(48, 64, 3))
     teacher = create_bu_net(input_shape=(48, 64, 3))
     
-    # Create synthetic data
+    # Create dummy data
     x = np.random.rand(4, 48, 64, 3).astype(np.float32)
     y = np.random.randint(0, 2, (4, 48, 64, 1)).astype(np.float32)
     

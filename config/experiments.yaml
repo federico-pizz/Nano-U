@@ -43,7 +43,7 @@ data:
 models:
   nano_u:
     class: "create_nano_u"
-    filters: [8, 16]
+    filters: [8, 16, 32]
     bottleneck: 32
     description: "Ultra-lightweight U-Net for microcontrollers"
     
@@ -146,7 +146,7 @@ experiments:
     <<: *training_standard
     output_dir: "results/quick_test/"
     description: "Quick test with minimal epochs"
-    epochs: 50
+    epochs: 2
     batch_size: 4
     
   # Hyperparameter sweep experiment

@@ -1,11 +1,14 @@
 """NAS: stable redundancy metrics (SVD) and a lightweight epoch-level callback."""
 
+import random
 import tensorflow as tf
 import numpy as np
-from typing import Dict, List, Optional, Tuple, DefaultDict, Union, Any
+from typing import Any, Callable, Dict, List, Optional, Tuple, DefaultDict, Union
 from collections import defaultdict
 import pandas as pd
 from pathlib import Path
+
+from src.models.builders import create_searchable_nano_u, get_block_map
 
 
 def compute_layer_redundancy(activations: tf.Tensor, eps: float = 1e-6) -> Dict[str, float]:
@@ -98,7 +101,7 @@ def compute_nas_metrics(model: tf.keras.Model, x: tf.Tensor,
 
 
 def analyze_model_redundancy(model: tf.keras.Model, x: tf.Tensor,
-                            layers_to_monitor: List[str] = None) -> Dict[str, any]:
+                            layers_to_monitor: Optional[List[str]] = None) -> Dict[str, Any]:
     """Analyze model redundancy across specified layers.
     
     Args:
@@ -288,9 +291,6 @@ def get_nas_summary(metrics: Dict[str, Dict[str, float]]) -> str:
     return "\n".join(summary)
 
 
-import random
-from src.models.builders import create_searchable_nano_u, BLOCK_MAP, get_block_map
-
 class NASSearcher:
     """Evolutionary NAS Searcher for Nano-U architectures."""
     
@@ -303,6 +303,9 @@ class NASSearcher:
         generations: int = 3,
         mutation_rate: float = 0.2,
         efficiency_weight: float = 0.5,
+        arch_len: int = 7,  # 7 for Nano-U; 2*N+1 for BU-Net with N stages
+        proxy_epochs: int = 10,  # epochs per candidate during search
+        model_fn: Optional[Callable] = None,  # callable(input_shape, filters, bottleneck_filters, arch_seq, name) -> Model
         output_dir: str = "results/nas_search/",
         **kwargs
     ):
@@ -313,12 +316,20 @@ class NASSearcher:
         self.generations = generations
         self.mutation_rate = mutation_rate
         self.efficiency_weight = efficiency_weight
+        self.proxy_epochs = proxy_epochs
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        self.block_map = get_block_map(legacy_mode=True) # Nano-U is always sequential
+
+        # model_fn default: Nano-U
+        if model_fn is None:
+            from src.models.builders import create_searchable_nano_u
+            self.model_fn = create_searchable_nano_u
+        else:
+            self.model_fn = model_fn
+
+        self.block_map = get_block_map()
         self.num_blocks = len(self.block_map)
-        self.arch_len = 4  # [enc1, enc2, enc3, bottleneck]
+        self.arch_len = arch_len  # 7 for Nano-U [enc1,enc2,enc3,bottn,dec1,dec2,dec3]
         
     def generate_random_arch(self) -> List[int]:
         return [random.randint(0, self.num_blocks - 1) for _ in range(self.arch_len)]
@@ -333,51 +344,55 @@ class NASSearcher:
     def calculate_efficiency(self, model: tf.keras.Model) -> float:
         """Calculate efficiency score based on total parameters. Lower is better, but we return normalized [0, 1]."""
         total_params = model.count_params()
-        # Assume a baseline Nano-U (~10k-20k params)
+        # Assume a baseline Nano-U (~50k params)
         # Higher score means MORE efficient (fewer params)
         return 1.0 / (1.0 + total_params / 50000.0)
 
-    def search(self, train_fn, validation_data):
+    def search(self, train_fn):
         """Run evolutionary search loop.
-        
+
         Args:
-            train_fn: A function(model, epochs) -> history that trains the model
-            validation_data: Data to evaluate candidate performance
+            train_fn: A function(model, epochs) -> history that trains the model.
+                      Must return an object with a .history dict containing at least
+                      one of: 'val_iou', 'val_accuracy', 'accuracy'.
         """
-        # Initial population
         population = [self.generate_random_arch() for _ in range(self.population_size)]
         history = []
-        
+
         for gen in range(self.generations):
             print(f"\n🧬 Generation {gen+1}/{self.generations}")
             scores = []
-            
+
             for i, arch in enumerate(population):
                 print(f"  Testing arch {i+1}/{self.population_size}: {arch}")
-                
-                # Create and compile model
-                model = create_searchable_nano_u(
+
+                # Build the candidate model via the injected model_fn
+                model = self.model_fn(
                     input_shape=self.input_shape,
                     filters=self.filters,
                     bottleneck_filters=self.bottleneck,
                     arch_seq=arch,
                     name=f"nas_gen{gen}_idx{i}"
                 )
-                
-                # Calculate efficiency (static)
+
+                # Static efficiency score (no training needed)
                 eff_score = self.calculate_efficiency(model)
-                
-                # Train model for a few epochs (proxy task)
-                hist = train_fn(model, epochs=2)
-                
-                # Get performance (e.g., final val accuracy or IoU)
-                perf_score = hist.history.get('val_accuracy', hist.history.get('accuracy', [0]))[-1]
-                if 'val_iou' in hist.history:
-                    perf_score = hist.history['val_iou'][-1]
-                
+
+                # Proxy training
+                hist = train_fn(model, epochs=self.proxy_epochs)
+                hist_dict = hist.history if hasattr(hist, "history") else hist
+
+                # Performance: prefer val_iou > val_accuracy > accuracy
+                if 'val_iou' in hist_dict:
+                    perf_score = hist_dict['val_iou'][-1]
+                elif 'val_accuracy' in hist_dict:
+                    perf_score = hist_dict['val_accuracy'][-1]
+                else:
+                    perf_score = hist_dict.get('accuracy', [0.0])[-1]
+
                 # Combined fitness
                 fitness = (1.0 - self.efficiency_weight) * perf_score + self.efficiency_weight * eff_score
-                
+
                 scores.append({
                     "arch": arch,
                     "fitness": float(fitness),
@@ -385,27 +400,27 @@ class NASSearcher:
                     "efficiency": float(eff_score),
                     "params": int(model.count_params())
                 })
-                
+
                 print(f"    Fitness: {fitness:.4f} (Perf: {perf_score:.4f}, Eff: {eff_score:.4f}, Params: {model.count_params()})")
-            
-            # Sort by fitness
+
+            # Sort by fitness descending
             scores.sort(key=lambda x: x['fitness'], reverse=True)
             history.append(scores)
-            
-            # Save progress
-            pd.DataFrame(scores).to_csv(self.output_dir / f"gen_{gen}_results.csv")
-            
-            # Elite reproduction + Mutation
+
+            # Save generation results
+            pd.DataFrame(scores).to_csv(self.output_dir / f"gen_{gen}_results.csv", index=False)
+
+            # Elitism + mutation for next generation
             best_arch = scores[0]['arch']
-            next_population = [best_arch]  # Elitism
-            
+            next_population = [best_arch]  # Elitism: best survives unchanged
+
             while len(next_population) < self.population_size:
-                # Select from top 2
-                parent = scores[random.randint(0, min(1, len(scores)-1))]['arch']
+                # Parent selected from top-2 (or top-1 if population is tiny)
+                parent = scores[random.randint(0, min(1, len(scores) - 1))]['arch']
                 next_population.append(self.mutate(parent))
-            
+
             population = next_population
-            
+
         return {
             "best_arch": scores[0]['arch'],
             "best_fitness": scores[0]['fitness'],
