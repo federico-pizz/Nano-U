@@ -21,6 +21,9 @@ env/
 ENV/
 .env
 
+# Pytest
+pytest.ini
+
 # --- IDE / Editors ---
 .vscode/
 .idea/
