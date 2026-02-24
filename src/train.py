@@ -143,6 +143,7 @@ def train_single_model(
             )
         )
     
+    output_dir = config.get('output_dir', 'results/')
     # Model checkpoint - always save as temp_model.keras in models/
     Path("models").mkdir(parents=True, exist_ok=True)
     checkpoint_path = os.path.join("models", "temp_model.keras")
@@ -172,7 +173,9 @@ def train_single_model(
         callbacks.append(
             NASMonitorCallback(
                 layers_to_monitor=nas_layers,
-                log_frequency=nas_freq
+                log_frequency=nas_freq,
+                validation_data=val_data,
+                output_dir=output_dir
             )
         )
     
@@ -261,6 +264,22 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
             verbose=1
         )
     )
+    
+    output_dir = config.get('output_dir', 'results/')
+
+    # NAS monitoring if enabled
+    if config.get('use_nas', False):
+        nas_layers = config.get('layers_to_monitor', ['conv2d', 'conv2d_1'])
+        nas_freq = config.get('nas_frequency', 10)
+        
+        callbacks.append(
+            NASMonitorCallback(
+                layers_to_monitor=nas_layers,
+                log_frequency=nas_freq,
+                validation_data=val_data,
+                output_dir=output_dir
+            )
+        )
     
     # Training
     print(f"\nStarting distillation training for {config.get('epochs', 100)} epochs...")

@@ -72,7 +72,7 @@ training:
     model_name: "nano_u"
     use_distillation: false
     use_nas: false
-    layers_to_monitor: ["conv2d", "conv2d_1"]
+    layers_to_monitor: ["enc1a_pw", "enc2a_pw"]
     nas_frequency: 10
     
   # Knowledge distillation training
@@ -92,7 +92,7 @@ training:
     model_name: "nano_u"
     use_distillation: false
     use_nas: true
-    layers_to_monitor: ["conv2d", "conv2d_1", "conv2d_2"]
+    layers_to_monitor: ["enc1a_pw", "enc2a_pw", "bottleneck_a_pw"]
     nas_frequency: 5
     
   # Distillation with NAS
@@ -104,7 +104,7 @@ training:
     alpha: 0.3
     temperature: 4.0
     use_nas: true
-    layers_to_monitor: ["conv2d", "conv2d_1", "conv2d_2"]
+    layers_to_monitor: ["enc1a_pw", "enc2a_pw", "bottleneck_a_pw"]
     nas_frequency: 5
     epochs: 50
     learning_rate: 0.0005
@@ -135,7 +135,7 @@ experiments:
     <<: *training_standard
     model_name: "bu_net"
     use_nas: true
-    layers_to_monitor: ["conv2d", "conv2d_1", "conv2d_2"]
+    layers_to_monitor: ["enc1_pw1", "enc2_pw1", "bottleneck_pw1"]
     nas_frequency: 5
     output_dir: "results/bu_net_nas/"
     description: "Teacher model (BU-Net) training with NAS monitoring"
@@ -165,7 +165,7 @@ experiments:
     learning_rate: 0.0002
     batch_size: 8
     use_nas: true
-    layers_to_monitor: ["conv2d", "conv2d_1"]
+    layers_to_monitor: ["enc1a_pw", "enc2a_pw"]
 
 # Model evaluation configurations
 evaluation:
