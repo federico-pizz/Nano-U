@@ -49,7 +49,7 @@ models:
     
   bu_net:
     class: "create_bu_net"
-    filters: [32, 64, 128]
+    filters: [32, 64, 128, 256]
     bottleneck: 256
     description: "Teacher model for knowledge distillation"
 

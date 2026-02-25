@@ -155,9 +155,10 @@ def run_nas_search(
     else:
         from src.models.builders import create_searchable_nano_u
         model_fn: Callable = create_searchable_nano_u
-        filters = model_cfg.get("filters", [16, 32, 64])
-        bottleneck = model_cfg.get("bottleneck", 64)
-        arch_len = 7  # [enc1,enc2,enc3,bottn,dec1,dec2,dec3]
+        filters = model_cfg.get("filters", [16, 32, 64, 128, 256])
+        bottleneck = model_cfg.get("bottleneck", 256)
+        # Nano-U: N encoder blocks + 1 bottleneck + N decoder blocks = 2N + 1
+        arch_len = 2 * len(filters) + 1
 
     searcher = NASSearcher(
         input_shape=tuple(data_cfg.get("input_shape", [48, 64, 3])),

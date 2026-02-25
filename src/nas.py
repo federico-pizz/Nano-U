@@ -36,13 +36,14 @@ def compute_layer_redundancy(activations: tf.Tensor, eps: float = 1e-6) -> Dict[
     
     # SVD for numerical stability
     s, u, v = tf.linalg.svd(centered, full_matrices=False)
-    singular_values = tf.maximum(s, eps)  # Clamp to avoid zeros
+    # Clamp to avoid zeros
+    singular_values = tf.maximum(s, eps)
     
     # Condition number using SVD
     condition_number = tf.reduce_max(singular_values) / tf.reduce_min(singular_values)
     
-    # Redundancy score (normalized)
-    redundancy = 1.0 / (1.0 + tf.math.log(condition_number + 1.0))
+    # Redundancy score (normalized): 0 means no redundancy, 1 means highly redundant
+    redundancy = 1.0 - (1.0 / (1.0 + tf.math.log(condition_number)))
     
     def _numpy(x):
         return int(x.numpy()) if hasattr(x, "numpy") else int(x)
@@ -50,7 +51,7 @@ def compute_layer_redundancy(activations: tf.Tensor, eps: float = 1e-6) -> Dict[
     return {
         "redundancy_score": float(redundancy.numpy()),
         "condition_number": float(condition_number.numpy()),
-        "rank": _numpy(tf.reduce_sum(tf.cast(singular_values > eps, tf.int32))),
+        "rank": _numpy(tf.reduce_sum(tf.cast(singular_values > tf.reduce_max(singular_values) * 1e-4, tf.int32))),
         "num_channels": _numpy(channels),
     }
 
@@ -382,8 +383,10 @@ class NASSearcher:
                 hist = train_fn(model, epochs=self.proxy_epochs)
                 hist_dict = hist.history if hasattr(hist, "history") else hist
 
-                # Performance: prefer val_iou > val_accuracy > accuracy
-                if 'val_iou' in hist_dict:
+                # Performance: prefer val_binary_iou > val_iou > val_accuracy > accuracy
+                if 'val_binary_iou' in hist_dict:
+                    perf_score = hist_dict['val_binary_iou'][-1]
+                elif 'val_iou' in hist_dict:
                     perf_score = hist_dict['val_iou'][-1]
                 elif 'val_accuracy' in hist_dict:
                     perf_score = hist_dict['val_accuracy'][-1]
