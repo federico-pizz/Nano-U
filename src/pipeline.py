@@ -39,10 +39,10 @@ def quantize_and_benchmark(
     # Copy .keras to models/
     if keras_path != model_dest:
         shutil.copy(keras_path, model_dest)
-        print(f"  📦 Copied {keras_path.name} → {model_dest}")
+        print(f"Copied {keras_path.name} → {model_dest}")
 
     # Quantize
-    print(f"  ⚙️  Quantizing {model_name} → INT8 TFLite...")
+    print(f"Quantizing {model_name} → INT8 TFLite...")
     quant_ok = quantize_model(str(model_dest), str(tflite_path))
     quant_result = {
         "status": "success" if quant_ok else "failed",
@@ -50,15 +50,15 @@ def quantize_and_benchmark(
         "size_kb": round(tflite_path.stat().st_size / 1024, 2) if quant_ok and tflite_path.exists() else None,
     }
     if quant_ok:
-        print(f"  ✅ Quantization complete: {tflite_path} ({quant_result['size_kb']} KB)")
+        print(f"Quantization complete: {tflite_path} ({quant_result['size_kb']} KB)")
     else:
-        print(f"  ❌ Quantization failed for {model_dest}")
+        print(f"Quantization failed for {model_dest}")
 
     # Benchmark
-    print(f"  📏 Benchmarking {model_name}...")
+    print(f"Benchmarking {model_name}...")
     bench_result = run_benchmarks(str(model_dest))
     inf = bench_result.get("inference", {})
-    print(f"  ✅ Benchmark: {inf.get('avg_latency_ms', '?'):.2f} ms/frame | "
+    print(f"Benchmark: {inf.get('avg_latency_ms', '?'):.2f} ms/frame | "
           f"{inf.get('throughput_fps', '?'):.1f} FPS | "
           f"{bench_result.get('parameters', '?'):,} params")
 
@@ -115,97 +115,3 @@ def run_training_pipeline(
             "traceback": traceback.format_exc(),
             "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
         }
-
-
-# ---------------------------------------------------------------------------
-# Evolutionary NAS search
-# ---------------------------------------------------------------------------
-
-def run_nas_search(
-    config_path: str = "config/experiments.yaml",
-    output_dir: str = "results/nas_search/",
-    model_name: str = "nano_u",
-) -> Dict[str, Any]:
-    """Run evolutionary NAS search to find the best architecture.
-
-    Args:
-        config_path: Path to experiments YAML.
-        output_dir: Where to store per-generation CSVs and best_arch.json.
-        model_name: 'nano_u' or 'bu_net'.
-
-    Returns:
-        Dict with best_arch, best_fitness, and full generation history.
-    """
-    full_config = load_config(config_path)
-    data_cfg = full_config.get("data", {})
-    training_cfg = full_config.get("training", {}).get("common", {})
-    nas_cfg = full_config.get("training", {}).get("nas", {})
-    model_cfg = full_config.get("models", {}).get(model_name, {})
-
-    # Select model builder
-    if model_name == "bu_net":
-        from src.models.builders import create_searchable_bu_net
-        model_fn: Callable = create_searchable_bu_net
-        filters = model_cfg.get("filters", [32, 64, 128])
-        bottleneck = model_cfg.get("bottleneck", 256)
-        # BU-Net: arch_len = 2*N+1 stages (N pads to 5 internally)
-        import math
-        padded = max(5, len(filters))
-        arch_len = 2 * padded + 1
-    else:
-        from src.models.builders import create_searchable_nano_u
-        model_fn: Callable = create_searchable_nano_u
-        filters = model_cfg.get("filters", [16, 32, 64, 128, 256])
-        bottleneck = model_cfg.get("bottleneck", 256)
-        # Nano-U: N encoder blocks + 1 bottleneck + N decoder blocks = 2N + 1
-        arch_len = 2 * len(filters) + 1
-
-    searcher = NASSearcher(
-        input_shape=tuple(data_cfg.get("input_shape", [48, 64, 3])),
-        filters=filters,
-        bottleneck=bottleneck,
-        population_size=nas_cfg.get("population_size", 4),
-        generations=nas_cfg.get("generations", 3),
-        arch_len=arch_len,
-        model_fn=model_fn,
-        output_dir=output_dir,
-    )
-
-    def train_proxy(model, epochs):
-        from src.data import make_dataset
-        processed = full_config.get("data", {}).get("paths", {}).get("processed", {})
-        train_cfg = processed.get("train", {})
-        val_cfg = processed.get("val", {})
-
-        train_imgs = sorted(Path(train_cfg["img"]).glob("*.png"))
-        train_masks = sorted(Path(train_cfg["mask"]).glob("*.png"))
-        val_imgs = sorted(Path(val_cfg["img"]).glob("*.png"))
-        val_masks = sorted(Path(val_cfg["mask"]).glob("*.png"))
-
-        bs = training_cfg.get("batch_size", 16)
-        lr = training_cfg.get("learning_rate", 0.001)
-        train_ds = make_dataset([str(f) for f in train_imgs], [str(f) for f in train_masks], batch_size=bs)
-        val_ds = make_dataset([str(f) for f in val_imgs], [str(f) for f in val_masks], batch_size=bs, shuffle=False)
-
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
-            loss="binary_crossentropy",
-            metrics=["accuracy"],
-        )
-        return model.fit(train_ds, validation_data=val_ds, epochs=epochs, verbose=0)
-
-    print("\n" + "=" * 55)
-    print(f"🧬 EVOLUTIONARY NAS SEARCH — model: {model_name}")
-    print("=" * 55)
-
-    results = searcher.search(train_proxy)
-
-    print(f"\n🏆 Best Architecture: {results['best_arch']}  "
-          f"(fitness={results['best_fitness']:.4f})")
-
-    best_arch_path = Path(output_dir) / "best_arch.json"
-    with open(best_arch_path, "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"   Saved to {best_arch_path}")
-
-    return results

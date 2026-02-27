@@ -53,10 +53,10 @@ def main():
     teacher_res = run_training_pipeline(args.teacher_experiment, args.config, args.output)
 
     if teacher_res["status"] != "success":
-        print(f"❌ Teacher training failed: {teacher_res.get('error')}")
+        print(f"Teacher training failed: {teacher_res.get('error')}")
         sys.exit(1)
 
-    print(f"✅ Teacher trained  →  {teacher_res['model_path']}")
+    print(f"Teacher trained  →  {teacher_res['model_path']}")
 
     # ── Phase 2: Copy teacher weights ──────────────────────────────────────
     print(f"\n─── Phase 2: Copying Teacher Weights ───")
@@ -65,9 +65,9 @@ def main():
 
     if teacher_src.exists():
         shutil.copy(teacher_src, teacher_dst)
-        print(f"✅ Teacher weights copied  →  {teacher_dst}")
+        print(f"Teacher weights copied  →  {teacher_dst}")
     else:
-        print(f"❌ Teacher model not found at {teacher_src}")
+        print(f"Teacher model not found at {teacher_src}")
         sys.exit(1)
 
     # ── Phase 3: Train Student ─────────────────────────────────────────────
@@ -75,10 +75,10 @@ def main():
     student_res = run_training_pipeline(args.student_experiment, args.config, args.output)
 
     if student_res["status"] != "success":
-        print(f"❌ Student training failed: {student_res.get('error')}")
+        print(f"Student training failed: {student_res.get('error')}")
         sys.exit(1)
 
-    print(f"✅ Student trained  →  {student_res['model_path']}")
+    print(f"Student trained  →  {student_res['model_path']}")
 
     # ── Phase 4: Copy student weights & Quantize ───
     print(f"\n─── Phase 4 & 5: Copy Weights + Quantize + Benchmark ───")
@@ -86,9 +86,9 @@ def main():
     student_dst = models_dir / student_src.name
     if student_src.exists():
         shutil.copy(student_src, student_dst)
-        print(f"✅ Student weights copied  →  {student_dst}")
+        print(f"Student weights copied  →  {student_dst}")
     else:
-        print(f"❌ Student model not found at {student_src}")
+        print(f"Student model not found at {student_src}")
 
     qb = quantize_and_benchmark(str(student_dst), models_dir=args.models_dir)
 

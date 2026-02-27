@@ -31,7 +31,6 @@ Nano-U/
 │   ├── quantize_model.py    # Representative dataset calibration and INT8 conversion
 │   └── train.py             # Training loops (Standard & Distillation)
 ├── scripts/                 # CLI Entry Points
-│   ├── nas_search.py        # Run Evolutionary NAS to find the best block sequence
 │   ├── train_standard.py    # Train and export models (e.g., standard training, quick_test)
 │   └── train_distillation.py# Student-Teacher knowledge distillation pipeline
 ├── tests/                   # Pytest suite
@@ -74,21 +73,6 @@ python scripts/train_standard.py
 
 # Specify an experiment and target model
 python scripts/train_standard.py --experiment standard_training --model nano_u
-```
-
-### Evolutionary Neural Architecture Search (NAS)
-
-Discover the optimal arrangement of parameter-efficient blocks. The search engine selects from four distinct block primitives:
-1. `depthwise_sep_conv` (Lightest, MCU-safe baseline)
-2. `triple_conv` (Highest capacity, 3-layer composition)
-3. `residual_dw_conv` (Accuracy-focused PW→DW→PW with BatchNorm and skip connection)
-4. `bottleneck_dw_conv` (Inverted residual expansion + DW + projection)
-
-```bash
-python scripts/nas_search.py \
-    --model nano_u \
-    --experiment default \
-    --output results/nas_search/
 ```
 
 ### Knowledge Distillation

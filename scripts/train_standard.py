@@ -40,7 +40,7 @@ def main():
 
     if args.list:
         experiments = list_experiments(args.config)
-        print("📋 Available experiments:")
+        print("Available experiments:")
         for e in experiments:
             print(f"  - {e}")
         return
@@ -50,16 +50,16 @@ def main():
 
     # ── 1. Train ──────────────────────────────────────────────────────────────
     print(f"\n{'='*55}")
-    print(f"🚀 STANDARD TRAINING  —  experiment: {args.experiment}")
+    print(f"STANDARD TRAINING  —  experiment: {args.experiment}")
     print(f"{'='*55}")
 
     result = run_training_pipeline(args.experiment, args.config, args.output)
 
     if result["status"] != "success":
-        print(f"\n❌ Training failed: {result.get('error')}")
+        print(f"\nTraining failed: {result.get('error')}")
         sys.exit(1)
 
-    print(f"\n✅ Training complete  →  {result['model_path']}")
+    print(f"\nTraining complete  →  {result['model_path']}")
 
     # ── 2. Copy to models/ ────────────────────────────────────────────────────
     print(f"\n─── Copy Models + Quantize + Benchmark ───")
@@ -71,22 +71,22 @@ def main():
     
     if src_model.exists():
         shutil.copy(src_model, dst_model)
-        print(f"✅ Model weights copied  →  {dst_model}")
+        print(f"Model weights copied  →  {dst_model}")
     else:
-        print(f"❌ Completed model not found at {src_model}")
+        print(f"Completed model not found at {src_model}")
         sys.exit(1)
 
     # ── 3. Quantize + Benchmark ───────────────────────────────────────────────
     if result.get("model_name", "") != "bu_net":
         print(f"\n{'─'*55}")
-        print("⚙️  POST-TRAINING: Quantize + Benchmark")
+        print("POST-TRAINING: Quantize + Benchmark")
         print(f"{'─'*55}")
 
         qb = quantize_and_benchmark(str(dst_model), models_dir=args.models_dir)
 
         # ── 4. Summary ────────────────────────────────────────────────────────────
         print(f"\n{'='*55}")
-        print("✨ DONE")
+        print("DONE")
         print(f"   Model:       {result['model_path']}")
         print(f"   TFLite:      {qb['quantization'].get('tflite_path', 'N/A')}")
         print(f"   Size:        {qb['quantization'].get('size_kb', 'N/A')} KB")
@@ -97,7 +97,7 @@ def main():
         print(f"{'='*55}\n")
     else:
         print(f"\n{'='*55}")
-        print("✨ DONE (BU-Net Trained; Quantization Skipped)")
+        print("DONE (BU-Net Trained; Quantization Skipped)")
         print(f"   Model:       {result['model_path']}")
         print(f"{'='*55}\n")
 

@@ -210,7 +210,7 @@ def train_single_model(
         return history
         
     except Exception as e:
-        print(f"\n❌ Training failed: {e}")
+        print(f"\nTraining failed: {e}")
         print(f"Traceback:")
         print(traceback.format_exc())
         raise
@@ -405,7 +405,7 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
         return history
         
     except Exception as e:
-        print(f"\n❌ Distillation training failed: {e}")
+        print(f"\nDistillation training failed: {e}")
         print(f"Traceback:")
         print(traceback.format_exc())
         raise
@@ -454,9 +454,9 @@ def train_model(config_path: str = "config/experiments.yaml", experiment_name: s
         processed = data_paths.get("processed", {})
         
         if not isinstance(processed, dict) or "train" not in processed:
-            raise ValueError("❌ 'data.paths.processed.train' not found in configuration. Processed data is required.")
+            raise ValueError("'data.paths.processed.train' not found in configuration. Processed data is required.")
 
-        print("📂 Loading data from processed paths...")
+        print("Loading data from processed paths...")
         train_cfg = processed.get("train", {})
         val_cfg = processed.get("val", {})
         
@@ -466,17 +466,17 @@ def train_model(config_path: str = "config/experiments.yaml", experiment_name: s
         v_mask_dir = Path(val_cfg.get("mask", ""))
         
         if not t_img_dir.exists() or not t_mask_dir.exists():
-            raise FileNotFoundError(f"❌ Training directories not found: {t_img_dir} or {t_mask_dir}")
+            raise FileNotFoundError(f"Training directories not found: {t_img_dir} or {t_mask_dir}")
 
         train_img_files = [str(f) for f in t_img_dir.glob("*.png")]
         train_mask_files = [str(f) for f in t_mask_dir.glob("*.png")]
         
         if not train_img_files:
-            raise FileNotFoundError(f"❌ No training images found in {t_img_dir}")
+            raise FileNotFoundError(f"No training images found in {t_img_dir}")
         if len(train_img_files) != len(train_mask_files):
-            raise ValueError(f"❌ Mismatch in training images ({len(train_img_files)}) and masks ({len(train_mask_files)})")
+            raise ValueError(f"Mismatch in training images ({len(train_img_files)}) and masks ({len(train_mask_files)})")
             
-        print(f"✅ Found {len(train_img_files)} training pairs.")
+        print(f"Found {len(train_img_files)} training pairs.")
         
         val_img_files: List[str] = []
         val_mask_files: List[str] = []
@@ -484,9 +484,9 @@ def train_model(config_path: str = "config/experiments.yaml", experiment_name: s
             val_img_files = [str(f) for f in v_img_dir.glob("*.png")]
             val_mask_files = [str(f) for f in v_mask_dir.glob("*.png")]
             if len(val_img_files) == len(val_mask_files) and val_img_files:
-                print(f"✅ Found {len(val_img_files)} validation pairs.")
+                print(f"Found {len(val_img_files)} validation pairs.")
             else:
-                print("⚠️ Validation data skipped (mismatch or empty).")
+                print("Validation data skipped (mismatch or empty).")
                 val_img_files, val_mask_files = [], []
 
         batch_size = config.get("batch_size", 16)
@@ -514,19 +514,19 @@ def train_model(config_path: str = "config/experiments.yaml", experiment_name: s
             
             # Re-apply teacher defaults from full_config to override student settings
             if "models" in full_config and teacher_name in full_config["models"]:
-                print(f"🔄 Re-applying default configuration for teacher: {teacher_name}")
+                print(f"Re-applying default configuration for teacher: {teacher_name}")
                 teacher_defaults = full_config["models"][teacher_name]
                 teacher_config.update(teacher_defaults)
             
-            print(f"👨‍🏫 Creating teacher model: {teacher_name}")
+            print(f"Creating teacher model: {teacher_name}")
             teacher = create_model_from_config(teacher_config)
             
             teacher_weights = config.get("teacher_weights")
             if teacher_weights and Path(teacher_weights).exists():
-                print(f"📦 Loading teacher weights from: {teacher_weights}")
+                print(f"Loading teacher weights from: {teacher_weights}")
                 teacher.load_weights(teacher_weights)
             else:
-                print(f"⚠️ Teacher weights not found at: {teacher_weights}. Using random initialization.")
+                print(f"Teacher weights not found at: {teacher_weights}. Using random initialization.")
                 
             student = create_model_from_config(config)
             
@@ -580,7 +580,7 @@ def main():
     result = train_model(config_path=args.config, experiment_name=args.experiment, output_dir=args.output)
     
     if result['status'] == 'success':
-        print(f"\n✅ Training completed successfully!")
+        print(f"\nTraining completed successfully!")
         print(f"Model saved to: {result['model_path']}")
         print(f"Experiment directory: {result['experiment_dir']}")
         
@@ -589,7 +589,7 @@ def main():
         for metric, values in result['final_metrics'].items():
             print(f"  {metric}: {values[-1]:.4f}")
     else:
-        print(f"\n❌ Training failed!")
+        print(f"\nTraining failed!")
         print(f"Error: {result['error']}")
 
 
