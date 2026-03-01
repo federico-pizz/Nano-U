@@ -39,6 +39,7 @@ Thumbs.db
 
 # Data: Ignore all raw and processed data
 data/
+results/
 
 # Models: Ignore all trained weights, checkpoints, and export formats
 models/
