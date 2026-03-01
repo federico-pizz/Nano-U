@@ -11,9 +11,9 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Local utilities
-from src.utils import get_project_root
-from src.utils.data import make_dataset, sorted_by_frame
-from src.utils.metrics import BinaryIoU
+from src.utils import get_project_root, BinaryIoU
+from src.data import make_dataset, sorted_by_frame
+from src.utils.config import load_config
 from src.utils.config import load_config
 
 import matplotlib
@@ -136,13 +136,16 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
     model = None
     if is_tflite:
         print(f'Loading TFLite model: {model_path}')
-        interpreter = tf.lite.Interpreter(model_path=model_path)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning, module="tensorflow.lite")
+            interpreter = tf.lite.Interpreter(model_path=model_path)
         try:
             interpreter.allocate_tensors()
             input_details = interpreter.get_input_details()
             output_details = interpreter.get_output_details()
-            print('TFLite input details:', input_details)
-            print('TFLite output details:', output_details)
+            # print('TFLite input details:', input_details)
+            # print('TFLite output details:', output_details)
         except RuntimeError as e:
             # Common case: TFLite model contains SELECT_TF_OPS (Flex) and interpreter needs Flex delegate
             msg = str(e)

@@ -7,8 +7,6 @@ from .models import (
     create_nano_u,
     create_bu_net,
     create_bu_net_functional,
-    create_searchable_nano_u,
-    create_searchable_bu_net,
     create_model_from_config,
     get_model_summary,
     count_parameters,

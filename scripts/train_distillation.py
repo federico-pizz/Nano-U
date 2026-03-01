@@ -28,16 +28,16 @@ def main():
     parser = argparse.ArgumentParser(
         description="Teacher→Student distillation pipeline with NAS monitoring → quantize → benchmark"
     )
-    parser.add_argument("--config", default="config/experiments.yaml")
+    parser.add_argument("--config", default="config/config.yaml")
     parser.add_argument("--output", default="results/", help="Base output directory")
     parser.add_argument("--models-dir", default="models/", help="Where to place final artifacts")
     parser.add_argument(
-        "--teacher-experiment", default="bu_net_nas",
-        help="Experiment name for teacher training (default: bu_net_nas)"
+        "--teacher-experiment", default="bu_net",
+        help="Experiment name for teacher training (default: bu_net)"
     )
     parser.add_argument(
-        "--student-experiment", default="distillation_nas",
-        help="Experiment name for student distillation (default: distillation_nas)"
+        "--student-experiment", default="nano_u",
+        help="Experiment name for student distillation (default: nano_u)"
     )
     args = parser.parse_args()
 
@@ -45,7 +45,7 @@ def main():
     models_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'='*55}")
-    print("🎓 TEACHER → STUDENT DISTILLATION PIPELINE")
+    print("TEACHER → STUDENT DISTILLATION PIPELINE")
     print(f"{'='*55}")
 
     # ── Phase 1: Train Teacher ─────────────────────────────────────────────
@@ -92,9 +92,30 @@ def main():
 
     qb = quantize_and_benchmark(str(student_dst), models_dir=args.models_dir)
 
+    # ── Phase 6: Visual Evaluation on Test Set ─────────────
+    print(f"\n─── Phase 6: Evaluation & Visualization ───")
+    try:
+        from src.evaluate import evaluate_and_plot
+        
+        student_stem = student_src.stem
+        eval_out_path = Path(args.output) / f"{student_stem}_eval_plot.png"
+        
+        eval_results = evaluate_and_plot(
+            model_name=student_stem,
+            config_path=args.config,
+            out_path=str(eval_out_path)
+        )
+        
+        print(f"Evaluation metrics:")
+        for k, v in eval_results.items():
+            print(f"  {k}: {v:.4f}")
+            
+    except Exception as e:
+        print(f"Evaluation failed: {e}")
+
     # ── Summary ────────────────────────────────────────────────────────────
     print(f"\n{'='*55}")
-    print("✨ PIPELINE COMPLETE")
+    print("PIPELINE COMPLETE")
     print(f"   Teacher:     {teacher_dst}")
     print(f"   Student:     {student_res['model_path']}")
     print(f"   TFLite:      {qb['quantization'].get('tflite_path', 'N/A')}")
@@ -102,6 +123,9 @@ def main():
     inf = qb["benchmark"].get("inference", {})
     print(f"   Latency:     {inf.get('avg_latency_ms', '?'):.2f} ms")
     print(f"   Throughput:  {inf.get('throughput_fps', '?'):.1f} FPS")
+    if 'eval_results' in locals() and eval_results:
+        print(f"   Test IoU:    {eval_results.get('iou', 0):.4f}")
+        print(f"   Plot saved:  {eval_out_path}")
     print(f"{'='*55}\n")
 
 

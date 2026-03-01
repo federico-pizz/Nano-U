@@ -18,31 +18,17 @@ data:
     test: 0.1
 
   paths:
-    raw_datasets:
-      - name: "tomatoes_scene1"
-        images: "data/TinyAgri/Tomatoes/scene1"
-        masks: "data/masks/Tomatoes/scene1"
-      - name: "tomatoes_scene2"
-        images: "data/TinyAgri/Tomatoes/scene2"
-        masks: "data/masks/Tomatoes/scene2"
-      - name: "crops_scene1"
-        images: "data/TinyAgri/Crops/scene1"
-        masks: "data/masks/Crops/scene1"
-      - name: "crops_scene2"
-        images: "data/TinyAgri/Crops/scene2"
-        masks: "data/masks/Crops/scene2"
-    
     processed: 
-      root: "data/processed_data"
+      root: "data/processed"
       train:
-        img: "data/processed_data/train/img"
-        mask: "data/processed_data/train/mask"
+        img: "data/processed/train/img"
+        mask: "data/processed/train/mask"
       val:
-        img: "data/processed_data/val/img"
-        mask: "data/processed_data/val/mask"
+        img: "data/processed/val/img"
+        mask: "data/processed/val/mask"
       test:
-        img: "data/processed_data/test/img"
-        mask: "data/processed_data/test/mask"
+        img: "data/processed/test/img"
+        mask: "data/processed/test/mask"
 
     models_dir: "models"
 
@@ -72,9 +58,9 @@ training:
   # Teacher (BU_Net) training config
   bu_net:
     epochs: 100
-    batch_size: 16
-    learning_rate: 1e-4
-    weight_decay: 1e-3
+    batch_size: 8
+    learning_rate: 1e-3
+    weight_decay: 1e-4
     optimizer: "adamw"
     loss: "binary_crossentropy" 
     augment: true

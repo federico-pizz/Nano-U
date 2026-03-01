@@ -11,7 +11,6 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import yaml
 import tensorflow as tf
 
-from src.nas import NASSearcher
 from src.train import train_model
 from src.utils.config import load_config
 from src.benchmarks import run_benchmarks

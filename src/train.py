@@ -26,11 +26,13 @@ from src.nas import NASCallback as NASMonitorCallback
 
 
 def _get_experiment_config(full_config: Dict[str, Any], experiment_name: str) -> Dict[str, Any]:
-    """Resolve experiment config from full config (supports top-level or experiments section)."""
+    """Resolve experiment config from full config (supports top-level, experiments, or training section)."""
     if experiment_name in full_config:
         return full_config[experiment_name]
     if "experiments" in full_config and experiment_name in full_config["experiments"]:
         return full_config["experiments"][experiment_name]
+    if "training" in full_config and experiment_name in full_config["training"]:
+        return full_config["training"][experiment_name]
     raise KeyError(f"Experiment '{experiment_name}' not found in config. "
                    f"Top-level keys: {list(full_config.keys())}")
 
@@ -118,7 +120,7 @@ def train_single_model(
     # Setup training parameters
     epochs = config.get('epochs', 50)
     batch_size = config.get('batch_size', 16)
-    learning_rate = config.get('learning_rate', 0.001)
+    learning_rate = float(config.get('learning_rate', 0.001))
     
     # Create optimizer
     optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
@@ -411,7 +413,7 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
         raise
 
 
-def train_model(config_path: str = "config/experiments.yaml", experiment_name: str = "default",
+def train_model(config_path: str = "config/config.yaml", experiment_name: str = "default",
                 output_dir: Optional[str] = None) -> Dict[str, Any]:
     """Main training function with automatic teacher/student handling.
     
@@ -507,15 +509,20 @@ def train_model(config_path: str = "config/experiments.yaml", experiment_name: s
        
         # Build models
         if config.get("use_distillation", False):
-            # Create teacher model - use specific name if provided, otherwise default to bu_net
+            # The 'teacher_experiment' is basically an experiment config or model name
+            # Let's see if we can extract its structure.
             teacher_name = config.get("teacher_model_name", "bu_net")
             teacher_config = config.copy()
             teacher_config["model_name"] = teacher_name
             
             # Re-apply teacher defaults from full_config to override student settings
             if "models" in full_config and teacher_name in full_config["models"]:
-                print(f"Re-applying default configuration for teacher: {teacher_name}")
+                print(f"Re-applying default configuration for teacher model from 'models': {teacher_name}")
                 teacher_defaults = full_config["models"][teacher_name]
+                teacher_config.update(teacher_defaults)
+            elif "experiments" in full_config and teacher_name in full_config["experiments"]:
+                print(f"Re-applying default configuration for teacher from 'experiments': {teacher_name}")
+                teacher_defaults = full_config["experiments"][teacher_name]
                 teacher_config.update(teacher_defaults)
             
             print(f"Creating teacher model: {teacher_name}")

@@ -80,3 +80,6 @@ esp_flash/venv/
 esp_flash/input_data/
 esp_flash/output_data/
 esp_flash/.cargo/
+
+# data processing
+extract_botanicgarden.py
