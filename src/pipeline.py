@@ -20,11 +20,11 @@ from src.benchmarks import run_benchmarks
 # Helpers
 # ---------------------------------------------------------------------------
 
-def quantize_and_benchmark(
+def quantize_model_pipeline(
     keras_path: Union[str, Path],
     models_dir: Union[str, Path] = "models/",
 ) -> Dict[str, Any]:
-    """Quantize a model to INT8 TFLite and benchmark inference speed."""
+    """Quantize a model to INT8 TFLite."""
     from src.quantize_model import quantize_model
 
     keras_path = Path(keras_path)
@@ -53,15 +53,24 @@ def quantize_and_benchmark(
     else:
         print(f"Quantization failed for {model_dest}")
 
+    return quant_result
+
+
+def benchmark_model_pipeline(
+    tflite_path: Union[str, Path],
+) -> Dict[str, Any]:
+    """Benchmark inference speed of a TFLite model."""
+    tflite_path = Path(tflite_path)
+    model_name = tflite_path.stem
+
     # Benchmark
-    print(f"Benchmarking {model_name}...")
-    bench_result = run_benchmarks(str(model_dest))
+    print(f"Benchmarking TFLite {model_name}...")
+    bench_result = run_benchmarks(str(tflite_path))
     inf = bench_result.get("inference", {})
     print(f"Benchmark: {inf.get('avg_latency_ms', '?'):.2f} ms/frame | "
-          f"{inf.get('throughput_fps', '?'):.1f} FPS | "
-          f"{bench_result.get('parameters', '?'):,} params")
+          f"{inf.get('throughput_fps', '?'):.1f} FPS")
 
-    return {"quantization": quant_result, "benchmark": bench_result}
+    return bench_result
 
 
 # ---------------------------------------------------------------------------

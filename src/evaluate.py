@@ -186,6 +186,7 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
     all_probs = []
     all_preds_bin = []
     all_masks = []
+    all_imgs = []
 
     print('Running evaluation on test set...')
 
@@ -214,7 +215,8 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
                 if in_dtype == np.int8 or in_dtype == np.uint8:
                     if q_scale is None:
                         raise RuntimeError('TFLite model expects quantized input but no quantization params found')
-                    inp_q = (inp / q_scale + q_zero).astype(in_dtype)
+                    inp_scaled = np.round(inp / q_scale) + q_zero
+                    inp_q = np.clip(inp_scaled, np.iinfo(in_dtype).min, np.iinfo(in_dtype).max).astype(in_dtype)
                     interpreter.set_tensor(in_index, inp_q)
                 else:
                     interpreter.set_tensor(in_index, inp.astype(in_dtype))
@@ -239,7 +241,7 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
         else:
             out_np = np.array(outputs)
 
-        is_prob = out_np.min() >= -1e-6 and out_np.max() <= 1.0 + 1e-6
+        is_prob = out_np.min() >= -1e-3 and out_np.max() <= 1.0 + 1e-3
 
         if is_prob:
             probs = tf.convert_to_tensor(out_np, dtype=tf.float32)
@@ -268,11 +270,13 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
         all_probs.append(probs.numpy())
         all_preds_bin.append(preds_bin)
         all_masks.append(masks.numpy())
+        all_imgs.append(imgs.numpy())
 
     # Concatenate
     all_probs = np.concatenate(all_probs, axis=0)
     all_preds_bin = np.concatenate(all_preds_bin, axis=0)
     all_masks = np.concatenate(all_masks, axis=0)
+    all_imgs = np.concatenate(all_imgs, axis=0)
 
     results = {
         'bce': float(mean_bce.result().numpy()),
@@ -293,14 +297,15 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
     fig_rows = samples
     fig, axes = plt.subplots(fig_rows, 4, figsize=(12, 3 * fig_rows))
 
-    # Need to load original (un-normalized) images for visualization; reuse loader from make_dataset internal function
-    # Simple approach: read with tensorflow image decode and undo normalization
-    import cv2
+    mean_arr = np.array(mean, dtype=np.float32)
+    std_arr = np.array(std, dtype=np.float32)
 
     for i in range(samples):
-        # read raw image and mask
-        img = cv2.imread(test_imgs[i])[:, :, ::-1] / 255.0
-        mask = cv2.imread(test_masks[i], cv2.IMREAD_GRAYSCALE) / 255.0
+        # Undo normalization from dataset tensors natively in memory
+        img = (all_imgs[i, ...] * std_arr) + mean_arr
+        img = np.clip(img, 0.0, 1.0)
+        
+        mask = all_masks[i, ...]
         prob = all_probs[i, ..., 0]
         pred_bin = all_preds_bin[i, ..., 0]
 
@@ -340,25 +345,27 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', default='config/config.yaml')
-    parser.add_argument('--model-name', required=False, default='nano_u',
-                        help='Model basename (without extension). Script will locate .tflite/.keras/.h5 in models dir')
-    parser.add_argument('--batch-size', type=int, default=8)
-    parser.add_argument('--threshold', type=float, default=0.5)
-    parser.add_argument('--samples', type=int, default=6)
-    parser.add_argument('--out', type=str, default=None)
-    parser.add_argument('--metrics-out', type=str, default=None, help='Path to write evaluation metrics JSON')
+    parser = argparse.ArgumentParser(description='Evaluate and plot predictions')
+    parser.add_argument('model', choices=['bu_net', 'nano_u'], help='Model to evaluate (bu_net or nano_u)')
     args = parser.parse_args()
 
-    results = evaluate_and_plot(args.model_name, args.config, batch_size=args.batch_size, threshold=args.threshold, samples_to_plot=args.samples, out_path=args.out)
+    # Hardcoded configurations
+    config_path = 'config/config.yaml'
+    model_name = args.model
+    batch_size = 8
+    threshold = 0.5
+    samples = 6
+    out_path = None
+    metrics_out = None
 
-    if args.metrics_out and results is not None:
+    results = evaluate_and_plot(model_name, config_path, batch_size=batch_size, threshold=threshold, samples_to_plot=samples, out_path=out_path)
+
+    if metrics_out and results is not None:
         try:
-            os.makedirs(os.path.dirname(args.metrics_out), exist_ok=True)
+            os.makedirs(os.path.dirname(metrics_out), exist_ok=True)
         except Exception:
             pass
-        with open(args.metrics_out, 'w') as mf:
+        with open(metrics_out, 'w') as mf:
             import json as _json
             _json.dump(results, mf, indent=2)
-        print(f'Wrote metrics JSON to {args.metrics_out}')
+        print(f'Wrote metrics JSON to {metrics_out}')

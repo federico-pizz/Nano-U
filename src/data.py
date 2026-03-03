@@ -50,41 +50,41 @@ def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 
                  std: Union[List[float], np.ndarray] = [0.5, 0.5, 0.5],
                  **augment_kwargs) -> tf.data.Dataset:
     """Create a TensorFlow dataset from image and mask files."""
+    img_files = sorted_by_frame(img_files)
+    mask_files = sorted_by_frame(mask_files)
+    
     if len(img_files) != len(mask_files):
         min_len = min(len(img_files), len(mask_files))
         img_files = img_files[:min_len]
         mask_files = mask_files[:min_len]
 
-    img_files = sorted_by_frame(img_files)
-    mask_files = sorted_by_frame(mask_files)
-    
-    mean = np.array(mean, dtype=np.float32)
-    std = np.array(std, dtype=np.float32)
-
-    def _load_pair(img_path, mask_path):
-        img = cv2.imread(img_path.decode())
-        if img is None: return np.zeros((1,1,3), dtype=np.float32), np.zeros((1,1,1), dtype=np.float32)
-        img = img.astype(np.float32)[:, :, ::-1] / 255.0
-        img = (img - mean) / std
-        
-        mask = cv2.imread(mask_path.decode(), cv2.IMREAD_GRAYSCALE)
-        if mask is None: return np.zeros((1,1,3), dtype=np.float32), np.zeros((1,1,1), dtype=np.float32)
-        mask = mask.astype(np.float32) / 255.0
-        mask = np.expand_dims(mask, -1)
-        return img, mask
+    mean_tf = tf.constant(mean, dtype=tf.float32)
+    std_tf = tf.constant(std, dtype=tf.float32)
 
     def _load_pair_tf(img_path, mask_path):
-        img, mask = tf.numpy_function(_load_pair, [img_path, mask_path], [tf.float32, tf.float32])
-        img.set_shape([None, None, 3])
-        mask.set_shape([None, None, 1])
+        img_bytes = tf.io.read_file(img_path)
+        img = tf.image.decode_png(img_bytes, channels=3)
+        img = tf.cast(img, tf.float32) / 255.0
+        
+        mask_bytes = tf.io.read_file(mask_path)
+        mask = tf.image.decode_png(mask_bytes, channels=1)
+        mask = tf.cast(mask, tf.float32) / 255.0
+        
         return img, mask
+
+    def _normalize(img, mask):
+        return (img - mean_tf) / std_tf, mask
 
     ds = tf.data.Dataset.from_tensor_slices((img_files, mask_files))
     if shuffle:
         ds = ds.shuffle(buffer_size=len(img_files))
+        
     ds = ds.map(_load_pair_tf, num_parallel_calls=tf.data.AUTOTUNE)
+    
     if augment:
         ds = ds.map(lambda i, m: _augment_pair(i, m, **augment_kwargs), 
                     num_parallel_calls=tf.data.AUTOTUNE)
+                    
+    ds = ds.map(_normalize, num_parallel_calls=tf.data.AUTOTUNE)
     return ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 

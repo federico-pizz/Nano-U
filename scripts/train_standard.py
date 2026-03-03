@@ -1,15 +1,13 @@
-"""Standard training: one experiment from experiments.yaml, NAS monitoring, quantize, benchmark.
+"""Standard training from config.yaml without KD, with quantize, benchmark.
 
 Usage:
-    python scripts/train_standard.py --experiment default
-    python scripts/train_standard.py --experiment bu_net_nas --output results/teacher/
-    python scripts/train_standard.py --list
+    python scripts/train_standard.py bu_net
+    python scripts/train_standard.py nano_u
 """
 
 import os
 import sys
 import argparse
-import yaml
 from pathlib import Path
 
 import shutil
@@ -18,42 +16,45 @@ import shutil
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.pipeline import run_training_pipeline, quantize_and_benchmark
-
-
-def list_experiments(config_path: str):
-    with open(config_path) as f:
-        data = yaml.safe_load(f)
-    return list(data.get("experiments", {}).keys())
+from src.pipeline import run_training_pipeline, quantize_model_pipeline, benchmark_model_pipeline
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Standard training with NAS monitoring → quantize → benchmark"
+        description="Standard training without KD → quantize → benchmark"
     )
-    parser.add_argument("--experiment", "-e", help="Experiment name from experiments.yaml")
-    parser.add_argument("--config", default="config/experiments.yaml", help="Config file path")
-    parser.add_argument("--output", default="results/", help="Output base directory")
-    parser.add_argument("--models-dir", default="models/", help="Where to copy final .keras + .tflite")
-    parser.add_argument("--list", action="store_true", help="List available experiments and exit")
+    parser.add_argument("model", choices=["bu_net", "nano_u"], help="Model to train (bu_net or nano_u)")
     args = parser.parse_args()
 
-    if args.list:
-        experiments = list_experiments(args.config)
-        print("Available experiments:")
-        for e in experiments:
-            print(f"  - {e}")
-        return
-
-    if not args.experiment:
-        parser.error("--experiment is required (or use --list to see options)")
+    config_path = "config/config.yaml"
+    output_dir = "results/"
+    models_dir_path = "models/"
 
     # ── 1. Train ──────────────────────────────────────────────────────────────
     print(f"\n{'='*55}")
-    print(f"STANDARD TRAINING  —  experiment: {args.experiment}")
+    print(f"STANDARD TRAINING: {args.model.upper()} (No KD)")
     print(f"{'='*55}")
 
-    result = run_training_pipeline(args.experiment, args.config, args.output)
+    # Explicitly load config to bypass KD for the standard training run
+    from src.utils.config import load_config
+    import yaml
+    
+    config = load_config(config_path)
+    
+    # We must explicitly turn off distillation for standard training
+    if "models" in config and args.model in config["models"]:
+        config["models"][args.model]["use_distillation"] = False
+    
+    # Save a temporary config override
+    temp_config_path = f"config/temp_{args.model}_standard.yaml"
+    with open(temp_config_path, "w") as f:
+        yaml.dump(config, f)
+
+    try:
+        result = run_training_pipeline(args.model, temp_config_path, output_dir)
+    finally:
+        if os.path.exists(temp_config_path):
+            os.remove(temp_config_path)
 
     if result["status"] != "success":
         print(f"\nTraining failed: {result.get('error')}")
@@ -63,7 +64,7 @@ def main():
 
     # ── 2. Copy to models/ ────────────────────────────────────────────────────
     print(f"\n─── Copy Models + Quantize + Benchmark ───")
-    models_dir = Path(args.models_dir)
+    models_dir = Path(models_dir_path)
     models_dir.mkdir(parents=True, exist_ok=True)
     
     src_model = Path(result["model_path"])
@@ -82,16 +83,22 @@ def main():
         print("POST-TRAINING: Quantize + Benchmark")
         print(f"{'─'*55}")
 
-        qb = quantize_and_benchmark(str(dst_model), models_dir=args.models_dir)
+        quant_res = quantize_model_pipeline(str(dst_model), models_dir=models_dir_path)
+        
+        bench_res = {}
+        if quant_res.get("status") == "success" and quant_res.get("tflite_path"):
+            bench_res = benchmark_model_pipeline(quant_res["tflite_path"])
+        else:
+            print("Skipping benchmark as quantization failed.")
 
         # ── 4. Summary ────────────────────────────────────────────────────────────
         print(f"\n{'='*55}")
         print("DONE")
         print(f"   Model:       {result['model_path']}")
-        print(f"   TFLite:      {qb['quantization'].get('tflite_path', 'N/A')}")
-        print(f"   Size:        {qb['quantization'].get('size_kb', 'N/A')} KB")
-        if qb.get("benchmark") and qb["benchmark"].get("inference"):
-            inf = qb["benchmark"].get("inference", {})
+        print(f"   TFLite:      {quant_res.get('tflite_path', 'N/A')}")
+        print(f"   Size:        {quant_res.get('size_kb', 'N/A')} KB")
+        if bench_res and bench_res.get("inference"):
+            inf = bench_res.get("inference", {})
             print(f"   Latency:     {inf.get('avg_latency_ms', '?'):.2f} ms")
             print(f"   Throughput:  {inf.get('throughput_fps', '?'):.1f} FPS")
         print(f"{'='*55}\n")

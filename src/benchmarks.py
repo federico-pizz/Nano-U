@@ -4,133 +4,298 @@ import time
 import numpy as np
 import tensorflow as tf
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
+from src.utils.config import load_config
+from src.data import make_dataset
+import argparse
 
-def benchmark_inference(model: tf.keras.Model, input_shape: Tuple[int, int, int] = (48, 64, 3), 
-                        num_iterations: int = 100) -> Dict[str, float]:
-    """Measure inference speed (latency and throughput)."""
-    # Create dummy input
-    x = np.random.random((1, *input_shape)).astype(np.float32)
+# Import the input shape from the config file globally
+_GLOBAL_CONFIG = load_config("config/config.yaml")
+INPUT_SHAPE = tuple(_GLOBAL_CONFIG["data"]["input_shape"])
+
+def benchmark_keras_inference(model_path: str,
+                              dataset: Optional[tf.data.Dataset] = None,
+                              input_shape: Tuple[int, int, int] = INPUT_SHAPE,
+                              num_iterations: int = 100) -> Dict[str, Any]:
+    """Measure inference speed (latency and throughput) on a standard Keras model."""
+    
+    print(f"Loading Keras model: {model_path}")
+    model = tf.keras.models.load_model(model_path, compile=False)
+    
+    if dataset is not None:
+        print(f"Benchmarking Keras model {Path(model_path).name} over provided test dataset...")
+        
+        # Unbatch the dataset to process 1 image at a time
+        unbatched_ds = dataset.unbatch()
+        dataset_iterator = unbatched_ds.as_numpy_iterator()
+        
+        # Warmup
+        for _ in range(10):
+            try:
+                x, _ = next(dataset_iterator)
+                x_batch = tf.expand_dims(x, 0)
+                model(x_batch, training=False)
+            except StopIteration:
+                break
+                
+        # Benchmark
+        total_time = 0.0
+        count = 0
+        latencies = []
+        
+        for x, _ in dataset_iterator:
+            x_batch = tf.expand_dims(x, 0)
+            
+            start_time = time.perf_counter()
+            model(x_batch, training=False)
+            end_time = time.perf_counter()
+            
+            latency_s = end_time - start_time
+            total_time += latency_s
+            latencies.append(latency_s * 1000)
+            count += 1
+            
+        if count == 0:
+            print("Warning: Dataset was empty (or consumed in warmup), falling back to dummy data.")
+            return benchmark_keras_inference(model_path, dataset=None, input_shape=input_shape, num_iterations=num_iterations)
+            
+        avg_latency = (total_time / count) * 1000  # ms
+        p99_latency = float(np.percentile(latencies, 99)) if latencies else avg_latency
+        throughput = count / total_time  # samples/sec
+        
+        return {
+            "avg_latency_ms": avg_latency,
+            "p99_latency_ms": p99_latency,
+            "throughput_fps": throughput,
+            "total_time_sec": total_time,
+            "iterations": count
+        }
+        
+    # Fallback to dummy input if no dataset provided
+    print(f"Benchmarking Keras with dummy data of shape {input_shape}...")
+    x_numpy = np.random.random((1, *input_shape)).astype(np.float32)
     
     # Warmup
     for _ in range(10):
-        _ = model(x, training=False)
-    
+        model(x_numpy, training=False)
+        
     # Benchmark
-    start_time = time.time()
+    start_time = time.perf_counter()
+    latencies = []
     for _ in range(num_iterations):
-        _ = model(x, training=False)
-    end_time = time.time()
+        t_start = time.perf_counter()
+        model(x_numpy, training=False)
+        t_end = time.perf_counter()
+        latencies.append((t_end - t_start) * 1000)
+    end_time = time.perf_counter()
     
     total_time = end_time - start_time
     avg_latency = (total_time / num_iterations) * 1000  # ms
+    p99_latency = float(np.percentile(latencies, 99)) if latencies else avg_latency
     throughput = num_iterations / total_time  # samples/sec
     
     return {
         "avg_latency_ms": avg_latency,
+        "p99_latency_ms": p99_latency,
         "throughput_fps": throughput,
         "total_time_sec": total_time,
         "iterations": num_iterations
     }
 
-def validate_tflite_optimization(model: tf.keras.Model, 
-                                 representative_data: Optional[np.ndarray] = None) -> Dict[str, Any]:
-    """Convert to TFLite and validate size/optimizations."""
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
-    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+def benchmark_tflite_inference(tflite_path: str, 
+                               dataset: Optional[tf.data.Dataset] = None,
+                               input_shape: Tuple[int, int, int] = INPUT_SHAPE, 
+                               num_iterations: int = 100) -> Dict[str, Any]:
+    """Measure inference speed (latency and throughput) directly on INT8 TFLite model."""
     
-    if representative_data is not None:
-        def representative_data_gen():
-            for i in range(len(representative_data)):
-                yield [representative_data[i:i+1].astype(np.float32)]
-        converter.representative_dataset = representative_data_gen
-        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-        converter.inference_input_type = tf.int8
-        converter.inference_output_type = tf.int8
+    # Initialize interpreter
+    interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
+    interpreter.allocate_tensors()
+    
+    input_details = interpreter.get_input_details()[0]
+    
+    # Get quantization parameters
+    scale, zero_point = input_details['quantization']
+    if scale == 0.0:
+        scale, zero_point = 1.0, 0
+    
+    input_index = input_details['index']
+    
+    # If a dataset is provided, we benchmark over it
+    if dataset is not None:
+        print(f"Benchmarking TFLite model {Path(tflite_path).name} over provided test dataset...")
         
-    try:
-        tflite_model = converter.convert()
-        model_size_kb = len(tflite_model) / 1024
+        # Unbatch the dataset to process 1 image at a time
+        unbatched_ds = dataset.unbatch()
+        dataset_iterator = unbatched_ds.as_numpy_iterator()
         
-        # Save TFLite model next to original if possible
-        tflite_path = None
-        if hasattr(model, 'output_path') and model.output_path:
-            tflite_path = Path(model.output_path).parent / "model.tflite"
-            with open(tflite_path, "wb") as f:
-                f.write(tflite_model)
+        # Warmup
+        for _ in range(10):
+            try:
+                x, _ = next(dataset_iterator)
+                x_batch = tf.expand_dims(x, 0)
+                if input_details['dtype'] == np.int8:
+                    x_scaled = tf.round(x_batch / scale) + zero_point
+                    x_batch = tf.cast(tf.clip_by_value(x_scaled, -128, 127), tf.int8)
+                interpreter.set_tensor(input_index, x_batch)
+                interpreter.invoke()
+            except StopIteration:
+                break
+            
+        # Benchmark
+        total_time = 0.0
+        count = 0
+        latencies = []
+        
+        for x, _ in dataset_iterator:
+            x_batch = tf.expand_dims(x, 0)
+            if input_details['dtype'] == np.int8:
+                x_scaled = tf.round(x_batch / scale) + zero_point
+                x_batch = tf.cast(tf.clip_by_value(x_scaled, -128, 127), tf.int8)
+                
+            interpreter.set_tensor(input_index, x_batch)
+            
+            start_time = time.perf_counter()
+            interpreter.invoke()
+            end_time = time.perf_counter()
+            
+            latency_s = end_time - start_time
+            total_time += latency_s
+            latencies.append(latency_s * 1000)
+            count += 1
+            
+        if count == 0:
+            print("Warning: Dataset was empty (or consumed in warmup), falling back to dummy data.")
+            return benchmark_tflite_inference(tflite_path, dataset=None, input_shape=input_shape, num_iterations=num_iterations)
+            
+        avg_latency = (total_time / count) * 1000  # ms
+        p99_latency = float(np.percentile(latencies, 99)) if latencies else avg_latency
+        throughput = count / total_time  # samples/sec
         
         return {
-            "status": "success",
-            "size_kb": model_size_kb,
-            "is_quantized": representative_data is not None,
-            "tflite_path": str(tflite_path) if tflite_path else None
+            "avg_latency_ms": avg_latency,
+            "p99_latency_ms": p99_latency,
+            "throughput_fps": throughput,
+            "total_time_sec": total_time,
+            "iterations": count
         }
-    except Exception as e:
-        return {
-            "status": "failed",
-            "error": str(e)
-        }
+    
+    # Fallback to dummy input if no dataset provided
+    print(f"Benchmarking TFLite with dummy data of shape {input_shape}...")
+    x = np.random.random((1, *input_shape)).astype(np.float32)
+    # Quantize dummy
+    if input_details['dtype'] == np.int8:
+        x_numpy = np.clip(np.round(x / scale + zero_point), -128, 127).astype(np.int8)
+    else:
+        x_numpy = x.astype(input_details['dtype'])
+        
+    # Warmup
+    for _ in range(10):
+        interpreter.set_tensor(input_index, x_numpy)
+        interpreter.invoke()
+    
+    # Benchmark
+    start_time = time.perf_counter()
+    latencies = []
+    for _ in range(num_iterations):
+        t_start = time.perf_counter()
+        interpreter.set_tensor(input_index, x_numpy)
+        interpreter.invoke()
+        t_end = time.perf_counter()
+        latencies.append((t_end - t_start) * 1000)
+    end_time = time.perf_counter()
+        
+    total_time = end_time - start_time
+    avg_latency = (total_time / num_iterations) * 1000  # ms
+    p99_latency = float(np.percentile(latencies, 99)) if latencies else avg_latency
+    throughput = num_iterations / total_time  # samples/sec
+        
+    return {
+        "avg_latency_ms": avg_latency,
+        "p99_latency_ms": p99_latency,
+        "throughput_fps": throughput,
+        "total_time_sec": total_time,
+        "iterations": num_iterations
+    }
 
-def run_benchmarks(model_path: str, input_shape: Tuple[int, int, int] = (48, 64, 3)) -> Dict[str, Any]:
+def run_benchmarks(model_name: str, config_path: str = "config/config.yaml") -> Dict[str, Any]:
     """Run full benchmark suite on a saved model."""
     try:
-        model = tf.keras.models.load_model(model_path, compile=False)
+        config = load_config(config_path)
+        models_dir = Path(config.get("data", {}).get("paths", {}).get("models_dir", "models"))
         
-        print(f"📏 Benchmarking model: {model_path}")
+        if model_name == "nano_u":
+            model_path = models_dir / f"{model_name}.tflite"
+            is_tflite = True
+        else:
+            model_path = models_dir / f"{model_name}.keras"
+            is_tflite = False
+            
+        if not model_path.exists():
+            # Try fallback .h5 if .keras doesnt exist for keras
+            if not is_tflite and (models_dir / f"{model_name}.h5").exists():
+                model_path = models_dir / f"{model_name}.h5"
+            else:
+                raise FileNotFoundError(f"Model file not found: {model_path}")
+            
+        print(f"Benchmarking model: {model_path}")
         
-        # Attach path for TFLite saving
-        model.output_path = model_path
+        actual_shape = INPUT_SHAPE
         
-        inf_metrics = benchmark_inference(model, input_shape)
-        tflite_metrics = validate_tflite_optimization(model)
+        # Try to load test dataset
+        test_ds = None
+        try:
+            data_paths = config.get("data", {}).get("paths", {})
+            test_cfg = data_paths.get("processed", {}).get("test", {})
+            
+            t_img_dir = Path(test_cfg.get("img", ""))
+            t_mask_dir = Path(test_cfg.get("mask", ""))
+            
+            if t_img_dir.exists() and t_mask_dir.exists():
+                test_img_files = sorted([str(f) for f in t_img_dir.glob("*.png")])
+                test_mask_files = sorted([str(f) for f in t_mask_dir.glob("*.png")])
+                
+                if test_img_files and len(test_img_files) == len(test_mask_files):
+                    print(f"Found {len(test_img_files)} test pairs for benchmarking.")
+                    test_ds = make_dataset(
+                        test_img_files, test_mask_files,
+                        batch_size=1, augment=False # Batch size 1 for accurate latency
+                    )
+        except Exception as e:
+            print(f"Could not load test dataset for benchmarking: {e}")
+            
+        if is_tflite:
+            inf_metrics = benchmark_tflite_inference(str(model_path), dataset=test_ds, input_shape=actual_shape)
+        else:
+            inf_metrics = benchmark_keras_inference(str(model_path), dataset=test_ds, input_shape=actual_shape)
         
         return {
             "inference": inf_metrics,
-            "tflite": tflite_metrics,
-            "parameters": model.count_params()
         }
     except Exception as e:
-        return {"error": str(e)}
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
-class MemoryProfilingCallback(tf.keras.callbacks.Callback):
-    """Monitor system and GPU memory usage during training."""
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Benchmark Nano-U or BU-Net model inference speeed')
+    parser.add_argument('model', choices=['bu_net', 'nano_u'], help='Model to benchmark (bu_net or nano_u)')
+    args = parser.parse_args()
+
+    print(f"{'='*55}")
+    print(f"BENCHMARKING MODEL: {args.model}")
+    print(f"{'='*55}")
     
-    def __init__(self):
-        super().__init__()
-        self.history = []
-        try:
-            import psutil
-            self.process = psutil.Process()
-        except ImportError:
-            self.process = None
-
-    def on_epoch_end(self, epoch, logs=None):
-        metrics = {"epoch": epoch}
-        
-        # System memory
-        if self.process:
-            mem_info = self.process.memory_info()
-            metrics["sys_rss_mb"] = mem_info.rss / (1024 * 1024)
-            
-        # GPU memory (if available)
-        gpus = tf.config.list_physical_devices('GPU')
-        if gpus:
-            try:
-                # Basic GPU memory info via TF
-                # Note: TF doesn't provide easy direct MB usage for current process
-                # but we can log that we are using GPU
-                metrics["gpu_count"] = len(gpus)
-            except Exception:
-                pass
-                
-        self.history.append(metrics)
-        print(f" 🧠 Memory Usage (RSS): {metrics.get('sys_rss_mb', 0):.2f} MB")
-
-    def get_summary(self) -> Dict[str, float]:
-        if not self.history:
-            return {}
-        rss_values = [h.get("sys_rss_mb", 0) for h in self.history]
-        return {
-            "max_rss_mb": float(np.max(rss_values)),
-            "avg_rss_mb": float(np.mean(rss_values))
-        }
+    results = run_benchmarks(args.model)
+    if "error" in results:
+        print(f"\nBenchmark Failed: {results['error']}")
+        print(results.get("traceback", ""))
+    else:
+        inf = results.get("inference", {})
+        print(f"\nFinal Metrics:")
+        print(f"  Avg Latency:    {inf.get('avg_latency_ms', '?'):.2f} ms")
+        print(f"  P99 Latency:    {inf.get('p99_latency_ms', '?'):.2f} ms")
+        print(f"  Throughput:     {inf.get('throughput_fps', '?'):.1f} FPS")
+        print(f"  Total Time:     {inf.get('total_time_sec', '?'):.2f} sec")
+        print(f"{'='*55}")

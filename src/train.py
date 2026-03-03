@@ -25,15 +25,19 @@ from src.data import make_dataset
 from src.nas import NASCallback as NASMonitorCallback
 
 
-def _get_experiment_config(full_config: Dict[str, Any], experiment_name: str) -> Dict[str, Any]:
-    """Resolve experiment config from full config (supports top-level, experiments, or training section)."""
-    if experiment_name in full_config:
-        return full_config[experiment_name]
-    if "experiments" in full_config and experiment_name in full_config["experiments"]:
-        return full_config["experiments"][experiment_name]
+def _get_config(full_config: Dict[str, Any], experiment_name: str) -> Dict[str, Any]:
+    """Resolve experiment config from full config (supports top-level, training, or models section)."""
+    # 1. Try to find it in the training block (preferred for hyperparams)
     if "training" in full_config and experiment_name in full_config["training"]:
         return full_config["training"][experiment_name]
-    raise KeyError(f"Experiment '{experiment_name}' not found in config. "
+    # 2. Try to find it in the experiments block (legacy)
+    if "experiments" in full_config and experiment_name in full_config["experiments"]:
+        return full_config["experiments"][experiment_name]
+    # 3. Try top-level exact match
+    if experiment_name in full_config:
+        return full_config[experiment_name]
+    
+    raise KeyError(f"Experiment/Model '{experiment_name}' not found in config. "
                    f"Top-level keys: {list(full_config.keys())}")
 
 
@@ -428,12 +432,14 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
     try:
         # Load full configuration and resolve experiment
         full_config = load_config(config_path)
-        config = dict(_get_experiment_config(full_config, experiment_name))
+        config = dict(_get_config(full_config, experiment_name))
         
-        # Merge model-specific config if available
-        model_name = config.get("model_name", "nano_u")
-        if "models" in full_config and model_name in full_config["models"]:
-            model_config = full_config["models"][model_name]
+        # Override the model_name to be the experiment_name since we call run_training_pipeline("bu_net")
+        config["model_name"] = experiment_name
+        
+        # Merge model architecture config if available
+        if "models" in full_config and experiment_name in full_config["models"]:
+            model_config = full_config["models"][experiment_name]
             # Update config with model defaults if not overridden in experiment
             for key, value in model_config.items():
                 if key not in config:

@@ -1,47 +1,38 @@
 """Distillation pipeline: Teacher (BU-Net) → Student (Nano-U) with NAS monitoring, quantize, benchmark.
 
-Replaces the old --full end-to-end pipeline. Runs the full sequence automatically:
-  Phase 1 — Train Teacher (BU-Net) with NAS monitoring
-  Phase 2 — Copy teacher weights to models/
-  Phase 3 — Train Student (Nano-U) with Distillation + NAS monitoring
-  Phase 4 — Quantize Student → INT8 TFLite
-  Phase 5 — Benchmark
+This pipeline performs the complete knowledge distillation workflow:
+  Phase 1 — Train Teacher (bu_net) with high capacity to establish a strong baseline
+  Phase 2 — Copy teacher weights to models/ folder to act as target for student
+  Phase 3 — Train Student (nano_u) using Distillation loss to match the teacher
+  Phase 4 — Copy student weights and Quantize Student → INT8 TFLite for embedded deployment
+  Phase 5 — Benchmark the quantized student
+  Phase 6 — Test and visually evaluate the student
+
+The output of this script is the fully trained, distilled, and quantized `nano_u` model,
+because distillation is specifically designed to transfer the knowledge from the heavy 
+`bu_net` (teacher) into the ultra-efficient `nano_u` (student) architecture.
 
 Usage:
     python scripts/train_distillation.py
-    python scripts/train_distillation.py --output results/ --teacher-experiment bu_net_nas --student-experiment distillation_nas
 """
 
 import os
 import sys
-import argparse
 import shutil
 from pathlib import Path
 
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.pipeline import run_training_pipeline, quantize_and_benchmark
+from src.pipeline import run_training_pipeline, quantize_model_pipeline, benchmark_model_pipeline
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Teacher→Student distillation pipeline with NAS monitoring → quantize → benchmark"
-    )
-    parser.add_argument("--config", default="config/config.yaml")
-    parser.add_argument("--output", default="results/", help="Base output directory")
-    parser.add_argument("--models-dir", default="models/", help="Where to place final artifacts")
-    parser.add_argument(
-        "--teacher-experiment", default="bu_net",
-        help="Experiment name for teacher training (default: bu_net)"
-    )
-    parser.add_argument(
-        "--student-experiment", default="nano_u",
-        help="Experiment name for student distillation (default: nano_u)"
-    )
-    args = parser.parse_args()
+    config_path = "config/config.yaml"
+    output_dir = "results/"
+    models_dir_path = "models/"
 
-    models_dir = Path(args.models_dir)
+    models_dir = Path(models_dir_path)
     models_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'='*55}")
@@ -49,8 +40,8 @@ def main():
     print(f"{'='*55}")
 
     # ── Phase 1: Train Teacher ─────────────────────────────────────────────
-    print(f"\n─── Phase 1: Training Teacher ({args.teacher_experiment}) ───")
-    teacher_res = run_training_pipeline(args.teacher_experiment, args.config, args.output)
+    print(f"\n─── Phase 1: Training Teacher (from config) ───")
+    teacher_res = run_training_pipeline("bu_net", config_path, output_dir)
 
     if teacher_res["status"] != "success":
         print(f"Teacher training failed: {teacher_res.get('error')}")
@@ -71,8 +62,8 @@ def main():
         sys.exit(1)
 
     # ── Phase 3: Train Student ─────────────────────────────────────────────
-    print(f"\n─── Phase 3: Training Student ({args.student_experiment}) ───")
-    student_res = run_training_pipeline(args.student_experiment, args.config, args.output)
+    print(f"\n─── Phase 3: Training Student (from config) ───")
+    student_res = run_training_pipeline("nano_u", config_path, output_dir)
 
     if student_res["status"] != "success":
         print(f"Student training failed: {student_res.get('error')}")
@@ -90,7 +81,13 @@ def main():
     else:
         print(f"Student model not found at {student_src}")
 
-    qb = quantize_and_benchmark(str(student_dst), models_dir=args.models_dir)
+    quant_res = quantize_model_pipeline(str(student_dst), models_dir=models_dir_path)
+    
+    bench_res = {}
+    if quant_res.get("status") == "success" and quant_res.get("tflite_path"):
+        bench_res = benchmark_model_pipeline(quant_res["tflite_path"])
+    else:
+        print("Skipping benchmark as quantization failed.")
 
     # ── Phase 6: Visual Evaluation on Test Set ─────────────
     print(f"\n─── Phase 6: Evaluation & Visualization ───")
@@ -98,11 +95,11 @@ def main():
         from src.evaluate import evaluate_and_plot
         
         student_stem = student_src.stem
-        eval_out_path = Path(args.output) / f"{student_stem}_eval_plot.png"
+        eval_out_path = Path(output_dir) / f"{student_stem}_eval_plot.png"
         
         eval_results = evaluate_and_plot(
             model_name=student_stem,
-            config_path=args.config,
+            config_path=config_path,
             out_path=str(eval_out_path)
         )
         
@@ -115,14 +112,18 @@ def main():
 
     # ── Summary ────────────────────────────────────────────────────────────
     print(f"\n{'='*55}")
-    print("PIPELINE COMPLETE")
-    print(f"   Teacher:     {teacher_dst}")
-    print(f"   Student:     {student_res['model_path']}")
-    print(f"   TFLite:      {qb['quantization'].get('tflite_path', 'N/A')}")
-    print(f"   Size:        {qb['quantization'].get('size_kb', 'N/A')} KB")
-    inf = qb["benchmark"].get("inference", {})
-    print(f"   Latency:     {inf.get('avg_latency_ms', '?'):.2f} ms")
-    print(f"   Throughput:  {inf.get('throughput_fps', '?'):.1f} FPS")
+    print("PIPELINE COMPLETE - NANO_U STUDENT TRAINED SUCCESSFULLY")
+    print("The final model produced by this pipeline is the nano_u (student).")
+    print("Knowledge has been distilled from the bu_net (teacher).")
+    print(f"   Teacher Path:     {teacher_dst}")
+    print(f"   Student Path:     {student_res['model_path']}")
+    print(f"   TFLite:      {quant_res.get('tflite_path', 'N/A')}")
+    print(f"   Size:        {quant_res.get('size_kb', 'N/A')} KB")
+    
+    if bench_res and bench_res.get("inference"):
+        inf = bench_res.get("inference", {})
+        print(f"   Latency:     {inf.get('avg_latency_ms', '?'):.2f} ms")
+        print(f"   Throughput:  {inf.get('throughput_fps', '?'):.1f} FPS")
     if 'eval_results' in locals() and eval_results:
         print(f"   Test IoU:    {eval_results.get('iou', 0):.4f}")
         print(f"   Plot saved:  {eval_out_path}")

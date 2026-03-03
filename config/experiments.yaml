@@ -1,260 +1,93 @@
-# Unified configuration for Nano-U experiments
+# Configuration for Nano-U Project (TensorFlow)
 
-# Global settings
-project:
-  name: "nano-u"
-  version: "1.0.0"
-  description: "Ultra-lightweight U-Net for microcontroller-based autonomous navigation"
-
-# Data configuration
+# Global Data settings
 data:
-  # Input shape (height, width, channels)
-  input_shape: [48, 64, 3]
+  input_shape: [120, 160, 3]  # Height, Width, Channels (TF format: NHWC)
+  num_classes: 1            # Binary segmentation
   
-  # Number of output classes (1 for binary segmentation)
-  num_classes: 1
-  
-  # Normalization parameters
+  # Normalization parameters (used in training and inference preprocessing)
+  # Data is normalized to [-1, 1] range: (x / 255.0 - mean) / std
   normalization:
     mean: [0.5, 0.5, 0.5]
     std: [0.5, 0.5, 0.5]
-  
-  # Data splitting strategy
+
+  # Data splitting strategy used in preparation
   split:
     train: 0.7
     validation: 0.2
     test: 0.1
-  
-  # Dataset paths
+
   paths:
     processed: 
-      root: "data/processed_data"
+      root: "data/processed"
       train:
-        img: "data/processed_data/train/img"
-        mask: "data/processed_data/train/mask"
+        img: "data/processed/train/img"
+        mask: "data/processed/train/mask"
       val:
-        img: "data/processed_data/val/img"
-        mask: "data/processed_data/val/mask"
+        img: "data/processed/val/img"
+        mask: "data/processed/val/mask"
       test:
-        img: "data/processed_data/test/img"
-        mask: "data/processed_data/test/mask"
+        img: "data/processed/test/img"
+        mask: "data/processed/test/mask"
 
-# Model configurations
+    models_dir: "models"
+
+
+# Model Architecture Definitions
 models:
-  nano_u:
-    class: "create_nano_u"
-    filters: [8, 16, 32]
-    bottleneck: 32
-    description: "Ultra-lightweight U-Net for microcontrollers"
-    
+  # Teacher Model (BU_Net) - UNet-like architecture
   bu_net:
-    class: "create_bu_net"
-    filters: [32, 64, 128, 256]
-    bottleneck: 256
-    description: "Teacher model for knowledge distillation"
+    filters: [64, 128, 256, 512, 1024, 2048] # Encoder filters
+    bottleneck: 2048
+    decoder_filters: [1024, 512, 256, 128, 64]
+    
+  # Student Model (Nano_U) - Ultra-light model for embedded deployment
+  nano_u:
+    filters: [16, 32, 64] # Encoder filters (reduced)
+    bottleneck: 64
+    decoder_filters: [32, 16]
 
-# Training configurations
+
+# Training Hyperparameters
 training:
-  # Common training parameters (anchor for merge)
-  common: &common
-    epochs: 50
-    batch_size: 16
-    learning_rate: 0.001
-    early_stopping: true
-    patience: 10
-    checkpoint_path: "checkpoints/"
-    log_dir: "logs/"
-    tensorboard: true
-    
-  # Standard training
-  standard: &training_standard
-    <<: *common
-    model_name: "nano_u"
-    use_distillation: false
-    use_nas: false
-    layers_to_monitor: ["enc1a_pw", "enc2a_pw"]
-    nas_frequency: 10
-    
-  # Knowledge distillation training
-  distillation: &training_distillation
-    <<: *common
-    model_name: "nano_u"
-    use_distillation: true
-    teacher_weights: "models/bu_net.keras"
-    alpha: 0.3
-    temperature: 4.0
+  # General settings
+  seed: 24
+  
+  # Teacher (BU_Net) training config
+  bu_net:
     epochs: 100
-    learning_rate: 0.0005
-    
-  # NAS monitoring training
-  nas: &training_nas
-    <<: *common
-    model_name: "nano_u"
-    use_distillation: false
-    use_nas: true
-    layers_to_monitor: ["enc1a_pw", "enc2a_pw", "bottleneck_a_pw"]
-    nas_frequency: 5
-    
-  # Distillation with NAS
-  distillation_nas: &training_distillation_nas
-    <<: *common
-    model_name: "nano_u"
-    use_distillation: true
-    teacher_weights: "models/bu_net.keras"
-    alpha: 0.3
-    temperature: 4.0
-    use_nas: true
-    layers_to_monitor: ["enc1a_pw", "enc2a_pw", "bottleneck_a_pw"]
-    nas_frequency: 5
-    epochs: 50
-    learning_rate: 0.0005
-
-# Experiment configurations
-experiments:
-  default:
-    <<: *training_standard
-    output_dir: "results/default/"
-    description: "Standard training for Nano-U"
-    
-  distillation:
-    <<: *training_distillation
-    output_dir: "results/distillation/"
-    description: "Knowledge distillation training"
-    
-  nas:
-    <<: *training_nas
-    output_dir: "results/nas/"
-    description: "NAS monitoring during training"
-    
-  distillation_nas:
-    <<: *training_distillation_nas
-    output_dir: "results/distillation_nas/"
-    description: "Knowledge distillation with NAS monitoring"
-    
-  bu_net_nas:
-    <<: *training_standard
-    model_name: "bu_net"
-    use_nas: true
-    layers_to_monitor: ["enc1_pw1", "enc2_pw1", "bottleneck_pw1"]
-    nas_frequency: 5
-    output_dir: "results/bu_net_nas/"
-    description: "Teacher model (BU-Net) training with NAS monitoring"
-    epochs: 50
-    
-  # Quick test experiment
-  quick_test:
-    <<: *training_standard
-    output_dir: "results/quick_test/"
-    description: "Quick test with minimal epochs"
-    epochs: 2
-    batch_size: 4
-    
-  # Hyperparameter sweep experiment
-  hyperparameter_sweep:
-    <<: *training_standard
-    output_dir: "results/hyperparameter_sweep/"
-    description: "Hyperparameter sweep for optimization"
-    learning_rate: 0.0005
     batch_size: 8
-    
-  # ESP32 deployment experiment
-  esp32_deployment:
-    <<: *training_standard
-    output_dir: "results/esp32_deployment/"
-    description: "Training for ESP32 deployment"
-    learning_rate: 0.0002
+    learning_rate: 1e-3
+    weight_decay: 1e-4
+    optimizer: "adamw"
+    loss: "binary_crossentropy" 
+    augment: true
+
+  # Student (Nano_U) training config
+  nano_u:
+    epochs: 100 
     batch_size: 8
-    use_nas: true
-    layers_to_monitor: ["enc1a_pw", "enc2a_pw"]
-
-# Model evaluation configurations
-evaluation:
-  # Standard evaluation
-  standard:
-    batch_size: 16
-    metrics:
-      - "iou"
-      - "precision"
-      - "recall"
-      - "f1_score"
+    learning_rate: 1e-4
+    weight_decay: 1e-3
+    optimizer: "adamw"
+    loss: "binary_crossentropy"
+    augment: true
     
-  # Detailed evaluation
-  detailed:
-    batch_size: 8
-    metrics:
-      - "iou"
-      - "precision"
-      - "recall"
-      - "f1_score"
-      - "accuracy"
-      - "binary_crossentropy"
+    # Knowledge Distillation settings
+    distillation:
+      enabled: true
+      teacher_weights: "models/bu_net.keras"
+      alpha: 0.3        # Weight for student loss (1-alpha for teacher loss); lower => more teacher influence
+      temperature: 4.0  # Higher temperature to soften teacher distribution for richer distillation gradients
 
-# Hyperparameter search space
-hyperparameter_search:
-  learning_rate:
-    values: [0.001, 0.0005, 0.0002]
-    description: "Learning rate values to search"
-  
-  batch_size:
-    values: [8, 16, 32]
-    description: "Batch size values to search"
-  
-  alpha:
-    values: [0.1, 0.3, 0.5]
-    description: "Distillation weight values to search"
-  
-  temperature:
-    values: [2.0, 4.0, 6.0]
-    description: "Temperature values to search"
 
-# Model constraints and requirements
-constraints:
-  # Parameter limits for microcontroller deployment
-  esp32:
-    max_parameters: 50000
-    max_memory: 200000  # bytes for quantized model
-    min_iou: 0.7
-    
-  # General model requirements
-  general:
-    min_epochs: 2
-    max_epochs: 200
-    min_batch_size: 1
-    max_batch_size: 64
-    
-# Performance benchmarks
-benchmarks:
-  # Training time benchmarks
-  training_time:
-    target: "< 10 minutes for 50 epochs"
-    units: "minutes"
-    
-  # Memory usage benchmarks
-  memory_usage:
-    target: "< 2GB RAM during training"
-    units: "GB"
-    
-  # Model size benchmarks
-  model_size:
-    target: "< 500KB for quantized model"
-    units: "KB"
 
-# Documentation and metadata
-documentation:
-  api_reference: true
-  usage_examples: true
-  troubleshooting_guide: true
-  changelog: true
-
-# Development settings
-development:
-  debug_mode: false
-  verbose_logging: false
-  enable_profiling: false
-  
-# Production settings
-production:
-  debug_mode: false
-  verbose_logging: false
-  enable_profiling: false
-  enable_monitoring: true
+# Quantization settings (TFLite)
+quantization:
+  method: "dynamic_range" # or "full_integer"
+  representative_dataset_size: 100
+  input_type: "int8"
+  output_type: "int8"
+  supported_ops:
+    - "TFLITE_BUILTINS_INT8"
+    - "SELECT_TF_OPS"

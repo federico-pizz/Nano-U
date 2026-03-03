@@ -3,6 +3,8 @@ import numpy as np
 import os
 from src.models.utils import convert_to_tflite_quantized
 from typing import Optional, Type, Tuple
+from src.utils.config import load_config
+import cv2
 
 try:
     from src.utils.metrics import BinaryIoU as _BinaryIoU
@@ -25,10 +27,6 @@ def quantize_model(model_path: str, output_path: str, input_shape: Tuple[int, ..
     except Exception as e:
         print(f"Failed to load model: {e}")
         return False
-
-    # Load config to find validation data for representative dataset
-    from src.utils.config import load_config
-    import cv2
     
     config = load_config()
     val_img_dir = config.get("data", {}).get("paths", {}).get("processed", {}).get("val", {}).get("img", "")
@@ -49,19 +47,19 @@ def quantize_model(model_path: str, output_path: str, input_shape: Tuple[int, ..
             for img_path in img_files:
                 img = cv2.imread(img_path)
                 if img is not None:
-                    # BGR to RGB, normalize, and add batch dimension
                     img = img.astype(np.float32)[:, :, ::-1] / 255.0
-                    img = (img - mean) / std
-                    # Resize if it doesn't match expected input_shape (excluding batch dim)
                     if img.shape != tuple(shape_to_gen[1:]):
                         img = cv2.resize(img, (shape_to_gen[2], shape_to_gen[1]))
+                    img = (img - mean) / std
                     img = np.expand_dims(img, axis=0)
                     yield [img]
         else:
             # Fallback to random data if no validation data is found
             print("Warning: No validation data found. Using random noise for quantization.")
             for _ in range(100):
+                # Generate base 0-1 random noise and shift to expected normalized range
                 data = np.random.rand(*shape_to_gen).astype(np.float32)
+                data = (data - mean) / std
                 yield [data]
 
     print(f"Quantizing model to {output_path}...")
