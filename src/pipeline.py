@@ -67,8 +67,11 @@ def benchmark_model_pipeline(
     print(f"Benchmarking TFLite {model_name}...")
     bench_result = run_benchmarks(str(tflite_path))
     inf = bench_result.get("inference", {})
-    print(f"Benchmark: {inf.get('avg_latency_ms', '?'):.2f} ms/frame | "
-          f"{inf.get('throughput_fps', '?'):.1f} FPS")
+    lat = inf.get('avg_latency_ms')
+    fps = inf.get('throughput_fps')
+    lat_str = f"{lat:.2f}" if isinstance(lat, (int, float)) else "?"
+    fps_str = f"{fps:.1f}" if isinstance(fps, (int, float)) else "?"
+    print(f"Benchmark: {lat_str} ms/frame | {fps_str} FPS")
 
     return bench_result
 
