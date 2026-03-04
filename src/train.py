@@ -206,7 +206,7 @@ def train_single_model(
     
     # NAS monitoring if enabled
     if config.get('use_nas', False):
-        nas_layers = config.get('layers_to_monitor', ['conv2d', 'conv2d_1'])
+        nas_layers = config.get('layers_to_monitor', ['enc1a_dw', 'enc1a_pw'])
         nas_freq = config.get('nas_frequency', 10)
         
         callbacks.append(
@@ -319,6 +319,20 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
                 val_dataset = val_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
         else:
             val_dataset = None
+            
+        # Initialize NAS Monitor for manual loop
+        nas_callback = None
+        if config.get('use_nas', False):
+            nas_layers = config.get('layers_to_monitor', ['enc1a_dw', 'enc1a_pw'])
+            nas_freq = config.get('nas_frequency', 10)
+            nas_callback = NASMonitorCallback(
+                layers_to_monitor=nas_layers,
+                log_frequency=nas_freq,
+                validation_data=val_dataset,
+                output_dir=output_dir
+            )
+            # Simulate Keras callback initialization
+            nas_callback.set_model(student)
         
         # Training loop
         # Loss objects and metrics
@@ -433,6 +447,10 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
                         print(f"Restoring best weights from {checkpoint_path}")
                         student.load_weights(checkpoint_path)
                     break
+            
+            # Trigger NAS callback manually at epoch end
+            if nas_callback:
+                nas_callback.on_epoch_end(epoch, logs=history)
         
         return history
         

@@ -334,7 +334,7 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
     plt.tight_layout()
 
     if out_path is None:
-        results_dir = os.path.join(root_dir, 'results')
+        results_dir = os.path.join(root_dir, 'results', model_name)
         os.makedirs(results_dir, exist_ok=True)
         out_path = os.path.join(results_dir, 'eval_predictions.png')
 

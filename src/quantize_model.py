@@ -6,6 +6,10 @@ from typing import Optional, Type, Tuple
 from src.utils.config import load_config
 import cv2
 
+# Import the input shape from the config file globally
+_GLOBAL_CONFIG = load_config("config/config.yaml")
+INPUT_SHAPE = tuple(_GLOBAL_CONFIG["data"]["input_shape"])
+
 try:
     from src.utils.metrics import BinaryIoU as _BinaryIoU
     _custom_objects: Optional[dict] = {"BinaryIoU": _BinaryIoU}
@@ -13,10 +17,13 @@ except ImportError:
     _custom_objects = None
     print("Warning: Could not import BinaryIoU")
 
-def quantize_model(model_path: str, output_path: str, input_shape: Tuple[int, ...] = (1, 48, 64, 3)):
+def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tuple[int, ...]] = None):
     """
     Load a Keras model and convert it to a quantized TFLite model.
     """
+    if input_shape is None:
+        input_shape = (1, *INPUT_SHAPE)
+        
     if not os.path.exists(model_path):
         print(f"Error: {model_path} not found!")
         return False
@@ -29,6 +36,7 @@ def quantize_model(model_path: str, output_path: str, input_shape: Tuple[int, ..
         return False
     
     config = load_config()
+        
     val_img_dir = config.get("data", {}).get("paths", {}).get("processed", {}).get("val", {}).get("img", "")
     mean = np.array(config.get("data", {}).get("normalization", {}).get("mean", [0.5, 0.5, 0.5]), dtype=np.float32)
     std = np.array(config.get("data", {}).get("normalization", {}).get("std", [0.5, 0.5, 0.5]), dtype=np.float32)

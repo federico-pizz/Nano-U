@@ -2,11 +2,10 @@
 
 This pipeline performs the complete knowledge distillation workflow:
   Phase 1 — Train Teacher (bu_net) with high capacity to establish a strong baseline
-  Phase 2 — Copy teacher weights to models/ folder to act as target for student
-  Phase 3 — Train Student (nano_u) using Distillation loss to match the teacher
-  Phase 4 — Copy student weights and Quantize Student → INT8 TFLite for embedded deployment
-  Phase 5 — Benchmark the quantized student
-  Phase 6 — Test and visually evaluate the student
+  Phase 2 — Train Student (nano_u) using Distillation loss to match the teacher
+  Phase 3 — Quantize Student → INT8 TFLite for embedded deployment
+  Phase 4 — Benchmark the quantized student
+  Phase 5 — Test and visually evaluate the student
 
 The output of this script is the fully trained, distilled, and quantized `nano_u` model,
 because distillation is specifically designed to transfer the knowledge from the heavy 
@@ -49,20 +48,8 @@ def main():
 
     print(f"Teacher trained  →  {teacher_res['model_path']}")
 
-    # ── Phase 2: Copy teacher weights ──────────────────────────────────────
-    print(f"\n─── Phase 2: Copying Teacher Weights ───")
-    teacher_src = Path(teacher_res["model_path"])
-    teacher_dst = models_dir / teacher_src.name
-
-    if teacher_src.exists():
-        shutil.copy(teacher_src, teacher_dst)
-        print(f"Teacher weights copied  →  {teacher_dst}")
-    else:
-        print(f"Teacher model not found at {teacher_src}")
-        sys.exit(1)
-
-    # ── Phase 3: Train Student ─────────────────────────────────────────────
-    print(f"\n─── Phase 3: Training Student (from config) ───")
+    # ── Phase 2: Train Student ─────────────────────────────────────────────
+    print(f"\n─── Phase 2: Training Student (from config) ───")
     student_res = run_training_pipeline("nano_u", config_path, output_dir)
 
     if student_res["status"] != "success":
@@ -71,17 +58,15 @@ def main():
 
     print(f"Student trained  →  {student_res['model_path']}")
 
-    # ── Phase 4: Copy student weights & Quantize ───
-    print(f"\n─── Phase 4 & 5: Copy Weights + Quantize + Benchmark ───")
+    # ── Phase 3 & 4: Quantize + Benchmark ───
+    print(f"\n─── Phase 3 & 4: Quantize + Benchmark ───")
     student_src = Path(student_res["model_path"])
-    student_dst = models_dir / student_src.name
-    if student_src.exists():
-        shutil.copy(student_src, student_dst)
-        print(f"Student weights copied  →  {student_dst}")
+    if not student_src.exists():
+        print(f"Student model not found at {student_src}")
     else:
         print(f"Student model not found at {student_src}")
 
-    quant_res = quantize_model_pipeline(str(student_dst), models_dir=models_dir_path)
+    quant_res = quantize_model_pipeline(str(student_src), models_dir=models_dir_path)
     
     bench_res = {}
     if quant_res.get("status") == "success" and quant_res.get("tflite_path"):
@@ -89,23 +74,41 @@ def main():
     else:
         print("Skipping benchmark as quantization failed.")
 
-    # ── Phase 6: Visual Evaluation on Test Set ─────────────
-    print(f"\n─── Phase 6: Evaluation & Visualization ───")
+    # ── Phase 5: Visual Evaluation on Test Set ─────────────
+    print(f"\n─── Phase 5: Evaluation & Visualization ───")
+    eval_results_all = {}
     try:
         from src.evaluate import evaluate_and_plot
         
+        # Evaluate Teacher
+        teacher_path = Path(teacher_res["model_path"])
+        teacher_stem = teacher_path.stem
+        teacher_eval_out = Path(models_dir_path) / f"{teacher_stem}_eval_plot.png"
+        print(f"\nEvaluating Teacher ({teacher_stem})...")
+        eval_results_teacher = evaluate_and_plot(
+            model_name=teacher_stem,
+            config_path=config_path,
+            out_path=str(teacher_eval_out)
+        )
+        print(f"Teacher metrics:")
+        for k, v in eval_results_teacher.items():
+            print(f"  {k}: {v:.4f}")
+        eval_results_all['teacher'] = eval_results_teacher
+            
+        # Evaluate Student
         student_stem = student_src.stem
-        eval_out_path = Path(output_dir) / f"{student_stem}_eval_plot.png"
-        
-        eval_results = evaluate_and_plot(
+        student_eval_out = Path(models_dir_path) / f"{student_stem}_eval_plot.png"
+        print(f"\nEvaluating Student ({student_stem})...")
+        eval_results_student = evaluate_and_plot(
             model_name=student_stem,
             config_path=config_path,
-            out_path=str(eval_out_path)
+            out_path=str(student_eval_out)
         )
         
-        print(f"Evaluation metrics:")
-        for k, v in eval_results.items():
+        print(f"Student metrics:")
+        for k, v in eval_results_student.items():
             print(f"  {k}: {v:.4f}")
+        eval_results_all['student'] = eval_results_student
             
     except Exception as e:
         print(f"Evaluation failed: {e}")
@@ -115,7 +118,7 @@ def main():
     print("PIPELINE COMPLETE - NANO_U STUDENT TRAINED SUCCESSFULLY")
     print("The final model produced by this pipeline is the nano_u (student).")
     print("Knowledge has been distilled from the bu_net (teacher).")
-    print(f"   Teacher Path:     {teacher_dst}")
+    print(f"   Teacher Path:     {teacher_res['model_path']}")
     print(f"   Student Path:     {student_res['model_path']}")
     print(f"   TFLite:      {quant_res.get('tflite_path', 'N/A')}")
     print(f"   Size:        {quant_res.get('size_kb', 'N/A')} KB")
@@ -124,9 +127,11 @@ def main():
         inf = bench_res.get("inference", {})
         print(f"   Latency:     {inf.get('avg_latency_ms', '?'):.2f} ms")
         print(f"   Throughput:  {inf.get('throughput_fps', '?'):.1f} FPS")
-    if 'eval_results' in locals() and eval_results:
-        print(f"   Test IoU:    {eval_results.get('iou', 0):.4f}")
-        print(f"   Plot saved:  {eval_out_path}")
+        
+    if eval_results_all and 'student' in eval_results_all:
+        print(f"   Test IoU:    {eval_results_all['student'].get('iou', 0):.4f}")
+        print(f"   Teacher IoU: {eval_results_all.get('teacher', {}).get('iou', 0):.4f}")
+        print(f"   Plots saved: {models_dir_path}bu_net_eval_plot.png, {models_dir_path}nano_u_eval_plot.png")
     print(f"{'='*55}\n")
 
 

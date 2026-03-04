@@ -55,10 +55,10 @@ training:
   
   # Teacher (BU_Net) training config
   bu_net:
-    epochs: 100
+    epochs: 120
     batch_size: 16
     learning_rate: 1e-3
-    weight_decay: 1e-4
+    weight_decay: 1e-3
     optimizer: "adamw"
     loss: "binary_crossentropy" 
     augment: true
@@ -73,6 +73,7 @@ training:
     loss: "binary_crossentropy"
     augment: true
     use_nas: true
+    layers_to_monitor: ['enc1a_dw', 'bottleneck_a_dw', 'dec2_conv_b_pw']
     
     # Knowledge Distillation settings
     distillation:
