@@ -8,7 +8,6 @@ from collections import defaultdict
 import pandas as pd
 from pathlib import Path
 
-from src.models.builders import create_searchable_nano_u, get_block_map
 
 
 def compute_layer_redundancy(activations: tf.Tensor, eps: float = 1e-6) -> Dict[str, float]:

@@ -72,6 +72,7 @@ training:
     optimizer: "adamw"
     loss: "binary_crossentropy"
     augment: true
+    use_nas: true
     
     # Knowledge Distillation settings
     distillation:

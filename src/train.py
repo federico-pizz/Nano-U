@@ -1,5 +1,3 @@
-"""Unified training pipeline: single model, distillation, and experiment entry point."""
-
 import os
 import sys
 import argparse
@@ -18,27 +16,59 @@ import traceback
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.models import create_nano_u, create_bu_net, create_model_from_config
-from src.utils import BinaryIoU, get_project_root
+from src.models import create_nano_u, create_bu_net
+from src.utils import BinaryIoU
 from src.utils.config import load_config
 from src.data import make_dataset
 from src.nas import NASCallback as NASMonitorCallback
 
 
 def _get_config(full_config: Dict[str, Any], experiment_name: str) -> Dict[str, Any]:
-    """Resolve experiment config from full config (supports top-level, training, or models section)."""
-    # 1. Try to find it in the training block (preferred for hyperparams)
+    """Retrieve the experiment configuration from the full config dictionary.
+    
+    Searches for the experiment configuration in the following order:
+    1. Inside the 'training' block (preferred for hyperparameter sets).
+    2. Inside the 'experiments' block (legacy support).
+    3. Custom top-level match by exact experiment name.
+    
+    Args:
+        full_config: The complete configuration dictionary loaded from YAML.
+        experiment_name: The target experiment name to search for.
+        
+    Returns:
+        The dictionary containing the experiment-specific configuration.
+        
+    Raises:
+        KeyError: If the experiment name cannot be found in the supported blocks.
+    """
     if "training" in full_config and experiment_name in full_config["training"]:
         return full_config["training"][experiment_name]
-    # 2. Try to find it in the experiments block (legacy)
     if "experiments" in full_config and experiment_name in full_config["experiments"]:
         return full_config["experiments"][experiment_name]
-    # 3. Try top-level exact match
     if experiment_name in full_config:
         return full_config[experiment_name]
     
     raise KeyError(f"Experiment/Model '{experiment_name}' not found in config. "
                    f"Top-level keys: {list(full_config.keys())}")
+
+
+def create_model_from_config(config: Dict[str, Any]) -> keras.Model:
+    """Create model architecture based on config."""
+    model_name = config.get("model_name", "nano_u")
+    
+    # Extract structural params if they exist in config
+    filters = config.get("filters", None)
+    bottleneck = config.get("bottleneck", None)
+    input_shape = config.get("input_shape", (120, 160, 3))
+    
+    # Handle list to tuple conversion if necessary
+    if isinstance(input_shape, list):
+        input_shape = tuple(input_shape)
+        
+    if model_name == "bu_net":
+        return create_bu_net(input_shape=input_shape, filters=filters, bottleneck=bottleneck, name=model_name)
+    else:
+        return create_nano_u(input_shape=input_shape, filters=filters, bottleneck=bottleneck, name=model_name)
 
 
 def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tensor, y: tf.Tensor,
@@ -75,15 +105,14 @@ def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tenso
         student_loss = bce_loss_fn(y, student_pred)
         
         if teacher is not None:
-            # Distillation loss: MSE between sigmoided (softened) outputs
-            # This matches the "logic" of the old implementation
-            # We use mean of squared differences for robustness across shapes
+            # Distillation loss: MSE between temperature-scaled sigmoided outputs.
+            # Multiplied by temperature^2 to correct magnitude shrinkage from logit scaling.
             distill_loss = tf.reduce_mean(
                 tf.math.squared_difference(
                     tf.nn.sigmoid(teacher_pred / temperature),
                     tf.nn.sigmoid(student_pred / temperature)
                 )
-            )
+            ) * (temperature ** 2)
             total_loss = alpha * student_loss + (1 - alpha) * distill_loss
         else:
             distill_loss = tf.constant(0.0, dtype=tf.float32)
@@ -106,20 +135,23 @@ def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tenso
 
 def train_single_model(
     model: keras.Model,
-    config: Dict,
+    config: Dict[str, Any],
     train_data: Union[tf.data.Dataset, Tuple[tf.Tensor, tf.Tensor]],
     val_data: Optional[Union[tf.data.Dataset, Tuple[tf.Tensor, tf.Tensor]]] = None,
 ) -> keras.callbacks.History:
-    """Train a single model using Keras .fit().
-
+    """Train a standalone Keras model using standard fit routines.
+    
+    This function establishes the environment, optimizer, and callbacks (such as
+    ModelCheckpoint and EarlyStopping) to train a single model without distillation.
+    
     Args:
-        model: Compiled Keras model.
-        config: Training configuration dict.
-        train_data: Either a ``tf.data.Dataset`` or a ``(x, y)`` tuple.
-        val_data: Optional validation data in either format.
-
+        model: Compiled Keras model instance.
+        config: Training hyperparameters (epochs, batch_size, learning_rate).
+        train_data: Dataset mapped as a tf.data.Dataset or an (x, y) tensor tuple.
+        val_data: Evaluation dataset mapped as a tf.data.Dataset or (x, y) tensor tuple.
+        
     Returns:
-        Keras History object.
+        The keras.callbacks.History object detailing the metrics per epoch.
     """
     # Setup training parameters
     epochs = config.get('epochs', 50)
@@ -222,20 +254,24 @@ def train_single_model(
         raise
 
 
-def train_with_distillation(student: keras.Model, teacher: keras.Model, config: Dict,
+def train_with_distillation(student: keras.Model, teacher: keras.Model, config: Dict[str, Any],
                             train_data: Union[Tuple[tf.Tensor, tf.Tensor], tf.data.Dataset],
-                            val_data: Optional[Union[Tuple[tf.Tensor, tf.Tensor], tf.data.Dataset]] = None) -> keras.callbacks.History:
-    """Train student model with knowledge distillation from teacher.
+                            val_data: Optional[Union[Tuple[tf.Tensor, tf.Tensor], tf.data.Dataset]] = None) -> Dict[str, List[float]]:
+    """Train a student model via knowledge distillation using a custom GradientTape loop.
     
+    The loss function minimizes a weighted sum of:
+      1. Binary Crossentropy against the hard ground truth labels.
+      2. Mean Squared Error (MSE) against the temperature-softened outputs of the teacher.
+      
     Args:
-        student: Student model to train
-        teacher: Teacher model for distillation
-        config: Training configuration
-        train_data: Training data (x, y) or tf.data.Dataset
-        val_data: Optional validation data (x, y) or tf.data.Dataset
-    
+        student: The lightweight model architecture being trained.
+        teacher: The high-capacity, pre-trained model providing target probabilities.
+        config: Hyperparameter dictionary containing alpha and temperature settings.
+        train_data: The dataset for training iterations.
+        val_data: The evaluation dataset used for Checkpointing and Early Stopping.
+        
     Returns:
-        Training history
+        A dictionary mapping metric names to lists of floats recorded per epoch.
     """
     # Setup distillation parameters
     alpha = config.get('alpha', 0.3)
@@ -245,47 +281,11 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
     learning_rate = config.get('learning_rate', 0.0005)
     optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
     
-    # Setup callbacks
-    callbacks = []
-    
-    # Early stopping
-    if config.get('early_stopping', False):
-        callbacks.append(
-            keras.callbacks.EarlyStopping(
-                monitor='val_loss',
-                patience=10,
-                restore_best_weights=True
-            )
-        )
-    
     # Model checkpoint - always save as temp_model.keras in models/
     Path("models").mkdir(parents=True, exist_ok=True)
     checkpoint_path = os.path.join("models", "temp_model.keras")
     
-    callbacks.append(
-        keras.callbacks.ModelCheckpoint(
-            filepath=checkpoint_path,
-            save_best_only=True,
-            monitor='val_loss',
-            verbose=1
-        )
-    )
-    
     output_dir = config.get('output_dir', 'results/')
-
-    # NAS monitoring if enabled
-    if config.get('use_nas', False):
-        nas_layers = config.get('layers_to_monitor', ['conv2d', 'conv2d_1'])
-        nas_freq = config.get('nas_frequency', 10)
-        
-        callbacks.append(
-            NASMonitorCallback(
-                layers_to_monitor=nas_layers,
-                log_frequency=nas_freq,
-                validation_data=val_data,
-                output_dir=output_dir
-            )
-        )
     
     # Training
     print(f"\nStarting distillation training for {config.get('epochs', 100)} epochs...")
@@ -334,6 +334,9 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
             'val_iou': []
         }
         
+        best_val_loss = float('inf')
+        patience_counter = 0
+        
         for epoch in range(epochs):
             # Training phase
             epoch_losses: Dict[str, List[float]] = {'loss': [], 'student_loss': [], 'distillation_loss': []}
@@ -374,7 +377,7 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
                                 tf.nn.sigmoid(teacher_pred / temperature),
                                 tf.nn.sigmoid(student_pred / temperature)
                             )
-                        ).numpy()
+                        ).numpy() * (temperature ** 2)
                         total_loss = float(alpha * student_loss + (1 - alpha) * distill_loss)
                     else:
                         distill_loss = 0.0
@@ -407,6 +410,27 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
                     print(f"  Val Student Loss: {history['val_student_loss'][-1]:.4f}")
                     if teacher is not None:
                         print(f"  Val Distillation Loss: {history['val_distillation_loss'][-1]:.4f}")
+            
+            # --- Manual Logic for custom training loop callbacks ---
+            if val_dataset:
+                current_val_loss = history['val_loss'][-1]
+                
+                # Model Checkpointing
+                if current_val_loss < best_val_loss:
+                    print(f"  Val loss improved from {best_val_loss:.5f} to {current_val_loss:.5f}. Saving model...")
+                    best_val_loss = current_val_loss
+                    student.save(checkpoint_path)
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+                
+                # Early Stopping
+                if config.get('early_stopping', False) and patience_counter >= 10:
+                    print(f"\nEarly stopping triggered at epoch {epoch + 1}!")
+                    if os.path.exists(checkpoint_path):
+                        print(f"Restoring best weights from {checkpoint_path}")
+                        student.load_weights(checkpoint_path)
+                    break
         
         return history
         
@@ -419,15 +443,19 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
 
 def train_model(config_path: str = "config/config.yaml", experiment_name: str = "default",
                 output_dir: Optional[str] = None) -> Dict[str, Any]:
-    """Main training function with automatic teacher/student handling.
+    """Execute training pipeline coordinating dataset construction and model selection.
+    
+    This overarching orchestrator loads the configuration definitions, parses and prepares
+    normalized tf.data image datasets, constructs either a generic single network or initializes
+    a teacher/student distillation pair, and dispatches the execution to the relevant training loop.
     
     Args:
-        config_path: Path to configuration file
-        experiment_name: Name of experiment to run
-        output_dir: Override base output directory (optional)
-    
+        config_path: Path to the main YAML configuration file.
+        experiment_name: Internal name pointing to a hyperparameter block in the configuration.
+        output_dir: Manual override directory to store the resulting checkpoints and metric jsons.
+        
     Returns:
-        Dictionary with training results and status
+        A dictionary containing termination status, path strings, and the final history structure.
     """
     try:
         # Load full configuration and resolve experiment
@@ -497,22 +525,28 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
                 print("Validation data skipped (mismatch or empty).")
                 val_img_files, val_mask_files = [], []
 
+        norm_mean = full_config.get("data", {}).get("normalization", {}).get("mean", [0.5, 0.5, 0.5])
+        norm_std = full_config.get("data", {}).get("normalization", {}).get("std", [0.5, 0.5, 0.5])
+
         batch_size = config.get("batch_size", 16)
         train_ds = make_dataset(
             train_img_files, train_mask_files,
-            batch_size=batch_size, augment=config.get("augment", False)
+            batch_size=batch_size, augment=config.get("augment", False),
+            mean=norm_mean, std=norm_std
         )
         val_ds: Optional[tf.data.Dataset] = None
         if val_img_files:
             val_ds = make_dataset(
                 val_img_files, val_mask_files,
-                batch_size=batch_size, augment=False
+                batch_size=batch_size, augment=False,
+                mean=norm_mean, std=norm_std
             )
 
         train_data = train_ds
         val_data = val_ds
 
-       
+        model_to_save = None
+        
         # Build models
         if config.get("use_distillation", False):
             # The 'teacher_experiment' is basically an experiment config or model name
@@ -552,13 +586,14 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
             history = train_single_model(model, config, train_data, val_data)
             model_to_save = model
         
+        # Restore best weights before saving if they exist
+        temp_checkpoint = "models/temp_model.keras"
+        if os.path.exists(temp_checkpoint):
+            print(f"Loading best weights from {temp_checkpoint} for final save...")
+            model_to_save.load_weights(temp_checkpoint)
+
         model_path = experiment_dir / f"{config.get('model_name', 'model')}.keras"
         model_to_save.save(model_path)
-        
-        # Clean up best_model.keras if it exists since we just saved the final one
-        checkpoint_path = experiment_dir / "best_model.keras"
-        if checkpoint_path.exists():
-            checkpoint_path.unlink()
         
         history_path = experiment_dir / "history.json"
         history_dict = history.history if hasattr(history, "history") else history
@@ -584,8 +619,8 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
 
 
 def main():
-    """Command line interface for training."""
-    parser = argparse.ArgumentParser(description="Train Nano-U models")
+    """Command-line interface entrypoint for triggering training pipelines."""
+    parser = argparse.ArgumentParser(description="Train Nano-U models via single-pass or Distillation")
     parser.add_argument("--config", default="config/experiments.yaml", help="Configuration file path")
     parser.add_argument("--experiment", default="default", help="Experiment name to run")
     parser.add_argument("--output", default="results/", help="Output directory")

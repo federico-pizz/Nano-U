@@ -29,6 +29,7 @@ class BinaryIoU(tf.keras.metrics.Metric):
         denom = self.tp + self.fp + self.fn + 1e-7
         return self.tp / denom
 
-    def reset_states(self):
-        for v in self.variables:
-            v.assign(0)
+    def reset_state(self):
+        self.tp.assign(0.0)
+        self.fp.assign(0.0)
+        self.fn.assign(0.0)
