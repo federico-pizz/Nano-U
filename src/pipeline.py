@@ -94,13 +94,7 @@ def run_training_pipeline(
         )
 
         model_name = result.get("model_name", "model")
-        final_model_path = pipeline_dir / f"{model_name}.keras"
-
-        # Fallback: rename temp_model.keras if train_model saved it that way
-        if not final_model_path.exists():
-            temp_model = Path("models/temp_model.keras")
-            if temp_model.exists():
-                shutil.move(str(temp_model), str(final_model_path))
+        final_model_path = Path("models") / f"{model_name}.keras"
 
         results_path = pipeline_dir / "results.json"
         with open(results_path, "w") as f:

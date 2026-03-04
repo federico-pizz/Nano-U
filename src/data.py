@@ -46,6 +46,7 @@ def _augment_pair(img, mask, flip_prob=0.5, max_rotation_deg=20,
 
 def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 8,
                  shuffle: bool = True, augment: bool = False,
+                 target_size: Optional[Tuple[int, int]] = None,
                  mean: Union[List[float], np.ndarray] = [0.5, 0.5, 0.5],
                  std: Union[List[float], np.ndarray] = [0.5, 0.5, 0.5],
                  **augment_kwargs) -> tf.data.Dataset:
@@ -60,6 +61,9 @@ def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 
 
     mean_tf = tf.constant(mean, dtype=tf.float32)
     std_tf = tf.constant(std, dtype=tf.float32)
+    
+    # Store standard specific values to avoid kwargs pass-through conflicts
+    augment_args = augment_kwargs.copy()
 
     def _load_pair_tf(img_path, mask_path):
         img_bytes = tf.io.read_file(img_path)
@@ -70,6 +74,10 @@ def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 
         mask = tf.image.decode_png(mask_bytes, channels=1)
         mask = tf.cast(mask, tf.float32) / 255.0
         
+        if target_size is not None:
+            img = tf.image.resize(img, target_size, method=tf.image.ResizeMethod.BILINEAR)
+            mask = tf.image.resize(mask, target_size, method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+            
         return img, mask
 
     def _normalize(img, mask):
@@ -82,7 +90,7 @@ def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 
     ds = ds.map(_load_pair_tf, num_parallel_calls=tf.data.AUTOTUNE)
     
     if augment:
-        ds = ds.map(lambda i, m: _augment_pair(i, m, **augment_kwargs), 
+        ds = ds.map(lambda i, m: _augment_pair(i, m, **augment_args), 
                     num_parallel_calls=tf.data.AUTOTUNE)
                     
     ds = ds.map(_normalize, num_parallel_calls=tf.data.AUTOTUNE)

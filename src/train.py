@@ -138,6 +138,7 @@ def train_single_model(
     config: Dict[str, Any],
     train_data: Union[tf.data.Dataset, Tuple[tf.Tensor, tf.Tensor]],
     val_data: Optional[Union[tf.data.Dataset, Tuple[tf.Tensor, tf.Tensor]]] = None,
+    experiment_dir: str = "results/",
 ) -> keras.callbacks.History:
     """Train a standalone Keras model using standard fit routines.
     
@@ -181,7 +182,7 @@ def train_single_model(
             )
         )
     
-    output_dir = config.get('output_dir', 'results/')
+    output_dir = experiment_dir
     # Model checkpoint - always save as temp_model.keras in models/
     Path("models").mkdir(parents=True, exist_ok=True)
     checkpoint_path = os.path.join("models", "temp_model.keras")
@@ -197,7 +198,7 @@ def train_single_model(
     
     # TensorBoard
     if config.get('tensorboard', False):
-        log_dir = config.get('log_dir', 'logs/')
+        log_dir = os.path.join(experiment_dir, 'logs')
         Path(log_dir).mkdir(parents=True, exist_ok=True)
         callbacks.append(
             keras.callbacks.TensorBoard(log_dir=log_dir)
@@ -256,7 +257,8 @@ def train_single_model(
 
 def train_with_distillation(student: keras.Model, teacher: keras.Model, config: Dict[str, Any],
                             train_data: Union[Tuple[tf.Tensor, tf.Tensor], tf.data.Dataset],
-                            val_data: Optional[Union[Tuple[tf.Tensor, tf.Tensor], tf.data.Dataset]] = None) -> Dict[str, List[float]]:
+                            val_data: Optional[Union[Tuple[tf.Tensor, tf.Tensor], tf.data.Dataset]] = None,
+                            experiment_dir: str = "results/") -> Dict[str, List[float]]:
     """Train a student model via knowledge distillation using a custom GradientTape loop.
     
     The loss function minimizes a weighted sum of:
@@ -285,7 +287,7 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
     Path("models").mkdir(parents=True, exist_ok=True)
     checkpoint_path = os.path.join("models", "temp_model.keras")
     
-    output_dir = config.get('output_dir', 'results/')
+    output_dir = experiment_dir
     
     # Training
     print(f"\nStarting distillation training for {config.get('epochs', 100)} epochs...")
@@ -480,8 +482,8 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
             experiment_dir = Path(output_dir)
         else:
             base_output = Path(config.get("output_dir", "results/"))
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            experiment_dir = base_output / f"{experiment_name}_{config.get('model_name', 'nano_u')}_{timestamp}"
+            model_name_for_dir = config.get('model_name', experiment_name)
+            experiment_dir = base_output / model_name_for_dir
         
         experiment_dir.mkdir(parents=True, exist_ok=True)
 
@@ -529,9 +531,14 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
         norm_std = full_config.get("data", {}).get("normalization", {}).get("std", [0.5, 0.5, 0.5])
 
         batch_size = config.get("batch_size", 16)
+        
+        input_shape_cfg = config.get("input_shape")
+        target_size = (input_shape_cfg[0], input_shape_cfg[1]) if input_shape_cfg else None
+
         train_ds = make_dataset(
             train_img_files, train_mask_files,
             batch_size=batch_size, augment=config.get("augment", False),
+            target_size=target_size,
             mean=norm_mean, std=norm_std
         )
         val_ds: Optional[tf.data.Dataset] = None
@@ -539,6 +546,7 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
             val_ds = make_dataset(
                 val_img_files, val_mask_files,
                 batch_size=batch_size, augment=False,
+                target_size=target_size,
                 mean=norm_mean, std=norm_std
             )
 
@@ -578,12 +586,12 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
             student = create_model_from_config(config)
             
             # Distillation can now correctly handle tf.data.Dataset transparently
-            history = train_with_distillation(student, teacher, config, train_data, val_data)
+            history = train_with_distillation(student, teacher, config, train_data, val_data, experiment_dir=str(experiment_dir))
             model_to_save = student
         else:
             model = create_model_from_config(config)
             # fit handles both (x, y) and dataset
-            history = train_single_model(model, config, train_data, val_data)
+            history = train_single_model(model, config, train_data, val_data, experiment_dir=str(experiment_dir))
             model_to_save = model
         
         # Restore best weights before saving if they exist
@@ -592,8 +600,13 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
             print(f"Loading best weights from {temp_checkpoint} for final save...")
             model_to_save.load_weights(temp_checkpoint)
 
-        model_path = experiment_dir / f"{config.get('model_name', 'model')}.keras"
+        Path("models").mkdir(parents=True, exist_ok=True)
+        model_name = config.get('model_name', 'model')
+        model_path = Path("models") / f"{model_name}.keras"
         model_to_save.save(model_path)
+        
+        if os.path.exists(temp_checkpoint):
+            os.remove(temp_checkpoint)
         
         history_path = experiment_dir / "history.json"
         history_dict = history.history if hasattr(history, "history") else history

@@ -14,64 +14,42 @@ dist/
 .mypy_cache/
 
 # Virtual Environments
-venv/
-.venv/
 .venv-tf/
-env/
-ENV/
-.env
 
 # Pytest
 pytest.ini
 
 # --- IDE / Editors ---
 .vscode/
-.idea/
 *.swp
 *~
 .DS_Store
 Thumbs.db
 
-# --- Jupyter Notebooks ---
-.ipynb_checkpoints/
-
-# --- Project Data & Artifacts ---
-
-# Data: Ignore all raw and processed data
+# Data
 data/
 results/
 
-# Models: Ignore all trained weights, checkpoints, and export formats
+# Models
 models/
-# Exception: You can track the README or .gitkeep in models if it exists
-!models/.gitkeep
-!models/README.md
-temp_model_save.keras
-
-# Results: Ignore logs, figures, and predictions
-results/
-logs/
-nas_logs/
 
 # Legacy / Old folder content
-# We ignore data and models inside 'old' to prevent accidental large commits
-old/data/
-old/models/
 old_nano_u/
 
-# --- Rust (from previous context) ---
+# --- Rust ---
 /target/
 **/target/
 Cargo.lock
 
-# --- Large Media Files (just in case they end up elsewhere) ---
+# --- Large Media Files ---
 *.png
 *.jpg
 *.jpeg
 *.rgb
-*.mp4
 *.tif
 *.tiff
+*.json
+
 # Rust subproject esp_flash
 esp_flash/target/
 esp_flash/debug/

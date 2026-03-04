@@ -2,7 +2,7 @@
 
 # Global Data settings
 data:
-  input_shape: [120, 160, 3]  # Height, Width, Channels (TF format: NHWC)
+  input_shape: [96, 128, 3]  # Height, Width, Channels (TF format: NHWC)
   num_classes: 1            # Binary segmentation
   
   # Normalization parameters (used in training and inference preprocessing)
@@ -19,16 +19,16 @@ data:
 
   paths:
     processed: 
-      root: "data/processed"
+      root: "data/botanic_garden"
       train:
-        img: "data/processed/train/img"
-        mask: "data/processed/train/mask"
+        img: "data/botanic_garden/train/img"
+        mask: "data/botanic_garden/train/mask"
       val:
-        img: "data/processed/val/img"
-        mask: "data/processed/val/mask"
+        img: "data/botanic_garden/val/img"
+        mask: "data/botanic_garden/val/mask"
       test:
-        img: "data/processed/test/img"
-        mask: "data/processed/test/mask"
+        img: "data/botanic_garden/test/img"
+        mask: "data/botanic_garden/test/mask"
 
     models_dir: "models"
 
@@ -43,20 +43,20 @@ models:
     
   # Student Model (Nano_U) - Ultra-light model for embedded deployment
   nano_u:
-    filters: [16, 32, 64] # Encoder filters (reduced)
-    bottleneck: 64
-    decoder_filters: [32, 16]
+    filters: [8, 16, 32] # Encoder filters (reduced)
+    bottleneck: 32
+    decoder_filters: [16, 8]
 
 
 # Training Hyperparameters
 training:
   # General settings
-  seed: 24
+  seed: 37
   
   # Teacher (BU_Net) training config
   bu_net:
     epochs: 100
-    batch_size: 8
+    batch_size: 16
     learning_rate: 1e-3
     weight_decay: 1e-4
     optimizer: "adamw"
@@ -67,8 +67,8 @@ training:
   nano_u:
     epochs: 100 
     batch_size: 8
-    learning_rate: 1e-4
-    weight_decay: 1e-3
+    learning_rate: 5e-4
+    weight_decay: 1e-4
     optimizer: "adamw"
     loss: "binary_crossentropy"
     augment: true
