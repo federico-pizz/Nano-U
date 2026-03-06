@@ -1,4 +1,3 @@
-
 import subprocess
 import sys
 import time
@@ -8,7 +7,9 @@ import select
 
 def main():
     cmd = ["espflash", "flash", "--monitor", "target/xtensa-esp32s3-none-elf/release/analysis"]
-    log_file = "stack_log.txt"
+    log_dir = "../results/nano_u_rust"
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "stack_log.txt")
     MaxRetries = 3
     
     for attempt in range(MaxRetries):
@@ -105,7 +106,7 @@ def main():
             sys.exit(0)
         
         if port_error and attempt < MaxRetries - 1:
-            print("\n⚠️  Port error detected. Retrying in 2 seconds...")
+            print("\nPort error detected. Retrying in 2 seconds...")
             time.sleep(2)
             continue
         

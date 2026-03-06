@@ -292,15 +292,17 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
     for k, v in results.items():
         print(f'  {k}: {v:.4f}')
 
-    # Plot samples
-    samples = min(samples_to_plot, all_probs.shape[0])
+    # Plot samples — pick evenly spaced indices across the full test set
+    n_total = all_probs.shape[0]
+    samples = min(samples_to_plot, n_total)
+    sample_indices = np.linspace(0, n_total - 1, samples, dtype=int)
     fig_rows = samples
     fig, axes = plt.subplots(fig_rows, 4, figsize=(12, 3 * fig_rows))
 
     mean_arr = np.array(mean, dtype=np.float32)
     std_arr = np.array(std, dtype=np.float32)
 
-    for i in range(samples):
+    for idx, i in enumerate(sample_indices):
         # Undo normalization from dataset tensors natively in memory
         img = (all_imgs[i, ...] * std_arr) + mean_arr
         img = np.clip(img, 0.0, 1.0)
@@ -309,10 +311,10 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
         prob = all_probs[i, ..., 0]
         pred_bin = all_preds_bin[i, ..., 0]
 
-        ax0 = axes[i, 0] if fig_rows > 1 else axes[0]
-        ax1 = axes[i, 1] if fig_rows > 1 else axes[1]
-        ax2 = axes[i, 2] if fig_rows > 1 else axes[2]
-        ax3 = axes[i, 3] if fig_rows > 1 else axes[3]
+        ax0 = axes[idx, 0] if fig_rows > 1 else axes[0]
+        ax1 = axes[idx, 1] if fig_rows > 1 else axes[1]
+        ax2 = axes[idx, 2] if fig_rows > 1 else axes[2]
+        ax3 = axes[idx, 3] if fig_rows > 1 else axes[3]
 
         ax0.imshow(img)
         ax0.set_title('Input')
@@ -353,7 +355,7 @@ if __name__ == '__main__':
     config_path = 'config/config.yaml'
     model_name = args.model
     batch_size = 8
-    threshold = 0.5
+    threshold = 0.4
     samples = 6
     out_path = None
     metrics_out = None

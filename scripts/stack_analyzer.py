@@ -106,14 +106,23 @@ def plot_stack_usage(peaks, total_stack, output_file='stack_usage.png'):
     print(f"✓ Plot saved to {output_file}")
 
 def main():
-    log_file = 'stack_log.txt'
+    import json
+    from pathlib import Path
+
+    # Results are saved to results/nano_u_rust/ relative to project root
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent  # scripts/../ = Nano-U root
+    out_dir = project_root / 'results' / 'nano_u_rust'
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file = out_dir / 'stack_log.txt'
     
-    if not Path(log_file).exists():
+    if not log_file.exists():
         print(f"Error: {log_file} not found!")
         return
     
     print(f"Parsing {log_file}...")
-    peaks, total = parse_log_output(log_file)
+    peaks, total = parse_log_output(str(log_file))
     
     if not peaks:
         print("No stack peaks found in log.")
@@ -122,8 +131,25 @@ def main():
     peak = max(peaks)
     print(f"Peak Stack Usage: {peak} bytes ({peak/1024:.2f} KB)")
     print(f"Total Stack Size: {total} bytes ({total/1024:.2f} KB)")
-    
-    plot_stack_usage(peaks, total)
+
+    # Save visual report
+    plot_path = str(out_dir / 'stack_usage.png')
+    plot_stack_usage(peaks, total, output_file=plot_path)
+
+    # Save metrics as JSON alongside the plot
+    metrics = {
+        'peak_stack_bytes': peak,
+        'peak_stack_kb': round(peak / 1024, 2),
+        'total_stack_bytes': total,
+        'total_stack_kb': round(total / 1024, 2),
+        'headroom_bytes': total - peak,
+        'iterations': len(peaks),
+        'model': 'nano_u',
+    }
+    metrics_path = out_dir / 'metrics.json'
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f"✓ Metrics saved to {metrics_path}")
 
 if __name__ == '__main__':
     main()

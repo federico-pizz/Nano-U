@@ -32,11 +32,11 @@ echo "✓ Build complete"
 echo ""
 
 # Step 2: Run on Device and Capture Output
-LOG="stack_log.txt"
+LOG="$REPO_ROOT/results/nano_u_rust/stack_log.txt"
 
 # Run analysis wrapper (handles execution, logging, and termination)
 echo "Starting analysis..."
-python3 "$SCRIPT_DIR/run_inference.py"
+python3 "$REPO_ROOT/scripts/run_inference.py"
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -ne 0 ]; then
@@ -73,11 +73,9 @@ else
     echo "Warning: pip not found in $REPO_ROOT/.venv-tf; run: python3 -m venv $REPO_ROOT/.venv-tf and install dependencies manually"
 fi
 
-# Copy the captured log into the esp_flash folder so the analyzer finds it
-cp -f "$LOG" "$SCRIPT_DIR/stack_log.txt" || true
-
+# Generate visualizations with Python directly reading the log in results
 echo "[4/4] Generating visualizations with Python..."
-"$VENV_PY" "$SCRIPT_DIR/stack_analyzer.py"
+"$VENV_PY" "$REPO_ROOT/scripts/stack_analyzer.py"
 if [ $? -ne 0 ]; then
     echo "Error: Python visualization failed!"
     exit 1
@@ -89,5 +87,6 @@ echo "=========================================="
 echo "Analysis complete!"
 echo "=========================================="
 echo "Generated files:"
-echo "  - $LOG       (Raw UART output)"
-echo "  - $SCRIPT_DIR/stack_usage.png     (Visualization)"
+echo "  - $SCRIPT_DIR/stack_log.txt                          (Raw UART output)"
+echo "  - $REPO_ROOT/results/nano_u_rust/stack_usage.png    (Visualization)"
+echo "  - $REPO_ROOT/results/nano_u_rust/metrics.json       (Stack metrics)"
