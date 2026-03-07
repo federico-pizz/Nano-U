@@ -10,10 +10,10 @@ import re
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-def run_analysis_on_device(cmd, log_file):
+def run_analysis_on_device(cmd, log_file, cwd=None):
     print(f"Executing: {' '.join(cmd)}")
     master, slave = pty.openpty()
-    p = subprocess.Popen(cmd, stdout=slave, stderr=subprocess.STDOUT, close_fds=True)
+    p = subprocess.Popen(cmd, stdout=slave, stderr=subprocess.STDOUT, close_fds=True, cwd=cwd)
     os.close(slave)
     
     with open(log_file, "wb") as f_log:
@@ -141,7 +141,7 @@ def main():
     
     success = False
     for attempt in range(3):
-        if run_analysis_on_device(cmd, str(log_file)):
+        if run_analysis_on_device(cmd, str(log_file), cwd=repo_root / 'esp_flash'):
             success = True
             break
         print("Retrying...")
