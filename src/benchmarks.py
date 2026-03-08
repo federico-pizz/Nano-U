@@ -263,8 +263,15 @@ def run_benchmarks(model_name: str, config_path: str = "config/config.yaml") -> 
         # Try to load test dataset
         test_ds = None
         try:
-            data_paths = config.get("data", {}).get("paths", {})
-            test_cfg = data_paths.get("processed", {}).get("test", {})
+            # Select dataset based on model
+            if model_name == "nano_u2":
+                dataset_cfg = config.get("data", {}).get("paths", {}).get("secondary", {})
+                test_cfg = dataset_cfg.get("test", {})
+                print(f"Using secondary dataset ('tinyagri') for {model_name}")
+            else:
+                data_paths = config.get("data", {}).get("paths", {})
+                test_cfg = data_paths.get("processed", {}).get("test", {})
+                print(f"Using standard dataset ('botanic_garden') for {model_name}")
             
             t_img_dir = Path(test_cfg.get("img", ""))
             t_mask_dir = Path(test_cfg.get("mask", ""))
@@ -295,10 +302,9 @@ def run_benchmarks(model_name: str, config_path: str = "config/config.yaml") -> 
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Benchmark Nano-U or BU-Net model inference speeed')
-    parser.add_argument('model', choices=['bu_net', 'nano_u'], help='Model to benchmark (bu_net or nano_u)')
+    parser = argparse.ArgumentParser(description='Benchmark Nano-U or BU-Net model inference speed')
+    parser.add_argument('model', choices=['bu_net', 'nano_u', 'nano_u2'], help='Model to benchmark')
     args = parser.parse_args()
 
     print(f"{'='*55}")

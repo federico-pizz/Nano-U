@@ -13,15 +13,19 @@ fn main() {
         .parent()
         .expect("esp_flash must be inside project root");
 
+    // ── Model Selection ──────────────────────────────────────────────────────────
+    let model_name = env::var("MODEL_NAME").unwrap_or_else(|_| "nano_u".to_string());
+    println!("cargo:warning=Building for model: {}", model_name);
+
     // ── Quantization parameters ──────────────────────────────────────────────────
     let quant_params_path = project_root
         .join("models")
-        .join("nano_u_quant_params.json");
+        .join(format!("{}_quant_params.json", model_name));
     println!("cargo:rerun-if-changed={}", quant_params_path.display());
 
     if quant_params_path.exists() {
         let raw = fs::read_to_string(&quant_params_path)
-            .expect("Failed to read nano_u_quant_params.json");
+            .expect(&format!("Failed to read {}", quant_params_path.display()));
         
         let input_scale      = extract_json_f64(&raw, "input",  "scale");
         let input_zero_point = extract_json_i64(&raw, "input",  "zero_point");
@@ -72,14 +76,14 @@ fn main() {
         println!("cargo:rustc-env=NANO_U_STD_G_BITS=0");
         println!("cargo:rustc-env=NANO_U_STD_B_BITS=0");
         println!(
-            "cargo:warning=nano_u_quant_params.json not found at {}; \
-             run `python -m src.quantize_model` to generate it.",
-            quant_params_path.display()
+            "cargo:warning={} not found at {}; \
+             run quantization to generate it.",
+            model_name, quant_params_path.display()
         );
     }
 
-    let src_model = project_root.join("models").join("nano_u.tflite");
-    let dst_model = manifest_dir.join("models").join("nano_u.tflite");
+    let src_model = project_root.join("models").join(format!("{}.tflite", model_name));
+    let dst_model = manifest_dir.join("models").join("nano_u.tflite"); // Keep same destination name for simplicity in code
     fs::create_dir_all(dst_model.parent().unwrap()).expect("Cannot create models/ dir");
     if src_model.exists() {
         fs::copy(&src_model, &dst_model).unwrap_or_else(|e| {
@@ -93,10 +97,12 @@ fn main() {
         println!("cargo:warning=Copied model: {} → {}", src_model.display(), dst_model.display());
     }
     println!("cargo:rerun-if-changed={}", src_model.display());
+    println!("cargo:rerun-if-env-changed=MODEL_NAME");
 
+    let dataset_name = if model_name == "nano_u2" { "tinyagri" } else { "botanic_garden" };
     let test_img_dir = project_root
         .join("data")
-        .join("botanic_garden")
+        .join(dataset_name)
         .join("test")
         .join("img");
 
@@ -108,51 +114,58 @@ fn main() {
 
     let img_h: u32 = env::var("NANO_U_IMG_H").unwrap_or("60".to_string()).parse().unwrap();
     let img_w: u32 = env::var("NANO_U_IMG_W").unwrap_or("80".to_string()).parse().unwrap();
-    const MAX_IMAGES: usize = 50;
+    const SET_SIZE: usize = 50;
 
-    let mut count = 0usize;
+    let mut total_packed = 0usize;
 
-    if test_img_dir.exists() {
-        let mut entries: Vec<PathBuf> = fs::read_dir(&test_img_dir)
-            .expect("Cannot read test img dir")
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| {
-                p.extension()
-                    .map(|ext| ext.eq_ignore_ascii_case("png"))
-                    .unwrap_or(false)
-            })
-            .collect();
-            
-        entries.sort_by_key(|p| {
-            p.file_stem()
-                .and_then(|s| s.to_str())
-                .and_then(|s| s.split('_').last())
-                .and_then(|s| s.parse::<u32>().ok())
-                .unwrap_or(0)
-        });
+    for dataset in ["botanic_garden", "tinyagri"] {
+        let test_img_dir = project_root.join("data").join(dataset).join("test").join("img");
+        println!("cargo:rerun-if-changed={}", test_img_dir.display());
 
-        for path in entries.iter().take(MAX_IMAGES) {
-            // FIX: Using FilterType::Triangle (Bilinear) to match OpenCV
-            let img = image::open(path)
-                .unwrap_or_else(|e| panic!("Cannot open {}: {}", path.display(), e))
-                .resize_exact(img_w, img_h, image::imageops::FilterType::Triangle)
-                .to_rgb8();
-            bin_file
-                .write_all(img.as_raw())
-                .expect("Cannot write image bytes");
-            count += 1;
-            println!("cargo:rerun-if-changed={}", path.display());
+        let mut count = 0usize;
+        if test_img_dir.exists() {
+            let mut entries: Vec<PathBuf> = fs::read_dir(&test_img_dir)
+                .expect("Cannot read test img dir")
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.extension()
+                        .map(|ext| ext.eq_ignore_ascii_case("png"))
+                        .unwrap_or(false)
+                })
+                .collect();
+                
+            entries.sort_by_key(|p| {
+                p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|s| s.split('_').last())
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(0)
+            });
+
+            for path in entries.iter().take(SET_SIZE) {
+                let img = image::open(path)
+                    .unwrap_or_else(|e| panic!("Cannot open {}: {}", path.display(), e))
+                    .resize_exact(img_w, img_h, image::imageops::FilterType::Triangle)
+                    .to_rgb8();
+                bin_file
+                    .write_all(img.as_raw())
+                    .expect("Cannot write image bytes");
+                count += 1;
+                println!("cargo:rerun-if-changed={}", path.display());
+            }
         }
+
+        let bytes_per_image = (img_h * img_w * 3) as usize;
+        if count < SET_SIZE {
+            let padding = vec![0u8; bytes_per_image * (SET_SIZE - count)];
+            bin_file.write_all(&padding).expect("Cannot write padding");
+        }
+        println!("cargo:warning=Packed {} / {} images from {} into input_images.bin", count, SET_SIZE, dataset);
+        total_packed += SET_SIZE;
     }
 
-    let bytes_per_image = (img_h * img_w * 3) as usize;
-    if count < MAX_IMAGES {
-        let padding = vec![0u8; bytes_per_image * (MAX_IMAGES - count)];
-        bin_file.write_all(&padding).expect("Cannot write padding");
-    }
-
-    println!("cargo:warning=Packed {} / {} test images into input_images.bin", count, MAX_IMAGES);
+    println!("cargo:warning=Packed total {} test images into input_images.bin", total_packed);
 }
 
 // ── Lightweight JSON helpers ─────

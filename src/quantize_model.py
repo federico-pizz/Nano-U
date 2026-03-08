@@ -110,8 +110,17 @@ def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tupl
         return False
     
     config = load_config()
+    
+    # Use secondary dataset if quantizing nano_u2
+    is_secondary = "nano_u2" in model_path
+    data_paths = config.get("data", {}).get("paths", {})
+    data_cfg = data_paths.get("secondary" if is_secondary else "processed", {})
+    
+    if is_secondary:
+        train_img_dir = data_cfg.get("train", {}).get("img", "")
+    else:
+        train_img_dir = data_cfg.get("train", {}).get("img", "")
         
-    train_img_dir = config.get("data", {}).get("paths", {}).get("processed", {}).get("train", {}).get("img", "")
     mean = np.array(config.get("data", {}).get("normalization", {}).get("mean", [0.5, 0.5, 0.5]), dtype=np.float32)
     std = np.array(config.get("data", {}).get("normalization", {}).get("std", [0.5, 0.5, 0.5]), dtype=np.float32)
 
@@ -126,6 +135,7 @@ def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tupl
             shape_to_gen = [1] + shape_to_gen
             
         if img_files:
+            print(f"Calibration using {len(img_files)} images from {train_img_dir}")
             for img_path in img_files:
                 img = cv2.imread(img_path)
                 if img is not None:
@@ -144,7 +154,7 @@ def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tupl
                 data = (data - mean) / std
                 yield [data]
 
-    print(f"Quantizing model to {output_path}...")
+    print(f"Quantizing model {model_path} to {output_path}...")
     success = convert_to_tflite_quantized(model, output_path, representative_data_gen)
 
     if success:
@@ -169,6 +179,8 @@ if __name__ == "__main__":
         model_path = sys.argv[1]
         output_path = sys.argv[2]
         quantize_model(model_path, output_path)
+    elif len(sys.argv) > 1 and sys.argv[1] == "nano_u2":
+        quantize_model("models/nano_u2.h5", "models/nano_u2.tflite")
     else:
         # verification/manual run
         quantize_model("models/nano_u.h5", "models/nano_u.tflite")

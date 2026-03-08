@@ -31,6 +31,19 @@ data:
         mask: "data/botanic_garden/test/mask"
 
     models_dir: "models"
+    
+    # Secondary dataset for fine-tuning
+    secondary:
+      root: "data/tinyagri"
+      train:
+        img: "data/tinyagri/train/img"
+        mask: "data/tinyagri/train/mask"
+      val:
+        img: "data/tinyagri/val/img"
+        mask: "data/tinyagri/val/mask"
+      test:
+        img: "data/tinyagri/test/img"
+        mask: "data/tinyagri/test/mask"
 
 
 # Model Architecture Definitions
@@ -82,6 +95,12 @@ training:
       teacher_weights: "models/bu_net.keras"
       alpha: 0.3        # Weight for student loss (1-alpha for teacher loss); lower => more teacher influence
       temperature: 4.0  # Higher temperature to soften teacher distribution for richer distillation gradients
+
+  # Fine-tuning config for nano_u2
+  nano_u_fine_tune:
+    epochs: 10
+    learning_rate: 5e-5
+    batch_size: 32
 
 
 

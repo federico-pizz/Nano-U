@@ -26,15 +26,17 @@ import matplotlib.pyplot as plt
 
 EPS = 1e-7
 
-def run_inference_on_device(repo_root):
-    print("[1/3] Building inference binary...")
-    subprocess.run(["cargo", "build", "--release", "--bin", "inference"], cwd=repo_root / "esp_flash", check=True)
+def run_inference_on_device(repo_root, model_name="nano_u"):
+    print(f"[1/3] Building inference binary for {model_name}...")
+    env = os.environ.copy()
+    env["MODEL_NAME"] = model_name
+    subprocess.run(["cargo", "build", "--release", "--bin", "inference"], cwd=repo_root / "esp_flash", check=True, env=env)
     
-    print("\n[2/3] Flashing and running inference...")
+    print(f"\n[2/3] Flashing and running inference for {model_name}...")
     cmd = ["cargo", "run", "--release", "--bin", "inference"]
     
     master, slave = pty.openpty()
-    p = subprocess.Popen(cmd, cwd=repo_root / "esp_flash", stdin=slave, stdout=slave, stderr=subprocess.STDOUT, close_fds=True)
+    p = subprocess.Popen(cmd, cwd=repo_root / "esp_flash", stdin=slave, stdout=slave, stderr=subprocess.STDOUT, close_fds=True, env=env)
     os.close(slave)
     
     buffer = b""
@@ -116,16 +118,23 @@ def run_inference_on_device(repo_root):
         
     return img_data
 
-def evaluate_esp_outputs(img_data_dict, repo_root, threshold=0.4, samples_to_plot=6):
+def evaluate_esp_outputs(img_data_dict, repo_root, model_name="nano_u", dataset_batch="botanic_garden", start_idx=0, end_idx=50, threshold=0.4, samples_to_plot=6):
     config_path = repo_root / 'config/config.yaml'
     config = load_config(str(config_path))
     
-    # 1. Load actual test masks and inputs (for comparison and plotting)
-    test_img_dir = repo_root / config['data']['paths']['processed']['test']['img']
-    test_mask_dir = repo_root / config['data']['paths']['processed']['test']['mask']
+    # 1. Load actual test masks and inputs for the specific dataset batch
+    if dataset_batch == "tinyagri":
+        dataset_cfg = config.get("data", {}).get("paths", {}).get("secondary", {})
+        test_cfg = dataset_cfg.get("test", {})
+    else:
+        data_paths = config.get("data", {}).get("paths", {})
+        test_cfg = data_paths.get("processed", {}).get("test", {})
+        
+    test_img_dir = repo_root / test_cfg.get('img', '')
+    test_mask_dir = repo_root / test_cfg.get('mask', '')
     
-    test_imgs = sorted_by_frame([str(p) for p in test_img_dir.glob('*.png')])
-    test_masks = sorted_by_frame([str(p) for p in test_mask_dir.glob('*.png')])
+    test_imgs = sorted_by_frame([str(p) for p in test_img_dir.glob('*.png')])[:50]
+    test_masks = sorted_by_frame([str(p) for p in test_mask_dir.glob('*.png')])[:50]
     
     mean = config['data']['normalization']['mean']
     std = config['data']['normalization']['std']
@@ -138,32 +147,18 @@ def evaluate_esp_outputs(img_data_dict, repo_root, threshold=0.4, samples_to_plo
         all_imgs.append(imgs.numpy()[0])
         
     if not all_masks:
-        raise RuntimeError("No test images loaded.")
+        print(f"Warning: No test images loaded for {dataset_batch}.")
+        return None
         
-    # 2. Load Dequantization Params from nano_u_quant_params.json (most reliable)
-    params_path = repo_root / config['data']['paths']['models_dir'] / "nano_u_quant_params.json"
+    # 2. Load Dequantization Params from JSON (most reliable)
+    params_path = repo_root / config['data']['paths']['models_dir'] / f"{model_name}_quant_params.json"
     if params_path.exists():
         with open(params_path, 'r') as f:
             params = json.load(f)
         out_qscale = params['output']['scale']
         out_qzero = params['output']['zero_point']
-        print(f"Loaded dequant params from JSON: scale={out_qscale}, zp={out_qzero}")
     else:
-        print(f"Warning: {params_path} not found, falling back to TFLite interpreter.")
-        model_path = repo_root / config['data']['paths']['models_dir'] / "nano_u.tflite"
-        interpreter = tf.lite.Interpreter(model_path=str(model_path))
-        interpreter.allocate_tensors()
-        out_det = interpreter.get_output_details()[0]
-        # Try both legacy and modern quantization param paths
-        out_qscale, out_qzero = out_det.get('quantization', (1.0, 0))
-        if out_qscale == 0.0:
-            q_params = out_det.get("quantization_parameters", {})
-            scales = q_params.get("scales", [])
-            zeros = q_params.get("zero_points", [])
-            if scales and zeros:
-                out_qscale, out_qzero = float(scales[0]), int(zeros[0])
-            else:
-                out_qscale, out_qzero = 1.0, 0
+        out_qscale, out_qzero = 1.0, 0
         
     # 3. Process ESP Outputs
     mean_bce = keras.metrics.Mean(name='bce')
@@ -176,38 +171,32 @@ def evaluate_esp_outputs(img_data_dict, repo_root, threshold=0.4, samples_to_plo
     all_probs = []
     all_preds_bin = []
     
-    num_images = min(len(img_data_dict), len(all_masks))
-    print(f"\nEvaluating {num_images} images from ESP32...")
+    # We only evaluate the images in the specified range
+    batch_img_indices = range(start_idx, min(end_idx, len(img_data_dict)))
+    num_to_eval = len(batch_img_indices)
     
-    # Row count check based on model params
-    params_path = repo_root / config['data']['paths']['models_dir'] / "nano_u_quant_params.json"
+    print(f"\nEvaluating batch '{dataset_batch}' ({num_to_eval} images) for {model_name}...")
+    
+    expected_h = config['data']['input_shape'][0]
     if params_path.exists():
         with open(params_path, 'r') as f:
             p_data = json.load(f)
             expected_h = p_data['output']['shape'][1]
-    else:
-        expected_h = config['data']['input_shape'][0]
 
-    for i in range(num_images):
-        raw_rows = img_data_dict[i]
+    for i_in_batch, i_global in enumerate(batch_img_indices):
+        raw_rows = img_data_dict[i_global]
         if len(raw_rows) != expected_h:
-            print(f"Warning: Image {i} has incomplete data ({len(raw_rows)}/{expected_h} rows), skipping.")
+            print(f"Warning: Image {i_global} has incomplete data, skipping.")
             continue
             
-        # Shape: (60, 80)
         out_i8 = np.stack(raw_rows, axis=0) 
-        # Add batch and channel back: (1, 60, 80, 1)
         out_i8 = np.expand_dims(np.expand_dims(out_i8, axis=0), axis=-1)
         
-        # Dequantize (i8 -> float logits)
         logits_f32 = (out_i8.astype(np.float32) - out_qzero) * out_qscale
-        
-        # Always treat as logits since our model builder uses 'linear' activation
-        # and our training uses BinaryCrossentropy(from_logits=True)
         logits = tf.convert_to_tensor(logits_f32, dtype=tf.float32)
         probs = sigmoid(logits)
             
-        masks_t = tf.convert_to_tensor(np.expand_dims(all_masks[i], 0), dtype=tf.float32)
+        masks_t = tf.convert_to_tensor(np.expand_dims(all_masks[i_in_batch], 0), dtype=tf.float32)
         
         bce = bce_loss_from_logits(masks_t, logits).numpy()
         d = dice_coef(masks_t, probs, threshold=None).numpy()
@@ -224,10 +213,13 @@ def evaluate_esp_outputs(img_data_dict, repo_root, threshold=0.4, samples_to_plo
         all_probs.append(probs.numpy()[0])
         all_preds_bin.append(preds_bin[0])
         
+    if not all_probs:
+        return None
+
     all_probs = np.stack(all_probs, axis=0)
     all_preds_bin = np.stack(all_preds_bin, axis=0)
-    all_masks = np.stack(all_masks[:num_images], axis=0)
-    all_imgs = np.stack(all_imgs[:num_images], axis=0)
+    all_masks = np.stack(all_masks, axis=0)
+    all_imgs = np.stack(all_imgs, axis=0)
     
     results = {
         'bce': float(mean_bce.result().numpy()),
@@ -239,18 +231,18 @@ def evaluate_esp_outputs(img_data_dict, repo_root, threshold=0.4, samples_to_plo
     }
     results['f1'] = 2 * results['precision'] * results['recall'] / (results['precision'] + results['recall'] + EPS)
     
-    print('\nESP32 On-Device Hardware Evaluation Results:')
+    print(f'Results for {dataset_batch}:')
     for k, v in results.items():
         print(f'  {k}: {v:.4f}')
         
     # Plotting
-    samples = min(samples_to_plot, num_images)
-    sample_indices = np.linspace(0, num_images - 1, samples, dtype=int)
+    samples = min(samples_to_plot, len(all_probs))
+    sample_indices = np.linspace(0, len(all_probs) - 1, samples, dtype=int)
     fig, axes = plt.subplots(samples, 4, figsize=(12, 3 * samples))
     mean_arr, std_arr = np.array(mean, dtype=np.float32), np.array(std, dtype=np.float32)
 
     for idx, i in enumerate(sample_indices):
-        img = np.clip((all_imgs[i] * std_arr) + mean_arr, 0.0, 1.0)
+        img_orig = np.clip((all_imgs[i] * std_arr) + mean_arr, 0.0, 1.0)
         mask = all_masks[i, ..., 0]
         prob = all_probs[i, ..., 0]
         pred_bin = all_preds_bin[i, ..., 0]
@@ -260,45 +252,46 @@ def evaluate_esp_outputs(img_data_dict, repo_root, threshold=0.4, samples_to_plo
         ax2 = axes[idx, 2] if samples > 1 else axes[2]
         ax3 = axes[idx, 3] if samples > 1 else axes[3]
 
-        ax0.imshow(img)
-        ax0.set_title(f'ESP Image {i}')
+        ax0.imshow(img_orig)
+        ax0.set_title(f'{dataset_batch} Img {i}')
         ax0.axis('off')
-
-        ax1.imshow(mask, cmap='gray')
-        ax1.set_title('Ground Truth')
-        ax1.axis('off')
-
-        im = ax2.imshow(prob, cmap='viridis', vmin=0, vmax=1)
-        ax2.set_title('ESP Predicted Prob')
-        ax2.axis('off')
-
-        ax3.imshow(pred_bin, cmap='gray')
-        ax3.set_title(f'ESP Pred (thr={threshold})')
-        ax3.axis('off')
+        ax1.imshow(mask, cmap='gray'); ax1.set_title('GT'); ax1.axis('off')
+        ax2.imshow(prob, cmap='viridis', vmin=0, vmax=1); ax2.set_title('Prob'); ax2.axis('off')
+        ax3.imshow(pred_bin, cmap='gray'); ax3.set_title('Pred'); ax3.axis('off')
 
     plt.tight_layout()
-    out_dir = repo_root / 'results' / 'nano_u_rust'
+    out_dir = repo_root / 'results' / f'{model_name}_rust'
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / 'esp32_hardware_eval.png'
+    out_path = out_dir / f'esp32_hw_eval_{dataset_batch}.png'
     plt.savefig(out_path, dpi=150)
-    print(f'\nHardware evaluation plot saved to {out_path}')
+    print(f'Plot saved to {out_path}')
     
-    with open(out_dir / 'hardware_metrics.json', 'w') as mf:
+    with open(out_dir / f'hw_metrics_{dataset_batch}.json', 'w') as mf:
         json.dump(results, mf, indent=2)
+    return results
 
 def main():
+    parser = argparse.ArgumentParser(description='Benchmark Nano-U model on ESP32 hardware')
+    parser.add_argument('model', choices=['nano_u', 'nano_u2'], default='nano_u', nargs='?', help='Model to benchmark')
+    args = parser.parse_args()
+
     repo_root = Path(__file__).parent.parent.resolve()
     print("==========================================")
-    print("ESP32 Hardware Benchmarking Pipeline")
+    print(f"ESP32 Dual-Dataset Benchmarking Pipeline ({args.model})")
     print("==========================================")
     
-    img_data = run_inference_on_device(repo_root)
+    img_data = run_inference_on_device(repo_root, model_name=args.model)
     if not img_data:
         print("Failed to collect inference data from ESP32.")
         sys.exit(1)
         
     print("\n[3/3] Dequantizing ESP32 outputs and calculating metrics...")
-    evaluate_esp_outputs(img_data, repo_root, threshold=0.4)
+    
+    # Evaluate Botanic Garden (0-49)
+    evaluate_esp_outputs(img_data, repo_root, model_name=args.model, dataset_batch="botanic_garden", start_idx=0, end_idx=50)
+    
+    # Evaluate TinyAgri (50-99)
+    evaluate_esp_outputs(img_data, repo_root, model_name=args.model, dataset_batch="tinyagri", start_idx=50, end_idx=100)
 
 if __name__ == '__main__':
     main()
