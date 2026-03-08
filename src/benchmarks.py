@@ -1,10 +1,19 @@
 """Performance benchmarking tools for Nano-U models."""
 
+import os
+import sys
 import time
 import numpy as np
 import tensorflow as tf
+import tf_keras as keras
+import tensorflow_model_optimization as tfmot
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
+
+# Allow running the script directly (python src/benchmarks.py)
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from src.utils.config import load_config
 from src.data import make_dataset
 import argparse
@@ -20,7 +29,10 @@ def benchmark_keras_inference(model_path: str,
     """Measure inference speed (latency and throughput) on a standard Keras model."""
     
     print(f"Loading Keras model: {model_path}")
-    model = tf.keras.models.load_model(model_path, compile=False)
+    from src.utils.metrics import BinaryIoU
+    with tfmot.quantization.keras.quantize_scope():
+        with keras.utils.custom_object_scope({'BinaryIoU': BinaryIoU}):
+            model = keras.models.load_model(model_path, compile=False)
     
     if dataset is not None:
         print(f"Benchmarking Keras model {Path(model_path).name} over provided test dataset...")
@@ -224,19 +236,25 @@ def run_benchmarks(model_name: str, config_path: str = "config/config.yaml") -> 
         config = load_config(config_path)
         models_dir = Path(config.get("data", {}).get("paths", {}).get("models_dir", "models"))
         
-        if model_name == "nano_u":
-            model_path = models_dir / f"{model_name}.tflite"
-            is_tflite = True
+        # Handle model_name as a full path or a name
+        input_path = Path(model_name)
+        if input_path.exists() and input_path.is_file():
+            model_path = input_path
+            is_tflite = model_path.suffix.lower() == ".tflite"
         else:
-            model_path = models_dir / f"{model_name}.keras"
-            is_tflite = False
-            
-        if not model_path.exists():
-            # Try fallback .h5 if .keras doesnt exist for keras
-            if not is_tflite and (models_dir / f"{model_name}.h5").exists():
-                model_path = models_dir / f"{model_name}.h5"
+            if model_name == "nano_u":
+                model_path = models_dir / f"{model_name}.tflite"
+                is_tflite = True
             else:
-                raise FileNotFoundError(f"Model file not found: {model_path}")
+                model_path = models_dir / f"{model_name}.h5"
+                is_tflite = False
+                
+            if not model_path.exists():
+                # Try fallback .keras if .h5 doesnt exist for keras
+                if not is_tflite and (models_dir / f"{model_name}.keras").exists():
+                    model_path = models_dir / f"{model_name}.keras"
+                else:
+                    raise FileNotFoundError(f"Model file not found: {model_path}")
             
         print(f"Benchmarking model: {model_path}")
         

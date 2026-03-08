@@ -62,3 +62,4 @@ esp_flash/.cargo/
 
 # data processing
 extract_botanicgarden.py
+extract_tinyagri.py 

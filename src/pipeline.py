@@ -1,5 +1,7 @@
 """Core pipeline functions: single training run, NAS search, quantize+benchmark helper."""
 
+import os
+import sys
 import json
 import shutil
 import traceback
@@ -10,6 +12,10 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 import yaml
 import tensorflow as tf
+
+# Allow running the script directly (python src/pipeline.py)
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.train import train_model
 from src.utils.config import load_config
@@ -35,7 +41,7 @@ def quantize_model_pipeline(
     model_dest = models_dir / keras_path.name
     tflite_path = models_dir / f"{model_name}.tflite"
 
-    # Copy .keras to models/
+    # Copy .h5 to models/
     if keras_path != model_dest:
         shutil.copy(keras_path, model_dest)
         print(f"Copied {keras_path.name} → {model_dest}")
@@ -97,7 +103,7 @@ def run_training_pipeline(
         )
 
         model_name = result.get("model_name", "model")
-        final_model_path = Path("models") / f"{model_name}.keras"
+        final_model_path = Path("models") / f"{model_name}.h5"
 
         results_path = pipeline_dir / "results.json"
         with open(results_path, "w") as f:

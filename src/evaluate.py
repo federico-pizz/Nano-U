@@ -2,7 +2,8 @@ import os
 import argparse
 import numpy as np
 import tensorflow as tf
-from tensorflow import keras
+import tf_keras as keras
+import tensorflow_model_optimization as tfmot
 
 # Allow running the script directly (python src/evaluate.py)
 # If executed directly, add project root so imports from `src` work.
@@ -39,16 +40,24 @@ def dice_coef(y_true, y_pred, threshold=None):
 
 
 def bce_loss_from_logits(y_true, logits):
-    bce = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+    bce = keras.losses.BinaryCrossentropy(from_logits=True)
     return bce(y_true, logits)
 
 
 def focal_loss_from_logits(y_true, logits, gamma=2.0, alpha=0.25):
-    # Implementation adapted for logits input
+    """Focal loss with correct asymmetric alpha weighting.
+    
+    alpha weights the positive class; (1 - alpha) weights the negative class.
+    This provides class-balance control, not just a loss scale.
+    """
     prob = tf.math.sigmoid(logits)
     y_true = tf.cast(y_true, tf.float32)
     pt = tf.where(tf.equal(y_true, 1.0), prob, 1.0 - prob)
-    loss = -alpha * tf.pow(1.0 - pt, gamma) * tf.math.log(pt + EPS)
+    # alpha_t: alpha for positives, (1-alpha) for negatives
+    alpha_t = tf.where(tf.equal(y_true, 1.0),
+                       tf.fill(tf.shape(y_true), alpha),
+                       tf.fill(tf.shape(y_true), 1.0 - alpha))
+    loss = -alpha_t * tf.pow(1.0 - pt, gamma) * tf.math.log(pt + EPS)
     return tf.reduce_mean(loss)
 
 
@@ -114,8 +123,8 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
     models_dir = resolve_path(config['data']['paths']['models_dir'])
     candidates = [
         os.path.join(models_dir, f"{model_name}.tflite"),
-        os.path.join(models_dir, f"{model_name}.keras"),
         os.path.join(models_dir, f"{model_name}.h5"),
+        os.path.join(models_dir, f"{model_name}.keras"),
     ]
 
     model_path = None
@@ -162,8 +171,9 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
 
             if found:
                 print(f'Found Keras model fallback: {found}. Loading it instead for evaluation.')
-                model = keras.models.load_model(found, compile=False)
-                model.summary()
+                with tfmot.quantization.keras.quantize_scope():
+                    with keras.utils.custom_object_scope({'BinaryIoU': BinaryIoU}):
+                        model = keras.models.load_model(found, compile=False)
                 interpreter = None
             else:
                 raise RuntimeError(
@@ -172,16 +182,18 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
                     'or place a Keras model file (one of .keras/.h5/.hdf5) alongside the .tflite file to be used as fallback.'
                 )
     else:
-        model = keras.models.load_model(model_path, compile=False)
-        model.summary()
+        print(f'Loading Keras model: {model_path}')
+        with tfmot.quantization.keras.quantize_scope():
+            with keras.utils.custom_object_scope({'BinaryIoU': BinaryIoU}):
+                model = keras.models.load_model(model_path, compile=False)
 
     # Trackers
-    mean_bce = tf.keras.metrics.Mean(name='bce')
-    mean_dice = tf.keras.metrics.Mean(name='dice')
-    mean_focal = tf.keras.metrics.Mean(name='focal')
+    mean_bce = keras.metrics.Mean(name='bce')
+    mean_dice = keras.metrics.Mean(name='dice')
+    mean_focal = keras.metrics.Mean(name='focal')
     iou_metric = BinaryIoU(threshold=threshold, name='binary_iou')
-    precision = tf.keras.metrics.Precision(name='precision')
-    recall = tf.keras.metrics.Recall(name='recall')
+    precision = keras.metrics.Precision(name='precision')
+    recall = keras.metrics.Recall(name='recall')
 
     all_probs = []
     all_preds_bin = []
@@ -253,7 +265,8 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
 
         # compute losses/metrics using logits where required
         bce = bce_loss_from_logits(masks, logits).numpy()
-        d = dice_coef(masks, probs, threshold=None).numpy()
+        # Binary Dice at the deployment threshold (not soft Dice)
+        d = dice_coef(masks, probs, threshold=threshold).numpy()
         f = focal_loss_from_logits(masks, logits).numpy()
 
         preds_bin = (probs.numpy() > threshold).astype(np.uint8)
@@ -355,7 +368,7 @@ if __name__ == '__main__':
     config_path = 'config/config.yaml'
     model_name = args.model
     batch_size = 8
-    threshold = 0.4
+    threshold = 0.5  # Must match the threshold used during training
     samples = 6
     out_path = None
     metrics_out = None

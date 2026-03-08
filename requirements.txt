@@ -4,9 +4,10 @@
 # CUDA: 13.1
 # GPU: NVIDIA GeForce RTX 5060 Laptop GPU
 # TensorFlow: 2.21.0-dev20260109
-# PyTorch: Not installed (add torch if needed)
 
 tensorflow
 numpy
 opencv-python
 PyYAML
+tensorflow-model-optimization
+tf_keras

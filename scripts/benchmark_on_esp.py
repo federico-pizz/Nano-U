@@ -9,6 +9,7 @@ import time
 import json
 import numpy as np
 import tensorflow as tf
+import tf_keras as keras
 from pathlib import Path
 
 # Add project root so imports from `src` work.
@@ -43,6 +44,11 @@ def run_inference_on_device(repo_root):
     img_data = {}
     
     num_images = 0
+    # Expected line length (IMG_W * 2) and row count (IMG_H)
+    config = load_config(str(repo_root / 'config/config.yaml'))
+    input_shape = config.get("data", {}).get("input_shape", [60, 80, 3])
+    expected_row_len = input_shape[1] * 2
+    expected_rows = input_shape[0]
     
     try:
         while True:
@@ -84,8 +90,8 @@ def run_inference_on_device(repo_root):
                         return img_data
                         
                     elif capturing:
-                        # This should be a hex string of length 160
-                        if len(line_str) == 160:
+                        # Dynamic hex string length checking
+                        if len(line_str) == expected_row_len:
                             # parse hex to int8
                             try:
                                 row_bytes = bytes.fromhex(line_str)
@@ -134,23 +140,38 @@ def evaluate_esp_outputs(img_data_dict, repo_root, threshold=0.4, samples_to_plo
     if not all_masks:
         raise RuntimeError("No test images loaded.")
         
-    # 2. Extract Dequantization Params from nano_u.tflite
-    model_path = repo_root / config['data']['paths']['models_dir'] / "nano_u.tflite"
-    interpreter = tf.lite.Interpreter(model_path=str(model_path))
-    interpreter.allocate_tensors()
-    out_det = interpreter.get_output_details()[0]
-    out_qscale, out_qzero = out_det['quantization']
-    if out_qscale == 0.0:
-        print("Warning: TFLite model output is not quantized or missing scale.")
-        out_qscale, out_qzero = 1.0, 0
+    # 2. Load Dequantization Params from nano_u_quant_params.json (most reliable)
+    params_path = repo_root / config['data']['paths']['models_dir'] / "nano_u_quant_params.json"
+    if params_path.exists():
+        with open(params_path, 'r') as f:
+            params = json.load(f)
+        out_qscale = params['output']['scale']
+        out_qzero = params['output']['zero_point']
+        print(f"Loaded dequant params from JSON: scale={out_qscale}, zp={out_qzero}")
+    else:
+        print(f"Warning: {params_path} not found, falling back to TFLite interpreter.")
+        model_path = repo_root / config['data']['paths']['models_dir'] / "nano_u.tflite"
+        interpreter = tf.lite.Interpreter(model_path=str(model_path))
+        interpreter.allocate_tensors()
+        out_det = interpreter.get_output_details()[0]
+        # Try both legacy and modern quantization param paths
+        out_qscale, out_qzero = out_det.get('quantization', (1.0, 0))
+        if out_qscale == 0.0:
+            q_params = out_det.get("quantization_parameters", {})
+            scales = q_params.get("scales", [])
+            zeros = q_params.get("zero_points", [])
+            if scales and zeros:
+                out_qscale, out_qzero = float(scales[0]), int(zeros[0])
+            else:
+                out_qscale, out_qzero = 1.0, 0
         
     # 3. Process ESP Outputs
-    mean_bce = tf.keras.metrics.Mean(name='bce')
-    mean_dice = tf.keras.metrics.Mean(name='dice')
-    mean_focal = tf.keras.metrics.Mean(name='focal')
+    mean_bce = keras.metrics.Mean(name='bce')
+    mean_dice = keras.metrics.Mean(name='dice')
+    mean_focal = keras.metrics.Mean(name='focal')
     iou_metric = BinaryIoU(threshold=threshold, name='binary_iou')
-    precision = tf.keras.metrics.Precision(name='precision')
-    recall = tf.keras.metrics.Recall(name='recall')
+    precision = keras.metrics.Precision(name='precision')
+    recall = keras.metrics.Recall(name='recall')
     
     all_probs = []
     all_preds_bin = []
@@ -158,10 +179,19 @@ def evaluate_esp_outputs(img_data_dict, repo_root, threshold=0.4, samples_to_plo
     num_images = min(len(img_data_dict), len(all_masks))
     print(f"\nEvaluating {num_images} images from ESP32...")
     
+    # Row count check based on model params
+    params_path = repo_root / config['data']['paths']['models_dir'] / "nano_u_quant_params.json"
+    if params_path.exists():
+        with open(params_path, 'r') as f:
+            p_data = json.load(f)
+            expected_h = p_data['output']['shape'][1]
+    else:
+        expected_h = config['data']['input_shape'][0]
+
     for i in range(num_images):
         raw_rows = img_data_dict[i]
-        if len(raw_rows) != 60:
-            print(f"Warning: Image {i} has incomplete data ({len(raw_rows)} rows), skipping.")
+        if len(raw_rows) != expected_h:
+            print(f"Warning: Image {i} has incomplete data ({len(raw_rows)}/{expected_h} rows), skipping.")
             continue
             
         # Shape: (60, 80)
@@ -169,17 +199,13 @@ def evaluate_esp_outputs(img_data_dict, repo_root, threshold=0.4, samples_to_plo
         # Add batch and channel back: (1, 60, 80, 1)
         out_i8 = np.expand_dims(np.expand_dims(out_i8, axis=0), axis=-1)
         
-        # Dequantize
-        out_f32 = (out_i8.astype(np.float32) - out_qzero) * out_qscale
+        # Dequantize (i8 -> float logits)
+        logits_f32 = (out_i8.astype(np.float32) - out_qzero) * out_qscale
         
-        # Determine if Prob or Logits
-        is_prob = out_f32.min() >= -1e-3 and out_f32.max() <= 1.0 + 1e-3
-        if is_prob:
-            probs = tf.convert_to_tensor(out_f32, dtype=tf.float32)
-            logits = tf.math.log(probs + EPS) - tf.math.log(1.0 - probs + EPS)
-        else:
-            logits = tf.convert_to_tensor(out_f32, dtype=tf.float32)
-            probs = sigmoid(logits)
+        # Always treat as logits since our model builder uses 'linear' activation
+        # and our training uses BinaryCrossentropy(from_logits=True)
+        logits = tf.convert_to_tensor(logits_f32, dtype=tf.float32)
+        probs = sigmoid(logits)
             
         masks_t = tf.convert_to_tensor(np.expand_dims(all_masks[i], 0), dtype=tf.float32)
         

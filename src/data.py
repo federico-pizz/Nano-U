@@ -5,18 +5,28 @@ import re
 import cv2
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import layers
+import tf_keras as keras
+layers = keras.layers
 from typing import List, Tuple, Optional, Union
 
 
 def sorted_by_frame(files: List[str]) -> List[str]:
-    """Sort files by frame number in filename."""
+    """Sort files by frame number. Matches build.rs logic: extracts the last underscore-separated integer."""
     def get_frame_number(filename: str) -> int:
-        if 'frame' in filename:
-            m = re.search(r'frame(\d+)', filename)
-        else:
-            m = re.search(r'mask(\d+)', filename)
-        return int(m.group(1)) if m else 0
+        # Ignore directory path and extension
+        name = os.path.splitext(os.path.basename(filename))[0]
+        # Split by underscore and try to parse the last part
+        parts = name.split('_')
+        if parts:
+            try:
+                # Try the last part (e.g. 014001)
+                return int(parts[-1])
+            except ValueError:
+                # Fallback to searching for any digits if the last part isn't an int
+                digits = re.findall(r'\d+', name)
+                if digits:
+                    return int(digits[-1])
+        return 0
     return sorted(files, key=get_frame_number)
 
 def _augment_pair(img, mask, flip_prob=0.5, max_rotation_deg=20, 

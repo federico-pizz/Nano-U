@@ -4,6 +4,7 @@ from .builders import (
     create_nano_u,
     create_bu_net,
 )
+from .factory import create_model_from_config
 from .utils import (
     count_parameters,
     get_model_summary,
@@ -14,6 +15,7 @@ from .utils import (
 __all__ = [
     "create_nano_u",
     "create_bu_net",
+    "create_model_from_config",
     "get_model_summary",
     "count_parameters",
     "validate_model_serialization",

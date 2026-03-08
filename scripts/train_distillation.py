@@ -60,11 +60,11 @@ def main():
 
     # ── Phase 3 & 4: Quantize + Benchmark ───
     print(f"\n─── Phase 3 & 4: Quantize + Benchmark ───")
-    student_src = Path(student_res["model_path"])
+    student_src = Path("models/nano_u.h5")
     if not student_src.exists():
         print(f"Student model not found at {student_src}")
     else:
-        print(f"Student model not found at {student_src}")
+        print(f"Student model found at {student_src}")
 
     quant_res = quantize_model_pipeline(str(student_src), models_dir=models_dir_path)
     
@@ -83,7 +83,7 @@ def main():
         # Evaluate Teacher
         teacher_path = Path(teacher_res["model_path"])
         teacher_stem = teacher_path.stem
-        teacher_eval_out = Path(models_dir_path) / f"{teacher_stem}_eval_plot.png"
+        teacher_eval_out = Path(teacher_res["pipeline_dir"]) / "eval_predictions.png"
         print(f"\nEvaluating Teacher ({teacher_stem})...")
         eval_results_teacher = evaluate_and_plot(
             model_name=teacher_stem,
@@ -97,7 +97,7 @@ def main():
             
         # Evaluate Student
         student_stem = student_src.stem
-        student_eval_out = Path(models_dir_path) / f"{student_stem}_eval_plot.png"
+        student_eval_out = Path(student_res["pipeline_dir"]) / "eval_predictions.png"
         print(f"\nEvaluating Student ({student_stem})...")
         eval_results_student = evaluate_and_plot(
             model_name=student_stem,
@@ -131,7 +131,7 @@ def main():
     if eval_results_all and 'student' in eval_results_all:
         print(f"   Test IoU:    {eval_results_all['student'].get('iou', 0):.4f}")
         print(f"   Teacher IoU: {eval_results_all.get('teacher', {}).get('iou', 0):.4f}")
-        print(f"   Plots saved: {models_dir_path}bu_net_eval_plot.png, {models_dir_path}nano_u_eval_plot.png")
+        print(f"   Plots saved: {teacher_res['pipeline_dir']}/eval_predictions.png, {student_res['pipeline_dir']}/eval_predictions.png")
     print(f"{'='*55}\n")
 
 

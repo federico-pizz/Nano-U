@@ -1,21 +1,23 @@
 import tensorflow as tf
+import tf_keras as keras
 
-class BinaryIoU(tf.keras.metrics.Metric):
-    def __init__(self, threshold=0.5, name="binary_iou", **kwargs):
+class BinaryIoU(keras.metrics.Metric):
+    def __init__(self, threshold=0.5, from_logits=False, name="binary_iou", **kwargs):
         super().__init__(name=name, **kwargs)
         self.threshold = threshold
+        self.from_logits = from_logits
         self.tp = self.add_weight(name="tp", initializer="zeros")
         self.fp = self.add_weight(name="fp", initializer="zeros")
         self.fn = self.add_weight(name="fn", initializer="zeros")
 
     def update_state(self, y_true, y_pred, sample_weight=None):
-        # Auto-detect logits: if values are outside [0.0, 1.0], apply sigmoid
-        # Use graph-compatible operations
-        max_val = tf.reduce_max(y_pred)
-        min_val = tf.reduce_min(y_pred)
-        is_logit = tf.logical_or(min_val < -0.1, max_val > 1.1)
-        
-        y_pred = tf.where(is_logit, tf.nn.sigmoid(y_pred), y_pred)
+        # Convert logits → probabilities if the caller said so explicitly,
+        # otherwise use the values as probabilities directly.
+        # The previous auto-detection via per-batch min/max was unreliable:
+        # early-training logits can fall inside [-0.1, 1.1] and be silently
+        # treated as probabilities, giving garbage IoU values.
+        if self.from_logits:
+            y_pred = tf.nn.sigmoid(y_pred)
         y_pred = tf.cast(y_pred > self.threshold, tf.float32)
         y_true = tf.cast(y_true > 0.5, tf.float32)
         tp = tf.reduce_sum(y_true * y_pred)
@@ -26,6 +28,7 @@ class BinaryIoU(tf.keras.metrics.Metric):
         self.fn.assign_add(fn)
 
     def result(self):
+        # Micro-averaged Jaccard index across all accumulated batches
         denom = self.tp + self.fp + self.fn + 1e-7
         return self.tp / denom
 
@@ -33,3 +36,8 @@ class BinaryIoU(tf.keras.metrics.Metric):
         self.tp.assign(0.0)
         self.fp.assign(0.0)
         self.fn.assign(0.0)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"threshold": self.threshold, "from_logits": self.from_logits})
+        return config

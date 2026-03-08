@@ -3,22 +3,23 @@ import sys
 import argparse
 import numpy as np
 import tensorflow as tf
-from tensorflow import keras
+import tf_keras as keras
 from typing import Dict, Optional, Tuple, List, Any, Union
 from pathlib import Path
 from datetime import datetime
 import yaml
 import json
 import traceback
+import tensorflow_model_optimization as tfmot
 
 # Allow running the script directly (python src/train.py)
-# If executed directly, add project root so absolute imports from `src` work.
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.models import create_nano_u, create_bu_net
+from src.models import create_nano_u, create_bu_net, create_model_from_config
 from src.utils import BinaryIoU
 from src.utils.config import load_config
+from src.utils.qat import apply_qat_to_model
 from src.data import make_dataset
 from src.nas import NASCallback as NASMonitorCallback
 
@@ -52,24 +53,6 @@ def _get_config(full_config: Dict[str, Any], experiment_name: str) -> Dict[str, 
                    f"Top-level keys: {list(full_config.keys())}")
 
 
-def create_model_from_config(config: Dict[str, Any]) -> keras.Model:
-    """Create model architecture based on config."""
-    model_name = config.get("model_name", "nano_u")
-    
-    # Extract structural params if they exist in config
-    filters = config.get("filters", None)
-    bottleneck = config.get("bottleneck", None)
-    input_shape = config.get("input_shape", (120, 160, 3))
-    
-    # Handle list to tuple conversion if necessary
-    if isinstance(input_shape, list):
-        input_shape = tuple(input_shape)
-        
-    if model_name == "bu_net":
-        return create_bu_net(input_shape=input_shape, filters=filters, bottleneck=bottleneck, name=model_name)
-    else:
-        return create_nano_u(input_shape=input_shape, filters=filters, bottleneck=bottleneck, name=model_name)
-
 
 def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tensor, y: tf.Tensor,
                optimizer: keras.optimizers.Optimizer, alpha: float = 0.3, temperature: float = 4.0,
@@ -91,9 +74,9 @@ def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tenso
         Dictionary of loss components
     """
     if bce_loss_fn is None:
-        bce_loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+        bce_loss_fn = keras.losses.BinaryCrossentropy(from_logits=True)
     if mse_loss_fn is None:
-        mse_loss_fn = tf.keras.losses.MeanSquaredError()
+        mse_loss_fn = keras.losses.MeanSquaredError()
 
     with tf.GradientTape() as tape:
         # Forward pass
@@ -166,7 +149,7 @@ def train_single_model(
     model.compile(
         optimizer=optimizer,
         loss=keras.losses.BinaryCrossentropy(from_logits=True),
-        metrics=[BinaryIoU(threshold=0.5)]
+        metrics=[BinaryIoU(threshold=0.5, from_logits=True)]
     )
     
     # Setup callbacks
@@ -183,9 +166,9 @@ def train_single_model(
         )
     
     output_dir = experiment_dir
-    # Model checkpoint - always save as temp_model.keras in models/
+    # Model checkpoint - always save as temp_model.h5 in models/
     Path("models").mkdir(parents=True, exist_ok=True)
-    checkpoint_path = os.path.join("models", "temp_model.keras")
+    checkpoint_path = os.path.join("models", "temp_model.h5")
     
     callbacks.append(
         keras.callbacks.ModelCheckpoint(
@@ -283,9 +266,9 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
     learning_rate = config.get('learning_rate', 0.0005)
     optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
     
-    # Model checkpoint - always save as temp_model.keras in models/
+    # Model checkpoint - always save as temp_model.h5 in models/
     Path("models").mkdir(parents=True, exist_ok=True)
-    checkpoint_path = os.path.join("models", "temp_model.keras")
+    checkpoint_path = os.path.join("models", "temp_model.h5")
     
     output_dir = experiment_dir
     
@@ -336,9 +319,9 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
         
         # Training loop
         # Loss objects and metrics
-        bce_loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-        mse_loss_fn = tf.keras.losses.MeanSquaredError()
-        val_iou_metric = BinaryIoU(threshold=0.5)
+        bce_loss_fn = keras.losses.BinaryCrossentropy(from_logits=True)
+        mse_loss_fn = keras.losses.MeanSquaredError()
+        val_iou_metric = BinaryIoU(threshold=0.5, from_logits=True)
 
         history: Dict[str, List[float]] = {
             'loss': [],
@@ -602,27 +585,58 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
                 print(f"Teacher weights not found at: {teacher_weights}. Using random initialization.")
                 
             student = create_model_from_config(config)
-            
+
+            # Apply QAT (Quantization-Aware Training) to the student model
+            qat_enabled = config.get("qat_enabled", True)
+            if qat_enabled:
+                print("Applying Quantization-Aware Training (QAT) to student model...")
+                student = apply_qat_to_model(student)
+
             # Distillation can now correctly handle tf.data.Dataset transparently
             history = train_with_distillation(student, teacher, config, train_data, val_data, experiment_dir=str(experiment_dir))
             model_to_save = student
+            is_qat_model = qat_enabled
         else:
             model = create_model_from_config(config)
+
+            # Apply QAT only to nano_u (the student / deployment model).
+            # TFMOT requires a Sequential or Functional model; bu_net and other
+            # custom subclasses are not compatible and must skip QAT.
+            model_name = config.get("model_name", "nano_u")
+            qat_enabled = config.get("qat_enabled", True) and model_name == "nano_u"
+            if qat_enabled:
+                print("Applying Quantization-Aware Training (QAT) to model...")
+                model = apply_qat_to_model(model)
+
             # fit handles both (x, y) and dataset
             history = train_single_model(model, config, train_data, val_data, experiment_dir=str(experiment_dir))
             model_to_save = model
+            is_qat_model = qat_enabled
+
         
         # Restore best weights before saving if they exist
-        temp_checkpoint = "models/temp_model.keras"
+        temp_checkpoint = "models/temp_model.h5"
         if os.path.exists(temp_checkpoint):
             print(f"Loading best weights from {temp_checkpoint} for final save...")
             model_to_save.load_weights(temp_checkpoint)
 
         Path("models").mkdir(parents=True, exist_ok=True)
         model_name = config.get('model_name', 'model')
-        model_path = Path("models") / f"{model_name}.keras"
-        model_to_save.save(model_path)
-        
+        model_path = Path("models") / f"{model_name}.h5"
+
+        if is_qat_model:
+            # Strip the QAT annotation wrappers and save a plain float model.
+            # The TFLite converter in quantize_model.py will then apply PTQ
+            # (post-training quantization) on top of the QAT-trained weights,
+            if hasattr(model_to_save, "_is_qat_model") and model_to_save._is_qat_model:
+                print("QAT detected — saving model with quantization wrappers...")
+                model_to_save.save(model_path)
+                print(f"QAT model saved to {model_path}")
+            else:
+                model_to_save.save(model_path)
+        else:
+            model_to_save.save(model_path)
+
         if os.path.exists(temp_checkpoint):
             os.remove(temp_checkpoint)
         

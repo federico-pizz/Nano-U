@@ -2,6 +2,7 @@
 
 import random
 import tensorflow as tf
+import tf_keras as keras
 import numpy as np
 from typing import Any, Callable, Dict, List, Optional, Tuple, DefaultDict, Union
 from collections import defaultdict
@@ -55,7 +56,7 @@ def compute_layer_redundancy(activations: tf.Tensor, eps: float = 1e-6) -> Dict[
     }
 
 
-def extract_activations(model: tf.keras.Model, layer_names: List[str], 
+def extract_activations(model: keras.Model, layer_names: List[str], 
                        x: tf.Tensor) -> Dict[str, tf.Tensor]:
     """Extract activations from specified layers.
     
@@ -69,7 +70,7 @@ def extract_activations(model: tf.keras.Model, layer_names: List[str],
     """
     # Create intermediate model
     layer_outputs = [model.get_layer(name).output for name in layer_names]
-    intermediate_model = tf.keras.Model(inputs=model.input, outputs=layer_outputs)
+    intermediate_model = keras.Model(inputs=model.input, outputs=layer_outputs)
     
     # Get activations
     activations = intermediate_model(x)
@@ -77,7 +78,7 @@ def extract_activations(model: tf.keras.Model, layer_names: List[str],
     return dict(zip(layer_names, activations))
 
 
-def compute_nas_metrics(model: tf.keras.Model, x: tf.Tensor, 
+def compute_nas_metrics(model: keras.Model, x: tf.Tensor, 
                        layers_to_monitor: List[str]) -> Dict[str, Dict[str, float]]:
     """Compute NAS metrics for all specified layers.
     
@@ -100,7 +101,7 @@ def compute_nas_metrics(model: tf.keras.Model, x: tf.Tensor,
     return metrics
 
 
-def analyze_model_redundancy(model: tf.keras.Model, x: tf.Tensor,
+def analyze_model_redundancy(model: keras.Model, x: tf.Tensor,
                             layers_to_monitor: Optional[List[str]] = None) -> Dict[str, Any]:
     """Analyze model redundancy across specified layers.
     
@@ -115,8 +116,8 @@ def analyze_model_redundancy(model: tf.keras.Model, x: tf.Tensor,
     if layers_to_monitor is None:
         # Default to monitoring all conv layers
         layers_to_monitor = [layer.name for layer in model.layers 
-                           if isinstance(layer, (tf.keras.layers.Conv2D, 
-                                                 tf.keras.layers.DepthwiseConv2D))]
+                           if isinstance(layer, (keras.layers.Conv2D, 
+                                                 keras.layers.DepthwiseConv2D))]
     
     # Compute metrics
     metrics = compute_nas_metrics(model, x, layers_to_monitor)
@@ -144,7 +145,7 @@ def analyze_model_redundancy(model: tf.keras.Model, x: tf.Tensor,
     }
 
 
-class NASCallback(tf.keras.callbacks.Callback):
+class NASCallback(keras.callbacks.Callback):
     """Lightweight NAS monitoring: logs redundancy metrics at end of each epoch."""
 
     def __init__(
@@ -211,17 +212,41 @@ class NASCallback(tf.keras.callbacks.Callback):
         row: Dict[str, Union[int, str, float]] = {"epoch" if isinstance(identifier, int) else "step": identifier}
         for name in self.layers_to_monitor:
             try:
-                layer = self.model.get_layer(name)
+                # 1. Try exact match
+                # 2. Try 'quant_' prefix (TFMOT default)
+                # 3. Try finding any layer that contains the name
+                layer = None
+                for candidate in [name, f"quant_{name}"]:
+                    try:
+                        layer = self.model.get_layer(candidate)
+                        break
+                    except (ValueError, KeyError):
+                        continue
+                
+                if layer is None:
+                    # Final attempt: partial match
+                    for l in self.model.layers:
+                        if name in l.name:
+                            layer = l
+                            break
+                
+                if layer is None:
+                    raise KeyError(f"Layer '{name}' (or 'quant_{name}') not found")
+
                 # Ensure we handle functional model correctly
-                inter = tf.keras.Model(inputs=self.model.input, outputs=layer.output)
+                inter = keras.Model(inputs=self.model.input, outputs=layer.output)
                 act = inter(x_batch, training=False)
                 r = compute_layer_redundancy(act)
                 row[f"{name}_redundancy_score"] = r["redundancy_score"]
                 row[f"{name}_condition_number"] = r["condition_number"]
                 row[f"{name}_rank"] = float(r["rank"])
                 row[f"{name}_num_channels"] = float(r["num_channels"])
-            except (ValueError, KeyError) as e:
-                print(f"⚠️ NAS monitor skipping layer {name}: {e}")
+            except Exception as e:
+                if not hasattr(self, "_skipped_layers"):
+                    self._skipped_layers = set()
+                if name not in self._skipped_layers:
+                    print(f"NAS monitor skipping layer {name}: {e}")
+                    self._skipped_layers.add(name)
                 continue
                 
         self.redundancy_history.append(row)

@@ -43,8 +43,8 @@ models:
     
   # Student Model (Nano_U) - Ultra-light model for embedded deployment
   nano_u:
-    filters: [4, 8, 16] # Encoder filters (reduced)
-    bottleneck: 32
+    filters: [4, 8, 16]
+    bottleneck: 16
     decoder_filters: [16, 8, 4]
 
 
@@ -55,7 +55,7 @@ training:
   
   # Teacher (BU_Net) training config
   bu_net:
-    epochs: 120
+    epochs: 150
     batch_size: 16
     learning_rate: 1e-3
     weight_decay: 1e-3
@@ -65,14 +65,15 @@ training:
 
   # Student (Nano_U) training config
   nano_u:
-    epochs: 100 
+    epochs: 100
     batch_size: 8
-    learning_rate: 5e-4
-    weight_decay: 1e-4
+    learning_rate: 1e-3
+    weight_decay: 1e-3
     optimizer: "adamw"
     loss: "binary_crossentropy"
     augment: true
     use_nas: true
+    qat_enabled: true   # Quantization-Aware Training — set to false to disable
     layers_to_monitor: ['enc1a_dw', 'bottleneck_a_dw', 'dec2_conv_b_pw']
     
     # Knowledge Distillation settings
