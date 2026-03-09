@@ -143,7 +143,13 @@ def train_single_model(
     learning_rate = float(config.get('learning_rate', 0.001))
     
     # Create optimizer
-    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+    weight_decay = float(config.get('weight_decay', 0.0))
+    optimizer_type = config.get('optimizer', 'adam').lower()
+    
+    if optimizer_type == 'adamw' or weight_decay > 0:
+        optimizer = keras.optimizers.AdamW(learning_rate=learning_rate, weight_decay=weight_decay)
+    else:
+        optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
     
     # Compile model
     model.compile(
@@ -175,6 +181,7 @@ def train_single_model(
             filepath=checkpoint_path,
             save_best_only=True,
             monitor='val_loss',
+            mode='min',
             verbose=1
         )
     )
@@ -207,6 +214,8 @@ def train_single_model(
     print(f"Parameters: {model.count_params():,}")
     print(f"Batch size: {batch_size}")
     print(f"Learning rate: {learning_rate}")
+    if weight_decay > 0:
+        print(f"Weight decay: {weight_decay}")
     
     # Fit — accept both tf.data.Dataset and (x, y) tuple
     is_dataset = isinstance(train_data, tf.data.Dataset)
@@ -264,7 +273,13 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
     
     # Create optimizer
     learning_rate = config.get('learning_rate', 0.0005)
-    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+    weight_decay = float(config.get('weight_decay', 0.0))
+    optimizer_type = config.get('optimizer', 'adam').lower()
+    
+    if optimizer_type == 'adamw' or weight_decay > 0:
+        optimizer = keras.optimizers.AdamW(learning_rate=learning_rate, weight_decay=weight_decay)
+    else:
+        optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
     
     # Model checkpoint - always save as temp_model.h5 in models/
     Path("models").mkdir(parents=True, exist_ok=True)
@@ -279,6 +294,8 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
     print(f"Parameters: {student.count_params():,}")
     print(f"Alpha: {alpha}, Temperature: {temperature}")
     print(f"Learning rate: {learning_rate}")
+    if weight_decay > 0:
+        print(f"Weight decay: {weight_decay}")
     
     try:
         # Custom training loop for distillation

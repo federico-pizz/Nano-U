@@ -75,6 +75,7 @@ training:
     optimizer: "adamw"
     loss: "binary_crossentropy" 
     augment: true
+    early_stopping: true
 
   # Student (Nano_U) training config
   nano_u:
@@ -85,6 +86,7 @@ training:
     optimizer: "adamw"
     loss: "binary_crossentropy"
     augment: true
+    early_stopping: true
     use_nas: true
     qat_enabled: true   # Quantization-Aware Training — set to false to disable
     layers_to_monitor: ['enc1a_dw', 'bottleneck_a_dw', 'dec2_conv_b_pw']
