@@ -29,17 +29,31 @@ def sorted_by_frame(files: List[str]) -> List[str]:
         return 0
     return sorted(files, key=get_frame_number)
 
-def _augment_pair(img, mask, flip_prob=0.5, max_rotation_deg=20, 
-                  brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05):
-    """Apply random augmentations to an image-mask pair."""
-    if not hasattr(_augment_pair, "_flip"):
-        _augment_pair._flip = layers.RandomFlip("horizontal")
-        _augment_pair._rotate = layers.RandomRotation(factor=max_rotation_deg/360.0, fill_mode="reflect")
+def augment_pair(
+    img,
+    mask,
+    flip_prob: float = 0.5,
+    max_rotation_deg: float = 20.0,
+    brightness: float = 0.2,
+    contrast: float = 0.2,
+    saturation: float = 0.2,
+    hue: float = 0.05,
+):
+    """Apply random augmentations to an image–mask pair.
+
+    Supported knobs (kept in sync with `make_dataset`):
+      - flip_prob: probability of horizontal flip
+      - max_rotation_deg: maximum rotation in degrees
+      - brightness, contrast, saturation, hue: color jitter parameters
+    """
+    if not hasattr(augment_pair, "_flip"):
+        augment_pair._flip = layers.RandomFlip("horizontal")
+        augment_pair._rotate = layers.RandomRotation(factor=max_rotation_deg/360.0, fill_mode="reflect")
     
     concat = tf.concat([img, mask], axis=-1)
     do_flip = tf.less(tf.random.uniform([]), flip_prob)
-    concat = tf.cond(do_flip, lambda: _augment_pair._flip(concat, training=True), lambda: concat)
-    concat = _augment_pair._rotate(concat, training=True)
+    concat = tf.cond(do_flip, lambda: augment_pair._flip(concat, training=True), lambda: concat)
+    concat = augment_pair._rotate(concat, training=True)
     
     img = concat[..., :3]
     mask = concat[..., 3:4]
@@ -60,7 +74,12 @@ def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 
                  mean: Union[List[float], np.ndarray] = [0.5, 0.5, 0.5],
                  std: Union[List[float], np.ndarray] = [0.5, 0.5, 0.5],
                  **augment_kwargs) -> tf.data.Dataset:
-    """Create a TensorFlow dataset from image and mask files."""
+    """Create a TensorFlow dataset from image and mask files.
+
+    Any extra keyword arguments are forwarded to `augment_pair` when
+    `augment=True`. Unknown keys raise a ValueError early so that typos in
+    config do not silently get ignored.
+    """
     img_files = sorted_by_frame(img_files)
     mask_files = sorted_by_frame(mask_files)
     
@@ -72,8 +91,22 @@ def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 
     mean_tf = tf.constant(mean, dtype=tf.float32)
     std_tf = tf.constant(std, dtype=tf.float32)
     
-    # Store standard specific values to avoid kwargs pass-through conflicts
-    augment_args = augment_kwargs.copy()
+    # Only allow kwargs that `_augment_pair` actually supports.
+    allowed_augment_keys = {
+        "flip_prob",
+        "max_rotation_deg",
+        "brightness",
+        "contrast",
+        "saturation",
+        "hue",
+    }
+    unknown_keys = set(augment_kwargs) - allowed_augment_keys
+    if unknown_keys:
+        raise ValueError(
+            f"Unknown augmentation kwargs {sorted(unknown_keys)}; "
+            f"allowed keys are {sorted(allowed_augment_keys)}"
+        )
+    augment_args = {k: v for k, v in augment_kwargs.items() if k in allowed_augment_keys}
 
     def _load_pair_tf(img_path, mask_path):
         img_bytes = tf.io.read_file(img_path)
@@ -100,7 +133,7 @@ def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 
     ds = ds.map(_load_pair_tf, num_parallel_calls=tf.data.AUTOTUNE)
     
     if augment:
-        ds = ds.map(lambda i, m: _augment_pair(i, m, **augment_args), 
+        ds = ds.map(lambda i, m: augment_pair(i, m, **augment_args), 
                     num_parallel_calls=tf.data.AUTOTUNE)
                     
     ds = ds.map(_normalize, num_parallel_calls=tf.data.AUTOTUNE)

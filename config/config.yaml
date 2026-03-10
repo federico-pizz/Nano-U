@@ -68,42 +68,51 @@ training:
   
   # Teacher (BU_Net) training config
   bu_net:
-    epochs: 150
-    batch_size: 16
+    epochs: 100
+    batch_size: 32
     learning_rate: 1e-3
     weight_decay: 1e-3
     optimizer: "adamw"
     loss: "binary_crossentropy" 
     augment: true
     early_stopping: true
+    patience: 20
+    lr_scheduler: "plateau"
+    lr_plateau_patience: 10
+    lr_plateau_factor: 0.2
+    min_lr: 1e-6
 
   # Student (Nano_U) training config
   nano_u:
     epochs: 100
-    batch_size: 8
+    batch_size: 16
     learning_rate: 1e-3
-    weight_decay: 1e-3
+    weight_decay: 1e-4
     optimizer: "adamw"
     loss: "binary_crossentropy"
     augment: true
     early_stopping: true
+    patience: 20
     use_nas: true
-    qat_enabled: true   # Quantization-Aware Training — set to false to disable
+    qat_enabled: true
+    lr_scheduler: "plateau"
+    lr_plateau_patience: 10
+    lr_plateau_factor: 0.2
+    min_lr: 1e-6
     layers_to_monitor: ['enc1a_dw', 'bottleneck_a_dw', 'dec2_conv_b_pw']
     
     # Knowledge Distillation settings
     distillation:
       enabled: true
       teacher_weights: "models/bu_net.keras"
-      alpha: 0.3        # Weight for student loss (1-alpha for teacher loss); lower => more teacher influence
+      alpha: 0.5        # Weight for student loss (1-alpha for teacher loss); lower => more teacher influence
       temperature: 4.0  # Higher temperature to soften teacher distribution for richer distillation gradients
 
   # Fine-tuning config for nano_u2
   nano_u_fine_tune:
-    epochs: 10
-    learning_rate: 5e-5
+    epochs: 50
+    learning_rate: 1e-4
     batch_size: 32
-
 
 
 # Quantization settings (TFLite)

@@ -101,50 +101,6 @@ def compute_nas_metrics(model: keras.Model, x: tf.Tensor,
     return metrics
 
 
-def analyze_model_redundancy(model: keras.Model, x: tf.Tensor,
-                            layers_to_monitor: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Analyze model redundancy across specified layers.
-    
-    Args:
-        model: Keras model
-        x: Input batch for analysis
-        layers_to_monitor: List of layer names to monitor (defaults to conv layers)
-    
-    Returns:
-        Dictionary with comprehensive redundancy analysis
-    """
-    if layers_to_monitor is None:
-        # Default to monitoring all conv layers
-        layers_to_monitor = [layer.name for layer in model.layers 
-                           if isinstance(layer, (keras.layers.Conv2D, 
-                                                 keras.layers.DepthwiseConv2D))]
-    
-    # Compute metrics
-    metrics = compute_nas_metrics(model, x, layers_to_monitor)
-    
-    # Aggregate statistics
-    redundancy_scores = [m['redundancy_score'] for m in metrics.values()]
-    condition_numbers = [m['condition_number'] for m in metrics.values()]
-    ranks = [m['rank'] for m in metrics.values()]
-    
-    return {
-        'layer_metrics': metrics,
-        'aggregate': {
-            'average_redundancy': float(np.mean(redundancy_scores)),
-            'min_redundancy': float(np.min(redundancy_scores)),
-            'max_redundancy': float(np.max(redundancy_scores)),
-            'average_condition_number': float(np.mean(condition_numbers)),
-            'min_condition_number': float(np.min(condition_numbers)),
-            'max_condition_number': float(np.max(condition_numbers)),
-            'average_rank': float(np.mean(ranks)),
-            'min_rank': float(np.min(ranks)),
-            'max_rank': float(np.max(ranks))
-        },
-        'layers_monitored': layers_to_monitor,
-        'batch_size': int(x.shape[0])
-    }
-
-
 class NASCallback(keras.callbacks.Callback):
     """Lightweight NAS monitoring: logs redundancy metrics at end of each epoch."""
 
@@ -300,18 +256,3 @@ def validate_nas_computation() -> bool:
     except Exception as e:
         print(f"NAS validation failed: {e}")
         return False
-
-
-def get_nas_summary(metrics: Dict[str, Dict[str, float]]) -> str:
-    """Get formatted NAS summary."""
-    summary = []
-    summary.append("=== NAS Analysis Summary ===")
-    
-    for layer_name, layer_metrics in metrics.items():
-        summary.append(f"\n{layer_name}:")
-        summary.append(f"  Redundancy Score: {layer_metrics['redundancy_score']:.4f}")
-        summary.append(f"  Condition Number: {layer_metrics['condition_number']:.2f}")
-        summary.append(f"  Rank: {layer_metrics['rank']}/{layer_metrics['num_channels']}")
-    
-    return "\n".join(summary)
-    

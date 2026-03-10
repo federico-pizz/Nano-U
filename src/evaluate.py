@@ -12,6 +12,7 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Local utilities
+from src.models import PadToMatch
 from src.utils import get_project_root, BinaryIoU
 from src.data import make_dataset, sorted_by_frame
 from src.utils.config import load_config
@@ -172,7 +173,7 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
             if found:
                 print(f'Found Keras model fallback: {found}. Loading it instead for evaluation.')
                 with tfmot.quantization.keras.quantize_scope():
-                    with keras.utils.custom_object_scope({'BinaryIoU': BinaryIoU}):
+                    with keras.utils.custom_object_scope({'BinaryIoU': BinaryIoU, 'PadToMatch': PadToMatch}):
                         model = keras.models.load_model(found, compile=False)
                 interpreter = None
             else:
@@ -184,7 +185,7 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
     else:
         print(f'Loading Keras model: {model_path}')
         with tfmot.quantization.keras.quantize_scope():
-            with keras.utils.custom_object_scope({'BinaryIoU': BinaryIoU}):
+            with keras.utils.custom_object_scope({'BinaryIoU': BinaryIoU, 'PadToMatch': PadToMatch}):
                 model = keras.models.load_model(model_path, compile=False)
 
     # Trackers

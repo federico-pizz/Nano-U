@@ -12,6 +12,18 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 import yaml
 import tensorflow as tf
+import numpy as np
+
+class NumpyEncoder(json.JSONEncoder):
+    """Custom JSON encoder for NumPy types."""
+    def default(self, obj):
+        if isinstance(obj, (np.float32, np.float64)):
+            return float(obj)
+        if isinstance(obj, (np.int32, np.int64)):
+            return int(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NumpyEncoder, self).default(obj)
 
 # Allow running the script directly (python src/pipeline.py)
 if __name__ == "__main__" and __package__ is None:
@@ -107,7 +119,7 @@ def run_training_pipeline(
 
         results_path = pipeline_dir / "results.json"
         with open(results_path, "w") as f:
-            json.dump(result, f, indent=2)
+            json.dump(result, f, indent=2, cls=NumpyEncoder)
 
         return {
             "status": "success",

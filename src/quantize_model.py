@@ -10,7 +10,7 @@ import json
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.models.utils import convert_to_tflite_quantized
+from src.models import convert_to_tflite_quantized, PadToMatch
 from typing import Optional, Type, Tuple
 from src.utils.config import load_config
 import cv2
@@ -95,7 +95,7 @@ def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tupl
 
     try:
         # 1. Custom objects for metrics
-        custom_objects = {"BinaryIoU": _BinaryIoU} if _BinaryIoU else {}
+        custom_objects = {"BinaryIoU": _BinaryIoU, "PadToMatch": PadToMatch} if _BinaryIoU else {"PadToMatch": PadToMatch}
         
         # 2. Add tfmot objects to custom_objects for QAT models
         with tfmot.quantization.keras.quantize_scope():
@@ -111,15 +111,13 @@ def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tupl
     
     config = load_config()
     
-    # Use secondary dataset if quantizing nano_u2
+    # Use secondary dataset if quantizing nano_u2, otherwise use the primary
+    # processed dataset. Both branches share the same lookup logic; only the
+    # source subtree differs.
     is_secondary = "nano_u2" in model_path
     data_paths = config.get("data", {}).get("paths", {})
     data_cfg = data_paths.get("secondary" if is_secondary else "processed", {})
-    
-    if is_secondary:
-        train_img_dir = data_cfg.get("train", {}).get("img", "")
-    else:
-        train_img_dir = data_cfg.get("train", {}).get("img", "")
+    train_img_dir = data_cfg.get("train", {}).get("img", "")
         
     mean = np.array(config.get("data", {}).get("normalization", {}).get("mean", [0.5, 0.5, 0.5]), dtype=np.float32)
     std = np.array(config.get("data", {}).get("normalization", {}).get("std", [0.5, 0.5, 0.5]), dtype=np.float32)
@@ -158,17 +156,18 @@ def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tupl
     success = convert_to_tflite_quantized(model, output_path, representative_data_gen)
 
     if success:
-        # ── Extract actual quant params from the produced .tflite ────────────
+        # Extract actual quant params from the produced .tflite and persist
+        # them for the Rust build script.
         params = extract_quant_params(output_path)
-
+    
         params_path = os.path.splitext(output_path)[0] + "_quant_params.json"
         with open(params_path, "w") as f:
             json.dump(params, f, indent=2)
-
-        print(f"\nQuantization parameters extracted and saved to {params_path}")
-        print(f"   input  → scale={params['input']['scale']}, zero_point={params['input']['zero_point']}")
-        print(f"   output → scale={params['output']['scale']}, zero_point={params['output']['zero_point']}")
-        print(f"\nThese values will be picked up by esp_flash/build.rs automatically.")
+    
+        print(
+            f"\n[QUANT] Saved quantization metadata to {params_path} "
+            f"(input_scale={params['input']['scale']}, output_scale={params['output']['scale']})"
+        )
 
     return success
 

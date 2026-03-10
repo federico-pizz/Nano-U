@@ -11,6 +11,18 @@ import yaml
 import json
 import traceback
 import tensorflow_model_optimization as tfmot
+import numpy as np
+
+class NumpyEncoder(json.JSONEncoder):
+    """Custom JSON encoder for NumPy types."""
+    def default(self, obj):
+        if isinstance(obj, (np.float32, np.float64)):
+            return float(obj)
+        if isinstance(obj, (np.int32, np.int64)):
+            return int(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NumpyEncoder, self).default(obj)
 
 # Allow running the script directly (python src/train.py)
 if __name__ == "__main__" and __package__ is None:
@@ -49,11 +61,24 @@ def _get_config(full_config: Dict[str, Any], experiment_name: str) -> Dict[str, 
     if experiment_name in full_config:
         return full_config[experiment_name]
     
-    raise KeyError(f"Experiment/Model '{experiment_name}' not found in config. "
-                   f"Top-level keys: {list(full_config.keys())}")
+    raise KeyError(
+        f"Experiment/Model '{experiment_name}' not found in config. "
+        f"Top-level keys: {list(full_config.keys())}"
+    )
+
+
+def _get_experiment_config(full_config: Dict[str, Any], experiment_name: str) -> Dict[str, Any]:
+    """Backward-compatible alias for older code/tests expecting `_get_experiment_config`.
+
+    New code should call `_get_config` directly; this wrapper exists so that
+    external callers and the test suite can continue to import the previous
+    helper name without breaking.
+    """
+    return _get_config(full_config, experiment_name)
 
 
 
+@tf.function(reduce_retracing=True)
 def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tensor, y: tf.Tensor,
                optimizer: keras.optimizers.Optimizer, alpha: float = 0.3, temperature: float = 4.0,
                bce_loss_fn=None, mse_loss_fn=None) -> Dict[str, tf.Tensor]:
@@ -109,10 +134,20 @@ def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tenso
     gradients = tape.gradient(total_loss, student.trainable_variables)
     optimizer.apply_gradients(zip(gradients, student.trainable_variables))
     
+    # Compute batch-level binary_iou functionally for progress logging
+    # (stateful Metric objects cannot be initialized inside tf.function)
+    y_pred_sig = tf.nn.sigmoid(student_pred)
+    y_pred_bin = tf.cast(y_pred_sig > 0.5, tf.float32)
+    y_true_bin = tf.cast(y > 0.5, tf.float32)
+    intersection = tf.reduce_sum(y_true_bin * y_pred_bin)
+    union = tf.reduce_sum(y_true_bin) + tf.reduce_sum(y_pred_bin) - intersection
+    iou = intersection / (union + 1e-7)
+
     return {
         'loss': total_loss,
         'student_loss': student_loss,
-        'distillation_loss': distill_loss
+        'distillation_loss': distill_loss,
+        'binary_iou': iou
     }
 
 
@@ -122,6 +157,7 @@ def train_single_model(
     train_data: Union[tf.data.Dataset, Tuple[tf.Tensor, tf.Tensor]],
     val_data: Optional[Union[tf.data.Dataset, Tuple[tf.Tensor, tf.Tensor]]] = None,
     experiment_dir: str = "results/",
+    extra_callbacks: Optional[list] = None,
 ) -> keras.callbacks.History:
     """Train a standalone Keras model using standard fit routines.
     
@@ -163,11 +199,28 @@ def train_single_model(
     
     # Early stopping
     if config.get('early_stopping', False):
+        patience = int(config.get('patience', 10))
         callbacks.append(
             keras.callbacks.EarlyStopping(
                 monitor='val_loss',
-                patience=10,
+                patience=patience,
                 restore_best_weights=True
+            )
+        )
+    
+    # Reduce LR on Plateau
+    if config.get('lr_scheduler', '').lower() == 'plateau':
+        patience = int(config.get('lr_plateau_patience', 5))
+        factor = float(config.get('lr_plateau_factor', 0.2))
+        min_lr = float(config.get('min_lr', 1e-6))
+        print(f"Adding ReduceLROnPlateau callback (patience={patience}, factor={factor}, min_lr={min_lr})")
+        callbacks.append(
+            keras.callbacks.ReduceLROnPlateau(
+                monitor='val_loss',
+                factor=factor,
+                patience=patience,
+                min_lr=min_lr,
+                verbose=1
             )
         )
     
@@ -208,14 +261,13 @@ def train_single_model(
             )
         )
     
-    # Training
-    print(f"\nStarting training for {epochs} epochs...")
-    print(f"Model: {model.name}")
-    print(f"Parameters: {model.count_params():,}")
-    print(f"Batch size: {batch_size}")
-    print(f"Learning rate: {learning_rate}")
+    if extra_callbacks:
+        callbacks.extend(extra_callbacks)
+    
+    # Brief training header (Keras will handle per-epoch progress).
+    print(f"\n[TRAIN] {model.name}: {epochs} epochs, batch_size={batch_size}, lr={learning_rate}")
     if weight_decay > 0:
-        print(f"Weight decay: {weight_decay}")
+        print(f"[TRAIN] weight_decay={weight_decay}")
     
     # Fit — accept both tf.data.Dataset and (x, y) tuple
     is_dataset = isinstance(train_data, tf.data.Dataset)
@@ -247,10 +299,77 @@ def train_single_model(
         raise
 
 
-def train_with_distillation(student: keras.Model, teacher: keras.Model, config: Dict[str, Any],
-                            train_data: Union[Tuple[tf.Tensor, tf.Tensor], tf.data.Dataset],
-                            val_data: Optional[Union[Tuple[tf.Tensor, tf.Tensor], tf.data.Dataset]] = None,
-                            experiment_dir: str = "results/") -> Dict[str, List[float]]:
+def build_distillation_datasets(
+    train_data: Union[tf.data.Dataset, Tuple[tf.Tensor, tf.Tensor]],
+    val_data: Optional[Union[tf.data.Dataset, Tuple[tf.Tensor, tf.Tensor]]],
+    batch_size: int,
+) -> Tuple[tf.data.Dataset, Optional[tf.data.Dataset]]:
+    """Normalize train/val inputs into tf.data.Datasets for distillation."""
+    if isinstance(train_data, tf.data.Dataset):
+        train_dataset = train_data
+    else:
+        train_dataset = tf.data.Dataset.from_tensor_slices(train_data)
+        train_dataset = train_dataset.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+
+    if val_data is None:
+        return train_dataset, None
+
+    if isinstance(val_data, tf.data.Dataset):
+        val_dataset = val_data
+    else:
+        val_dataset = tf.data.Dataset.from_tensor_slices(val_data)
+        val_dataset = val_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    return train_dataset, val_dataset
+
+
+def update_plateau_and_early_stopping(
+    epoch: int,
+    config: Dict[str, Any],
+    optimizer: keras.optimizers.Optimizer,
+    current_val_loss: float,
+    best_val_loss: float,
+    patience_counter: int,
+    lr_patience_counter: int,
+) -> Tuple[float, int, int, bool]:
+    """Apply ReduceLROnPlateau + EarlyStopping logic, returning updated state."""
+    stopped_early = False
+
+    if current_val_loss < best_val_loss:
+        best_val_loss = current_val_loss
+        patience_counter = 0
+        lr_patience_counter = 0
+    else:
+        patience_counter += 1
+        lr_patience_counter += 1
+
+    use_plateau = config.get("lr_scheduler", "").lower() == "plateau"
+    lr_patience = int(config.get("lr_plateau_patience", 5))
+    lr_factor = float(config.get("lr_plateau_factor", 0.2))
+    min_lr = float(config.get("min_lr", 1e-6))
+
+    if use_plateau and lr_patience_counter >= lr_patience:
+        old_lr = float(optimizer.learning_rate.numpy())
+        new_lr = max(old_lr * lr_factor, min_lr)
+        if new_lr < old_lr:
+            print(f"  Epoch {epoch+1}: ReduceLROnPlateau reducing learning rate to {new_lr:.8f}.")
+            optimizer.learning_rate.assign(new_lr)
+        lr_patience_counter = 0
+
+    if config.get("early_stopping", False) and patience_counter >= int(config.get("patience", 10)):
+        print(f"\nEarly stopping triggered at epoch {epoch + 1}!")
+        stopped_early = True
+
+    return best_val_loss, patience_counter, lr_patience_counter, stopped_early
+
+
+def train_with_distillation(
+    student: keras.Model,
+    teacher: keras.Model,
+    config: Dict[str, Any],
+    train_data: Union[Tuple[tf.Tensor, tf.Tensor], tf.data.Dataset],
+    val_data: Optional[Union[Tuple[tf.Tensor, tf.Tensor], tf.data.Dataset]] = None,
+    experiment_dir: str = "results/",
+) -> Dict[str, List[float]]:
     """Train a student model via knowledge distillation using a custom GradientTape loop.
     
     The loss function minimizes a weighted sum of:
@@ -267,16 +386,14 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
     Returns:
         A dictionary mapping metric names to lists of floats recorded per epoch.
     """
-    # Setup distillation parameters
-    alpha = config.get('alpha', 0.3)
-    temperature = config.get('temperature', 4.0)
+    # Setup distillation parameters and optimizer
+    alpha = float(config.get("alpha", 0.3))
+    temperature = float(config.get("temperature", 4.0))
+    learning_rate = float(config.get("learning_rate", 0.0005))
+    weight_decay = float(config.get("weight_decay", 0.0))
+    optimizer_type = config.get("optimizer", "adam").lower()
     
-    # Create optimizer
-    learning_rate = config.get('learning_rate', 0.0005)
-    weight_decay = float(config.get('weight_decay', 0.0))
-    optimizer_type = config.get('optimizer', 'adam').lower()
-    
-    if optimizer_type == 'adamw' or weight_decay > 0:
+    if optimizer_type == "adamw" or weight_decay > 0:
         optimizer = keras.optimizers.AdamW(learning_rate=learning_rate, weight_decay=weight_decay)
     else:
         optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
@@ -284,41 +401,25 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
     # Model checkpoint - always save as temp_model.h5 in models/
     Path("models").mkdir(parents=True, exist_ok=True)
     checkpoint_path = os.path.join("models", "temp_model.h5")
-    
     output_dir = experiment_dir
     
-    # Training
-    print(f"\nStarting distillation training for {config.get('epochs', 100)} epochs...")
-    print(f"Student: {student.name}")
-    print(f"Teacher: {teacher.name}")
-    print(f"Parameters: {student.count_params():,}")
-    print(f"Alpha: {alpha}, Temperature: {temperature}")
-    print(f"Learning rate: {learning_rate}")
+    print(
+        f"\n[TRAIN-KD] student='{student.name}' teacher='{teacher.name}' "
+        f"epochs={config.get('epochs', 100)} batch_size={config.get('batch_size', 16)} "
+        f"alpha={alpha} T={temperature} lr={learning_rate}"
+    )
     if weight_decay > 0:
-        print(f"Weight decay: {weight_decay}")
+        print(f"[TRAIN-KD] weight_decay={weight_decay}")
+    
+    # dummy loss since we use custom loop
+    student.compile(optimizer=optimizer, loss='mse')
     
     try:
-        # Custom training loop for distillation
-        epochs = config.get('epochs', 100)
-        batch_size = config.get('batch_size', 16)
+        epochs = config.get("epochs", 100)
+        batch_size = config.get("batch_size", 16)
         
-        # Create dataset
-        # Create dataset
-        if isinstance(train_data, tf.data.Dataset):
-            train_dataset = train_data
-        else:
-            train_dataset = tf.data.Dataset.from_tensor_slices(train_data)
-            train_dataset = train_dataset.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
-        
-        # Validation dataset
-        if val_data is not None:
-            if isinstance(val_data, tf.data.Dataset):
-                val_dataset = val_data
-            else:
-                val_dataset = tf.data.Dataset.from_tensor_slices(val_data)
-                val_dataset = val_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
-        else:
-            val_dataset = None
+        # Normalize data inputs into tf.data.Datasets
+        train_dataset, val_dataset = build_distillation_datasets(train_data, val_data, batch_size)
             
         # Initialize NAS Monitor for manual loop
         nas_callback = None
@@ -334,7 +435,6 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
             # Simulate Keras callback initialization
             nas_callback.set_model(student)
         
-        # Training loop
         # Loss objects and metrics
         bce_loss_fn = keras.losses.BinaryCrossentropy(from_logits=True)
         mse_loss_fn = keras.losses.MeanSquaredError()
@@ -344,18 +444,29 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
             'loss': [],
             'student_loss': [],
             'distillation_loss': [],
+            'binary_iou': [],
             'val_loss': [],
             'val_student_loss': [],
             'val_distillation_loss': [],
-            'val_iou': []
+            'val_binary_iou': []
         }
         
-        best_val_loss = float('inf')
-        patience_counter = 0
         
+        best_val_loss = float("inf")
+        patience_counter = 0
+        lr_patience_counter = 0
+
         for epoch in range(epochs):
             # Training phase
-            epoch_losses: Dict[str, List[float]] = {'loss': [], 'student_loss': [], 'distillation_loss': []}
+            epoch_losses: Dict[str, List[float]] = {
+                "loss": [],
+                "student_loss": [],
+                "distillation_loss": [],
+                "binary_iou": []
+            }
+            
+            print(f"Epoch {epoch + 1}/{epochs}")
+            progbar = keras.utils.Progbar(target=len(train_dataset), stateful_metrics=['loss', 'binary_iou', 'lr'])
             
             for step, (x_batch, y_batch) in enumerate(train_dataset):
                 losses = train_step(
@@ -367,16 +478,28 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
                     if key not in epoch_losses:
                         epoch_losses[key] = []
                     epoch_losses[key].append(value.numpy())
+                
+                # Update progress bar
+                lr = float(optimizer.learning_rate.numpy())
+                current_metrics = [
+                    ('loss', losses['loss'].numpy()),
+                    ('binary_iou', losses['binary_iou'].numpy()),
+                    ('lr', lr)
+                ]
+                progbar.update(step + 1, values=current_metrics)
             
             # Calculate epoch averages - convert to standard float for JSON serialization
-            for key in epoch_losses:
-                if key not in history:
-                    history[key] = []
-                history[key].append(float(np.mean(epoch_losses[key])))
+            for key, values in epoch_losses.items():
+                history.setdefault(key, [])
+                history[key].append(float(np.mean(values)))
             
             # Validation phase
             if val_dataset:
-                val_losses: Dict[str, List[float]] = {'loss': [], 'student_loss': [], 'distillation_loss': []}
+                val_losses: Dict[str, List[float]] = {
+                    "loss": [],
+                    "student_loss": [],
+                    "distillation_loss": [],
+                }
                 val_iou_metric.reset_state()
                 
                 for x_batch, y_batch in val_dataset:
@@ -406,43 +529,49 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
                     # Update IoU
                     val_iou_metric.update_state(y_batch, student_pred)
                 
-                for key in val_losses:
-                    if f'val_{key}' not in history:
-                        history[f'val_{key}'] = []
-                    history[f'val_{key}'].append(float(np.mean(val_losses[key])))
-                if 'val_iou' not in history:
-                    history['val_iou'] = []
-                history['val_iou'].append(float(val_iou_metric.result().numpy()))
-            
-            # Print progress
-            if (epoch + 1) % 10 == 0 or epoch == 0:
-                print(f"Epoch {epoch + 1}/{epochs}:")
-                print(f"  Loss: {history['loss'][-1]:.4f}")
-                print(f"  Student Loss: {history['student_loss'][-1]:.4f}")
-                if teacher is not None:
-                    print(f"  Distillation Loss: {history['distillation_loss'][-1]:.4f}")
-                if val_dataset:
-                    print(f"  Val Loss: {history['val_loss'][-1]:.4f}")
-                    print(f"  Val Student Loss: {history['val_student_loss'][-1]:.4f}")
-                    if teacher is not None:
-                        print(f"  Val Distillation Loss: {history['val_distillation_loss'][-1]:.4f}")
+                for key, values in val_losses.items():
+                    history.setdefault(f"val_{key}", [])
+                    history[f"val_{key}"].append(float(np.mean(values)))
+
+                history.setdefault("val_binary_iou", [])
+                val_iou_final = float(val_iou_metric.result().numpy())
+                history["val_binary_iou"].append(val_iou_final)
+
+                # Final progbar update for the epoch including validation metrics
+                lr = float(optimizer.learning_rate.numpy())
+                final_values = [
+                    ('loss', history['loss'][-1]),
+                    ('binary_iou', history['binary_iou'][-1]),
+                    ('val_loss', history['val_loss'][-1]),
+                    ('val_binary_iou', val_iou_final),
+                    ('lr', lr)
+                ]
+                progbar.update(len(train_dataset), values=final_values, finalize=True)
             
             # --- Manual Logic for custom training loop callbacks ---
             if val_dataset:
-                current_val_loss = history['val_loss'][-1]
-                
-                # Model Checkpointing
-                if current_val_loss < best_val_loss:
-                    print(f"  Val loss improved from {best_val_loss:.5f} to {current_val_loss:.5f}. Saving model...")
-                    best_val_loss = current_val_loss
+                current_val_loss = history["val_loss"][-1]
+
+                # Model checkpointing + LR scheduling + early stopping
+                improved = current_val_loss < best_val_loss
+                best_val_loss, patience_counter, lr_patience_counter, stopped = update_plateau_and_early_stopping(
+                    epoch,
+                    config,
+                    optimizer,
+                    current_val_loss,
+                    best_val_loss,
+                    patience_counter,
+                    lr_patience_counter,
+                )
+
+                if improved:
+                    print(
+                        f"Epoch {epoch + 1}: val_loss improved from {best_val_loss:.5f} to {current_val_loss:.5f}, "
+                        f"saving model to {checkpoint_path}"
+                    )
                     student.save(checkpoint_path)
-                    patience_counter = 0
-                else:
-                    patience_counter += 1
-                
-                # Early Stopping
-                if config.get('early_stopping', False) and patience_counter >= 10:
-                    print(f"\nEarly stopping triggered at epoch {epoch + 1}!")
+
+                if stopped:
                     if os.path.exists(checkpoint_path):
                         print(f"Restoring best weights from {checkpoint_path}")
                         student.load_weights(checkpoint_path)
@@ -452,6 +581,15 @@ def train_with_distillation(student: keras.Model, teacher: keras.Model, config: 
             if nas_callback:
                 nas_callback.on_epoch_end(epoch, logs=history)
         
+        # Single-line completion summary
+        completed_epochs = len(history.get("loss", []))
+        if history.get("loss"):
+            final_loss = history["loss"][-1]
+            msg = f"[TRAIN-KD] completed {completed_epochs} epochs, final_loss={final_loss:.4f}"
+            if history.get("val_loss"):
+                msg += f", final_val_loss={history['val_loss'][-1]:.4f}"
+            print(msg)
+
         return history
         
     except Exception as e:
@@ -492,6 +630,25 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
             for key, value in model_config.items():
                 if key not in config:
                     config[key] = value
+
+        # If a nested `distillation` block is present in the experiment config
+        # (as in config/config.yaml), normalize it into the flat keys expected
+        # by the training pipeline so that knowledge distillation is actually
+        # activated when `enabled: true` is set.
+        dist_cfg = config.get("distillation")
+        if isinstance(dist_cfg, dict) and dist_cfg.get("enabled"):
+            # Enable distillation for this experiment
+            config.setdefault("use_distillation", True)
+            # Teacher model name can differ from the student model_name
+            teacher_model_name = dist_cfg.get("teacher_model_name", "bu_net")
+            config.setdefault("teacher_model_name", teacher_model_name)
+            # Carry over optional knobs if they are provided
+            if "teacher_weights" in dist_cfg:
+                config.setdefault("teacher_weights", dist_cfg["teacher_weights"])
+            if "alpha" in dist_cfg:
+                config.setdefault("alpha", dist_cfg["alpha"])
+            if "temperature" in dist_cfg:
+                config.setdefault("temperature", dist_cfg["temperature"])
 
         if "data" in full_config and "input_shape" in full_config["data"]:
             config.setdefault("input_shape", full_config["data"]["input_shape"])
@@ -581,25 +738,24 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
             teacher_config = config.copy()
             teacher_config["model_name"] = teacher_name
             
-            # Re-apply teacher defaults from full_config to override student settings
+            # Re-apply teacher defaults from config presets, preferring `models` over `experiments`.
             if "models" in full_config and teacher_name in full_config["models"]:
-                print(f"Re-applying default configuration for teacher model from 'models': {teacher_name}")
                 teacher_defaults = full_config["models"][teacher_name]
                 teacher_config.update(teacher_defaults)
             elif "experiments" in full_config and teacher_name in full_config["experiments"]:
-                print(f"Re-applying default configuration for teacher from 'experiments': {teacher_name}")
                 teacher_defaults = full_config["experiments"][teacher_name]
                 teacher_config.update(teacher_defaults)
             
-            print(f"Creating teacher model: {teacher_name}")
+            print(f"[KD] Building teacher '{teacher_name}'")
             teacher = create_model_from_config(teacher_config)
             
             teacher_weights = config.get("teacher_weights")
             if teacher_weights and Path(teacher_weights).exists():
-                print(f"Loading teacher weights from: {teacher_weights}")
+                print(f"[KD] Loading teacher weights from {teacher_weights}")
                 teacher.load_weights(teacher_weights)
             else:
-                print(f"Teacher weights not found at: {teacher_weights}. Using random initialization.")
+                if teacher_weights:
+                    print(f"[KD] Teacher weights not found at {teacher_weights}; using random initialization.")
                 
             student = create_model_from_config(config)
 
@@ -659,15 +815,21 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
         
         history_path = experiment_dir / "history.json"
         history_dict = history.history if hasattr(history, "history") else history
+        
+        # Ensure all values are standard Python floats for JSON serialization
+        serializable_history = {}
+        for key, values in history_dict.items():
+            serializable_history[key] = [float(v) for v in values]
+            
         with open(history_path, "w") as f:
-            json.dump(history_dict, f, indent=2)
+            json.dump(serializable_history, f, indent=2, cls=NumpyEncoder)
         
         with open(experiment_dir / "config.yaml", "w") as f:
             yaml.dump(config, f)
         
         return {
             "status": "success",
-            "final_metrics": history_dict,
+            "final_metrics": serializable_history,
             "model_path": str(model_path),
             "model_name": config.get("model_name", "model"),
             "experiment_dir": str(experiment_dir),

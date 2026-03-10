@@ -6,7 +6,8 @@ Tests model creation, serialization, parameter counting, and functional correctn
 
 import pytest
 import tensorflow as tf
-from tensorflow.keras import Model
+import tf_keras as keras
+Model = keras.Model
 from typing import Tuple, List, Dict, Any
 
 from src.models import (
@@ -213,13 +214,14 @@ def test_model_serialization_bu_net(bu_net_model: Model):
 
 def test_model_save_load(nano_u_model: Model):
     """Test model save and load functionality."""
+    import os
     try:
         # Save model
         model_path = 'temp_model_save.keras'
         nano_u_model.save(model_path)
         
         # Load model
-        loaded_model = tf.keras.models.load_model(model_path)
+        loaded_model = keras.models.load_model(model_path)
         
         # Verify model integrity
         assert loaded_model.input_shape == nano_u_model.input_shape
@@ -228,8 +230,11 @@ def test_model_save_load(nano_u_model: Model):
         
     finally:
         # Clean up
-        import shutil
-        shutil.rmtree(model_path, ignore_errors=True)
+        try:
+            if os.path.exists(model_path):
+                os.remove(model_path)
+        except Exception:
+            pass
 
 
 # =============================================================================
