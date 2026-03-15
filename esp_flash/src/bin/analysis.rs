@@ -110,8 +110,7 @@ fn main() -> ! {
 
     const RAW_IMAGES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/input_images.bin"));
     const IMG_SIZE: usize = 60 * 80 * 3;
-    let num_images = RAW_IMAGES.len() / IMG_SIZE;
-
+    
     // Run a finite number of iterations for stack analysis
     for i in 0..50 {
         println!("Running Inference Iteration {}...", i + 1);
@@ -183,8 +182,6 @@ fn main() -> ! {
     println!("Starting continuous inference loop for power measurement.");
 
     loop {
-        unsafe {
-            let _output_batch = UNet::predict_quantized(static_batch);
-        }
+        let _output_batch = UNet::predict_quantized(static_batch);
     }
 }
