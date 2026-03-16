@@ -115,7 +115,8 @@ def plot_stack_usage(peaks, total_stack, output_file='stack_usage.png'):
         
     peak_usage = max(peaks)
     if total_stack == 0:
-        total_stack = max(peak_usage * 1.2, 320 * 1024) 
+        # datasheet report 385kb of total rom, out of 512 of SRAM
+        total_stack = max(peak_usage * 1.2, 385 * 1024) 
     
     free_stack = total_stack - peak_usage
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))

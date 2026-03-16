@@ -110,7 +110,7 @@ fn main() -> ! {
 
     const RAW_IMAGES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/input_images.bin"));
     const IMG_SIZE: usize = 60 * 80 * 3;
-    
+
     // Run a finite number of iterations for stack analysis
     for i in 0..50 {
         println!("Running Inference Iteration {}...", i + 1);
@@ -135,9 +135,10 @@ fn main() -> ! {
         }
 
         let start = esp_hal::time::Instant::now();
-        let _output_batch = unsafe { UNet::predict_quantized(INPUT_BUFFER.expect("Buffer uninitialized")) };
+        let _output_batch =
+            unsafe { UNet::predict_quantized(INPUT_BUFFER.expect("Buffer uninitialized")) };
         let duration = start.elapsed();
-        
+
         println!("Inference done in {} ms", duration.as_millis());
 
         unsafe {
@@ -151,7 +152,8 @@ fn main() -> ! {
 
         // Re-initialize for next loop safety
         unsafe {
-            let dummy_image = microflow::buffer::Buffer2D::<[i8; 3], 60, 80>::from_element([0, 0, 0]);
+            let dummy_image =
+                microflow::buffer::Buffer2D::<[i8; 3], 60, 80>::from_element([0, 0, 0]);
             INPUT_BUFFER = Some([dummy_image]);
         }
 
@@ -164,7 +166,8 @@ fn main() -> ! {
     // --- CONTINUOUS REAL-IMAGE LOAD FOR MULTIMETER ---
     // Pre-process a single image once into a buffer to avoid timing/energy jitter
     println!("Preparing static image for continuous inference...");
-    let mut static_input_image = microflow::buffer::Buffer2D::<[i8; 3], 60, 80>::from_element([0, 0, 0]);
+    let mut static_input_image =
+        microflow::buffer::Buffer2D::<[i8; 3], 60, 80>::from_element([0, 0, 0]);
     if IMG_SIZE <= RAW_IMAGES.len() {
         let img_data = &RAW_IMAGES[0..IMG_SIZE];
         for h in 0..60 {
@@ -177,7 +180,7 @@ fn main() -> ! {
             }
         }
     }
-    
+
     let static_batch: Buffer4D<i8, 1, 60, 80, 3> = [static_input_image];
     println!("Starting continuous inference loop for power measurement.");
 
