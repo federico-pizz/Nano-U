@@ -34,16 +34,16 @@ fn main() -> ! {
     println!("System Init. Clock: Max. WDT Disabled. Starting Inference...");
 
     loop {
-        // Allocate 36KB on the stack for the input batch (int8 quantization).
-        let input_image = Buffer2D::<[i8; 3], 60, 80>::from_element([0, 0, 0]);
-        let input_batch: Buffer4D<i8, 1, 60, 80, 3> = [input_image];
+        // Allocate memory on the stack for the input batch (f32).
+        let input_image = Buffer2D::<[f32; 3], 60, 80>::from_element([0.0, 0.0, 0.0]);
+        let input_batch: Buffer4D<f32, 1, 60, 80, 3> = [input_image];
 
         println!("Running Inference Iteration...");
 
         let start = esp_hal::time::Instant::now();
 
-        // Run Prediction with quantized inputs (i8) to save memory
-        let _output_batch = UNet::predict_quantized(input_batch);
+        // Run Prediction with f32 inputs
+        let _output_batch = UNet::predict(input_batch);
 
         let duration = start.elapsed();
         println!("Inference done in {} ms", duration.as_millis());

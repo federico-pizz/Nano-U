@@ -12,6 +12,10 @@ path = "./src/bin/inference.rs"
 name = "analysis"
 path = "./src/bin/analysis.rs"
 
+[[bin]]
+name = "analysis_person_detect"
+path = "./src/bin/analysis_person_detect.rs"
+
 [dependencies]
 # Core ESP32-S3 HAL
 esp-hal = { version = "~1.0", features = ["esp32s3", "log-04", "unstable"] }

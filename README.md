@@ -1,14 +1,14 @@
 # Nano-U
 
-> Ultra-low-power CNN for real-time semantic segmentation on energy-constrained microcontrollers (e.g., commodity ESP32-S3-CAM).
+> Ultra-compact terrain segmentation for bare-metal microcontrollers, deployed via Rust.
 
-**Nano-U** is designed specifically for agricultural robotics in unstructured environments where dense vegetation, domain shift, and viewpoint distortion present significant challenges. Unlike state-of-the-art models that require GPU inference with GBs of RAM, every architectural decision in Nano-U is motivated by the extreme constraints of commodity hardware (a mass-market SoC costing under $10, with no ML accelerator or DSP extensions, and a strict 320 KB DRAM ceiling).
+**Nano-U** is designed specifically for agricultural robotics in unstructured environments where dense vegetation, domain shift, and viewpoint distortion present significant challenges. Unlike state-of-the-art models that require GPU inference with GBs of RAM, every architectural decision in Nano-U is motivated by the extreme constraints of commodity hardware — a mass-market SoC costing under $10, with no ML accelerator and a strict 320 KB DRAM ceiling.
+
+The model is trained via **Quantization-Aware Distillation (QAD)** and deployed through a [fork of MicroFlow](https://github.com/federico-pizz/microflow-rs) extended with the operators required by Nano-U's architecture (`MaxPool2D`, nearest-neighbor upsampling, and `Sigmoid`), which are absent from the original engine.
 
 ---
 
 ## Performance Highlights
-
-Nano-U achieves impressive accuracy within severe hardware constraints for binary terrain segmentation (traversable path vs. background).
 
 | Metric | Botanic Garden Dataset | Tiny Agri Dataset (Zero-Shot) |
 | :--- | :--- | :--- |
@@ -25,15 +25,16 @@ Nano-U achieves impressive accuracy within severe hardware constraints for binar
 ## Key Contributions & Methodology
 
 ### 1. Constraint-Driven Architecture
-Nano-U relies on a strictly sequential encoder-decoder design to stay within the 300 KB DRAM budget.
-- **Depthwise Separable Convolutions:** Used throughout (K=3) to achieve ~8-9x parameter and compute reduction on the soft-float Xtensa LX7 CPU.
-- **Compound Scaling:** Manually adapted width and resolution stages to ensure the peak tensor (19.2 KB) remains within limits.
-- **Nearest-Neighbor Upsampling:** Replaces expensive bilinear interpolation with zero-arithmetic memory copying, natively supported in INT8 by microflow-rs.
+Nano-U relies on a strictly sequential encoder-decoder design to stay within the 320 KB DRAM budget. Skip connections are omitted entirely: retaining encoder feature maps until the decoder consumes them would exceed the memory budget at the target resolution.
+- **Depthwise Separable Convolutions:** Used throughout (K=3) to achieve ~8-9× parameter and compute reduction relative to standard convolutions.
+- **Compound Scaling:** Spatial dimensions and channel widths ([4, 8, 16]) are co-designed so the largest intermediate tensor is 30×40×4 = 19.2 KB, bounding peak arena occupancy within 320 KB.
+- **Nearest-Neighbor Upsampling:** Replaces bilinear interpolation in the decoder — requires no multiplications and is supported in the extended MicroFlow fork.
+- **Asymmetric Pooling:** A 3×2 MaxPool at Stage 3 reduces 15×20 cleanly to 5×10, avoiding the misalignment that a standard 2×2 pool would introduce.
 
 ### 2. Quantization-Aware Distillation (QAD)
-To ensure the tiny 3,357-parameter student can generalize:
-- **Knowledge Distillation (KD):** Uses soft targets from a strong BU-Net teacher (alpha=0.5, T=4.0) to provide essential "dark knowledge".
-- **Quantization-Aware Training (QAT):** Fake-quant nodes injected during training simulate INT8 rounding, allowing the optimizer to find robust weights before deployment, minimizing accuracy degradation compared to Post-Training Quantization (PTQ).
+A network of fewer than 3,400 parameters cannot generalize from hard binary labels alone. QAD addresses this by fusing two training objectives into a single pass, rather than applying them sequentially:
+- **Knowledge Distillation:** Soft targets from BU-Net (12.85M parameters, trained to convergence) guide the student with temperature T=4.0 and α=0.5, exposing gradient signal on ambiguous boundary pixels that hard labels would suppress.
+- **Quantization-Aware Training (QAT):** Fake-quantization nodes are injected from the first epoch, allowing the optimizer to simultaneously minimize the distillation loss and quantization error. Fusing QAT with distillation from the start prevents the student from converging to float32 weights that are subsequently perturbed by integer conversion.
 
 ### 3. Rust Deployment via `microflow-rs`
 
@@ -44,24 +45,12 @@ To ensure the tiny 3,357-parameter student can generalize:
   </a>
 </p>
 
-The model is deployed using `microflow-rs`, chosen specifically because it requires ZERO dynamic allocation.
-- **Compile-Time Graph Evaluation:** All tensor sizes are known at compile time, eliminating the overhead of TFLite Micro's interpreter and dynamic dispatch.
-- **`no_std` Environment:** Ensures memory safety without GC and deterministic execution. Crucially, the WiFi stack and PSRAM are never initialized, saving significant milliamp draw compared to standard C++ IDF deployments.
+Inference runs on bare-metal Xtensa LX7 using [our fork of MicroFlow](https://github.com/federico-pizz/microflow-rs), which extends the original engine with three operators required by Nano-U: `MaxPool2D`, nearest-neighbor `UpSampling2D`, and `Sigmoid` activation.
+- **Compile-Time Graph Evaluation:** MicroFlow resolves the full operator graph at compile time via a Rust procedural macro. All tensor buffers are placed in static DRAM at link time — no heap allocator, no dynamic dispatch, no interpreter overhead.
+- **`no_std` Environment:** The wireless stack is never linked. PSRAM is initialized exclusively for input image storage. Only the CPU, internal DRAM, and PSRAM are active during inference, yielding a measured board-level power draw of 500 mW and 422 mJ per inference — approximately 25× lower than comparable WiFi-enabled ESP32 deployments.
 
-### 4. Tiny Agri Dataset
-To eliminate domain shift from camera optics, we gathered and released **Tiny Agri**, a custom agricultural field dataset collected directly using the ESP32-CAM onboard sensor.
-
----
-
-## Future Work
-
-We are actively exploring improvements to the pipeline, including:
-- **IRAM Optimization:** Pinning hot loops to Instruction RAM (`#[ram]`) for an estimated single-cycle fetch latency reduction of 10-20%.
-- **Temporal Depthwise Convolutions:** To improve video-rate consistency.
-- **SVD-Based Auto-Pruning:** Integrating auto-pruning during QAT to push the parameter count below 3,000.
-- **Hardware-In-The-Loop NAS (HIM-NAS):** Feeding live energy measurements from our onboard profiler directly into the NAS fitness function.
-- **Continual Learning Support:** Enabling on-device fine-tuning using the second core.
-- **Multi-Class Extension:** Expanding the bottleneck to support soil, crop, and weed classification.
+### 4. TinyAgri Dataset
+To benchmark cross-domain generalization without camera-induced domain shift, we collected and publicly release **TinyAgri** — a terrain segmentation dataset captured directly via the onboard camera of an ESP32-CAM module in agricultural fields. Nano-U is evaluated on TinyAgri without any fine-tuning, achieving 66.7% mIoU under significant domain shift from the Botanic Garden training distribution.
 
 ---
 
@@ -71,23 +60,23 @@ We are actively exploring improvements to the pipeline, including:
 Nano-U/
 ├── config/                  # Global and experiment-level configuration
 │   ├── config.yaml          # Dataset paths, model shapes, global paths
-│   └── experiments.yaml     # Pre-defined experiments (standard, distillation, nas, quick_test)
+│   └── experiments.yaml     # Pre-defined experiments (standard, distillation, quick_test)
 ├── src/                     # Core library code
-│   ├── models/              # Model builders, layer primitives, and architecture definitions
-│   ├── utils/               # QAT wrappers, Config loaders, and metrics
+│   ├── models/              # Model builders: Nano-U student and BU-Net teacher
+│   ├── utils/               # QAT wrappers, config loaders, and metrics
 │   ├── data.py              # tf.data.Dataset pipelines and augmentation
 │   ├── evaluate.py          # Model visualization and evaluation tools
-│   ├── nas.py               # Evolutionary Search and Redundancy metrics
-│   ├── pipeline.py          # Training and search orchestrators
-│   ├── quantize_model.py    # Representative dataset calibration and INT8 conversion
-│   └── train.py             # Training loops with QAT & Distillation support
-├── scripts/                 # CLI Entry Points
-│   ├── train_standard.py    # Train and export models
-│   ├── train_distillation.py# Student-Teacher distillation pipeline
-│   └── stack_analyzer.py    # On-device stack & energy profiling
+│   ├── nas.py               # Architecture monitoring and redundancy metrics (SVD profiling)
+│   ├── pipeline.py          # Training orchestrators
+│   ├── quantize_model.py    # Calibration and INT8 TFLite export
+│   └── train.py             # Training loops with QAT and distillation support
+├── scripts/                 # CLI entry points
+│   ├── train_standard.py    # Standard training and export
+│   ├── train_distillation.py# QAD: student-teacher distillation pipeline
+│   └── stack_analyzer.py    # On-device stack and energy profiling
 ├── results/                 # Experiment logs, metrics, and visualization plots
 ├── tests/                   # Pytest suite
-└── esp_flash/               # ESP32-S3 Firmware (Rust `no_std`) & Inference
+└── esp_flash/               # ESP32-S3 firmware (Rust `no_std`) and inference
 ```
 
 ---
@@ -96,17 +85,17 @@ Nano-U/
 
 ### 1. Installation
 
-Ensure you have Python 3.12+ and set up your virtual environment:
+Requires Python 3.12+.
 
 ```bash
-python -m venv nano_u_venv  
+python -m venv nano_u_venv
 source nano_u_venv/bin/activate
 pip install -r requirements.txt
 ```
 
 ### 2. Run a Quick Verification Test
 
-Train Nano-U for 2 epochs to ensure the environment, datasets, and pipelines are configured correctly:
+Train Nano-U for 2 epochs to confirm the environment, datasets, and pipelines are configured correctly:
 
 ```bash
 python scripts/train_standard.py --experiment quick_test
@@ -118,8 +107,6 @@ python scripts/train_standard.py --experiment quick_test
 
 ### Standard Training
 
-Train models from scratch or load specific experiments defined in `config/experiments.yaml`.
-
 ```bash
 # Train using the default configuration
 python scripts/train_standard.py
@@ -128,59 +115,66 @@ python scripts/train_standard.py
 python scripts/train_standard.py --experiment standard_training --model nano_u
 ```
 
-### Knowledge Distillation
+### Quantization-Aware Distillation (QAD)
 
-Train the BU-Net teacher, transfer knowledge via soft-targets, and train the Nano-U student.
+Trains the BU-Net teacher to convergence, then trains the Nano-U student with fused distillation and INT8 QAT:
 
 ```bash
-python scripts/train_distillation.py --experiment distillation_nas
+python scripts/train_distillation.py --experiment distillation
 ```
 
 ---
 
 ## Inference and Export
 
-Post-training quantization is automatically triggered after successful training and NAS workflows.
-
-### Quantization-Aware Training (QAT)
-For `nano_u` models, QAT is enabled by default in `config/config.yaml`. This ensures that the model is aware of the INT8 quantization constraints during training, significantly improving on-device accuracy compared to post-training quantization alone.
-
-### Manual Export
-To manually quantize a `.keras` model to full INT8 precision utilizing the exact processed validation dataset for proper scale calibration:
+INT8 export is triggered automatically after training. To manually export a `.keras` model to a calibrated INT8 `.tflite` file:
 
 ```bash
 python src/quantize_model.py path/to/model.keras path/to/model.tflite
 ```
 
-### MCU Deployment
-Check the `esp_flash/` directory for Rust code (`no_std`), memory optimization strategies, IRAM execution scripts, and stack analysis required for loading the `.tflite` directly to the ESP32-S3. **For detailed information about the Rust part, please refer to the `README.md` inside the `esp_flash/` directory.**
+Calibration uses the validation split to compute INT8 scale factors and zero-points, matching the procedure described in the paper.
 
-This crate contains the firmware built on the Rust embedded (`no_std`) ecosystem, running a completely statically allocated inference graph. The binary executes entirely from flash and statically allocated DRAM (~312 KB high-water mark), resulting in strongly deterministic runtimes and zero runtime memory fragmentation.
+### MCU Deployment
+
+See the `esp_flash/` directory for the Rust `no_std` firmware and its own `README.md`. The deployment uses our [MicroFlow fork](https://github.com/federico-pizz/microflow-rs). The model is loaded at compile time:
+
+```rust
+#[model("models/nano_u.tflite")]
+struct UNet;
+
+// Inference call
+let mask = UNet::predict_quantized(input);
+```
+
+All tensor buffers fit within the 320 KB internal DRAM. No inference data is routed through PSRAM.
 
 ---
 
-## Performance & Energy Analysis
+## Hardware Profiling
 
-The project includes a specialized tool to profile the model directly on the ESP32-S3 hardware. It measures memory overhead, execution speed, and estimated power consumption.
+Peak DRAM consumption is measured via stack painting: the stack region is pre-filled with a known byte pattern (`0xAA`) before inference, and the high-water mark is recovered afterward by scanning for the first overwritten address. This yields a direct hardware measurement independent of static analysis estimates, inclusive of all MicroFlow tensor allocations.
 
 ```bash
-# Run on-device analysis (requires ESP32-S3 connected via USB)
+# Requires ESP32-S3 connected via USB
 python scripts/stack_analyzer.py
 ```
 
-**Metrics Provided:**
-- **Stack Peak Usage**: The maximum memory consumed by the TFLite Micro interpreter.
-- **Inference Latency**: Average time (ms) to process a single 80x60 frame.
-- **Energy per Inference**: Calculated in milliJoules (mJ) based on measured current draw.
-
-Results and visualization plots (e.g., `stack_usage.png`) are automatically saved to the `results/` directory.
+Results and plots are saved to the `results/` directory.
 
 ---
 
 ## Running Tests
 
-To verify the integrity of model building, quantization, data pipelines, and evolutionary search components:
-
 ```bash
 python -m pytest tests/ -v
 ```
+
+---
+
+## Future Work
+
+- **Multi-core inference:** MicroFlow currently uses a single core; distributing inference across both Xtensa LX7 cores is the most direct path to reducing the 844 ms latency.
+- **GPIO-isolated energy measurement:** Current figures are board-level and inclusive of the LDO, camera module, and USB-UART bridge. SoC-level isolation via GPIO switching would yield a more precise per-inference power figure.
+- **On-device domain adaptation:** Deployment-time fine-tuning using the second core to adapt to new terrain environments without re-training from scratch.
+- **Multi-class extension:** Expanding the output head to support soil, crop, and weed classification beyond binary traversability.

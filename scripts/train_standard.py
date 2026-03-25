@@ -71,8 +71,11 @@ def main():
     dst_model = models_dir / src_model.name
     
     if src_model.exists():
-        shutil.copy(src_model, dst_model)
-        print(f"Model weights copied  →  {dst_model}")
+        if src_model.absolute() != dst_model.absolute():
+            shutil.copy(src_model, dst_model)
+            print(f"Model weights copied  →  {dst_model}")
+        else:
+            print(f"Model weights already at destination  →  {dst_model}")
     else:
         print(f"Completed model not found at {src_model}")
         sys.exit(1)

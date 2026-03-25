@@ -121,7 +121,7 @@ def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tenso
                     tf.nn.sigmoid(student_pred / temperature)
                 )
             ) * (temperature ** 2)
-            total_loss = alpha * student_loss + (1 - alpha) * distill_loss
+            total_loss = (1 - alpha) * student_loss + alpha * distill_loss
         else:
             distill_loss = tf.constant(0.0, dtype=tf.float32)
             total_loss = student_loss
@@ -517,7 +517,7 @@ def train_with_distillation(
                                 tf.nn.sigmoid(student_pred / temperature)
                             )
                         ).numpy() * (temperature ** 2)
-                        total_loss = float(alpha * student_loss + (1 - alpha) * distill_loss)
+                        total_loss = float((1 - alpha) * student_loss + alpha * distill_loss)
                     else:
                         distill_loss = 0.0
                         total_loss = float(student_loss)

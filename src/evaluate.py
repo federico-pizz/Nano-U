@@ -362,7 +362,7 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Evaluate and plot predictions')
-    parser.add_argument('model', choices=['bu_net', 'nano_u'], help='Model to evaluate (bu_net or nano_u)')
+    parser.add_argument('model', choices=['bu_net', 'nano_u', 'nano_u2'], help='Model to evaluate (bu_net, nano_u, or nano_u2)')
     args = parser.parse_args()
 
     # Hardcoded configurations

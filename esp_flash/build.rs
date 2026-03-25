@@ -142,9 +142,19 @@ fn main() {
                     .and_then(|s| s.parse::<u32>().ok())
                     .unwrap_or(0)
             });
+            
+            // To get random selection for tinyagri but reproducible for standard rust builds
+            // We use a deterministic pseudo-random step or just take the first 50. 
+            // We'll take elements evenly spaced.
+            let take_iter: Vec<PathBuf> = if dataset == "tinyagri" && entries.len() > 50 {
+                let step = entries.len() as f32 / 50.0;
+                (0..50).map(|i| entries[(i as f32 * step) as usize].clone()).collect()
+            } else {
+                entries
+            };
 
-            for path in entries.iter().take(SET_SIZE) {
-                let img = image::open(path)
+            for path in take_iter {
+                let img = image::open(&path)
                     .unwrap_or_else(|e| panic!("Cannot open {}: {}", path.display(), e))
                     .resize_exact(img_w, img_h, image::imageops::FilterType::Triangle)
                     .to_rgb8();
@@ -156,13 +166,8 @@ fn main() {
             }
         }
 
-        let bytes_per_image = (img_h * img_w * 3) as usize;
-        if count < SET_SIZE {
-            let padding = vec![0u8; bytes_per_image * (SET_SIZE - count)];
-            bin_file.write_all(&padding).expect("Cannot write padding");
-        }
-        println!("cargo:warning=Packed {} / {} images from {} into input_images.bin", count, SET_SIZE, dataset);
-        total_packed += SET_SIZE;
+        println!("cargo:warning=Packed {} images from {} into input_images.bin", count, dataset);
+        total_packed += count;
     }
 
     println!("cargo:warning=Packed total {} test images into input_images.bin", total_packed);

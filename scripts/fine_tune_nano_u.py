@@ -158,7 +158,7 @@ def fine_tune_model(base_model_path: str, output_model_path: str, epochs: int = 
     print(f"  Learning Rate: {training_cfg.get('learning_rate')}")
     print(f"  Batch Size: {training_cfg.get('batch_size')}")
     
-    experiment_dir = Path("results/nano_u_fine_tuned")
+    experiment_dir = Path("results/nano_u2")
     experiment_dir.mkdir(parents=True, exist_ok=True)
     
     # Add Rehearsal monitoring

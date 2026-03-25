@@ -57,7 +57,7 @@ models:
   # Student Model (Nano_U) - Ultra-light model for embedded deployment
   nano_u:
     filters: [4, 8, 16]
-    bottleneck: 16
+    bottleneck: 16 # try 32
     decoder_filters: [16, 8, 4]
 
 
@@ -68,7 +68,7 @@ training:
   
   # Teacher (BU_Net) training config
   bu_net:
-    epochs: 100
+    epochs: 150
     batch_size: 32
     learning_rate: 1e-3
     weight_decay: 1e-3
@@ -76,7 +76,7 @@ training:
     loss: "binary_crossentropy" 
     augment: true
     early_stopping: true
-    patience: 20
+    patience: 10
     lr_scheduler: "plateau"
     lr_plateau_patience: 10
     lr_plateau_factor: 0.2
@@ -85,7 +85,7 @@ training:
   # Student (Nano_U) training config
   nano_u:
     epochs: 100
-    batch_size: 16
+    batch_size: 16 # try 32 
     learning_rate: 1e-3
     weight_decay: 1e-4
     optimizer: "adamw"
@@ -104,7 +104,7 @@ training:
     # Knowledge Distillation settings
     distillation:
       enabled: true
-      teacher_weights: "models/bu_net.keras"
+      teacher_weights: "models/bu_net.h5"
       alpha: 0.5        # Weight for student loss (1-alpha for teacher loss); lower => more teacher influence
       temperature: 4.0  # Higher temperature to soften teacher distribution for richer distillation gradients
 

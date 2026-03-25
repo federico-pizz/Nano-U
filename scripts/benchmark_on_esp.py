@@ -133,8 +133,14 @@ def evaluate_esp_outputs(img_data_dict, repo_root, model_name="nano_u", dataset_
     test_img_dir = repo_root / test_cfg.get('img', '')
     test_mask_dir = repo_root / test_cfg.get('mask', '')
     
-    test_imgs = sorted_by_frame([str(p) for p in test_img_dir.glob('*.png')])[:50]
-    test_masks = sorted_by_frame([str(p) for p in test_mask_dir.glob('*.png')])[:50]
+    test_imgs = sorted_by_frame([str(p) for p in test_img_dir.glob('*.png')])
+    test_masks = sorted_by_frame([str(p) for p in test_mask_dir.glob('*.png')])
+    
+    if dataset_batch == "tinyagri" and len(test_imgs) > 50:
+        step = len(test_imgs) / 50.0
+        indices = [int(i * step) for i in range(50)]
+        test_imgs = [test_imgs[i] for i in indices]
+        test_masks = [test_masks[i] for i in indices]
     
     mean = config['data']['normalization']['mean']
     std = config['data']['normalization']['std']
@@ -260,7 +266,7 @@ def evaluate_esp_outputs(img_data_dict, repo_root, model_name="nano_u", dataset_
         ax3.imshow(pred_bin, cmap='gray'); ax3.set_title('Pred'); ax3.axis('off')
 
     plt.tight_layout()
-    out_dir = repo_root / 'results' / f'{model_name}_rust'
+    out_dir = repo_root / 'results' / model_name
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f'esp32_hw_eval_{dataset_batch}.png'
     plt.savefig(out_path, dpi=150)
@@ -285,13 +291,17 @@ def main():
         print("Failed to collect inference data from ESP32.")
         sys.exit(1)
         
-    print("\n[3/3] Dequantizing ESP32 outputs and calculating metrics...")
+    # Dynamically find the size of the botanic_garden test set
+    botanic_test_dir = repo_root / 'data' / 'botanic_garden' / 'test' / 'img'
+    num_botanic = len(list(botanic_test_dir.glob('*.png')))
     
-    # Evaluate Botanic Garden (0-49)
-    evaluate_esp_outputs(img_data, repo_root, model_name=args.model, dataset_batch="botanic_garden", start_idx=0, end_idx=50)
+    print(f"\n[3/3] Dequantizing ESP32 outputs and calculating metrics for {num_botanic} botanic and 50 tinyagri images...")
     
-    # Evaluate TinyAgri (50-99)
-    evaluate_esp_outputs(img_data, repo_root, model_name=args.model, dataset_batch="tinyagri", start_idx=50, end_idx=100)
+    # Evaluate Botanic Garden (0 to num_botanic)
+    evaluate_esp_outputs(img_data, repo_root, model_name=args.model, dataset_batch="botanic_garden", start_idx=0, end_idx=num_botanic)
+    
+    # Evaluate TinyAgri (num_botanic to num_botanic + 50)
+    evaluate_esp_outputs(img_data, repo_root, model_name=args.model, dataset_batch="tinyagri", start_idx=num_botanic, end_idx=num_botanic + 50)
 
 if __name__ == '__main__':
     main()

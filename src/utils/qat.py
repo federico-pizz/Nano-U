@@ -54,9 +54,10 @@ class NoOpQuantizeConfig(tfmot.quantization.keras.QuantizeConfig):
 def apply_qat_to_model(model: keras.Model) -> keras.Model:
     """Apply Quantization-Aware Training to a Keras Functional model.
 
-    Uses the annotate-then-apply pattern so that layers TFMOT cannot quantize
-    (UpSampling2D, MaxPooling2D, Concatenate, etc.) receive a NoOpQuantizeConfig
-    instead of causing a hard failure.
+    Uses `tfmot.quantization.keras.quantize_model` directly to ensure that
+    layer patterns like Conv2D + BatchNormalization are correctly matched and
+    folded during the fake-quantization process, which is critical for
+    preserving performance.
 
     Args:
         model: A compiled or uncompiled Keras Functional model.
@@ -66,36 +67,7 @@ def apply_qat_to_model(model: keras.Model) -> keras.Model:
         quantization fails for any reason (with a printed warning).
     """
     try:
-        def _annotate_layer(layer):
-            # 1. Identify if layer should be marked as "NoOp" (pass-through).
-            # We check both the class name and the instance type for robustness.
-            is_passthrough = (
-                layer.__class__.__name__ in _QAT_PASSTHROUGH_NAMES or
-                isinstance(layer, (keras.layers.Wrapper,)) # Don't re-annotate wrappers
-            )
-
-            try:
-                if is_passthrough:
-                    return tfmot.quantization.keras.quantize_annotate_layer(
-                        layer, quantize_config=NoOpQuantizeConfig()
-                    )
-                # 2. Try default TFMOT annotation (works for Conv2D, Dense, etc.)
-                return tfmot.quantization.keras.quantize_annotate_layer(layer)
-            except Exception as e:
-                # 3. If TFMOT rejects it (e.g. says "not a Layer instance" despite appearingly so),
-                # just return the original layer. This is the ultimate fallback to avoid crashing.
-                return layer
-
-        annotated = keras.models.clone_model(
-            model,
-            clone_function=_annotate_layer,
-        )
-
-        with tfmot.quantization.keras.quantize_scope(
-            {"NoOpQuantizeConfig": NoOpQuantizeConfig}
-        ):
-            qat_model = tfmot.quantization.keras.quantize_apply(annotated)
-
+        qat_model = tfmot.quantization.keras.quantize_model(model)
         print(f"  QAT applied: {qat_model.count_params():,} params "
               f"(was {model.count_params():,})")
         return qat_model
