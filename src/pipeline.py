@@ -105,6 +105,10 @@ def run_training_pipeline(
 ) -> Dict[str, Any]:
     """Train one named experiment and return result dict."""
     try:
+        full_config = load_config(config_path)
+        data_paths = full_config.get("data", {}).get("paths", {})
+        models_dir = Path(data_paths.get("models_dir", "models"))
+
         pipeline_dir = Path(output_dir) / config_name
         pipeline_dir.mkdir(parents=True, exist_ok=True)
 
@@ -115,11 +119,23 @@ def run_training_pipeline(
         )
 
         model_name = result.get("model_name", "model")
-        final_model_path = Path("models") / f"{model_name}.h5"
+        final_model_path = models_dir / f"{model_name}.h5"
 
         results_path = pipeline_dir / "results.json"
+        
+        # Keep only the final epoch's results for a cleaner summary
+        summary_result = result.copy()
+        if "final_metrics" in summary_result and isinstance(summary_result["final_metrics"], dict):
+            final_epoch_metrics = {}
+            for k, v in summary_result["final_metrics"].items():
+                if isinstance(v, list) and len(v) > 0:
+                    final_epoch_metrics[k] = v[-1]
+                else:
+                    final_epoch_metrics[k] = v
+            summary_result["final_metrics"] = final_epoch_metrics
+            
         with open(results_path, "w") as f:
-            json.dump(result, f, indent=2, cls=NumpyEncoder)
+            json.dump(summary_result, f, indent=2, cls=NumpyEncoder)
 
         return {
             "status": "success",

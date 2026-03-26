@@ -19,20 +19,20 @@ data:
 
   paths:
     processed: 
-      root: "data/botanic_garden"
+      root: "data/tinyagri"
       train:
-        img: "data/botanic_garden/train/img"
-        mask: "data/botanic_garden/train/mask"
+        img: "data/tinyagri/train/img"
+        mask: "data/tinyagri/train/mask"
       val:
-        img: "data/botanic_garden/val/img"
-        mask: "data/botanic_garden/val/mask"
+        img: "data/tinyagri/val/img"
+        mask: "data/tinyagri/val/mask"
       test:
-        img: "data/botanic_garden/test/img"
-        mask: "data/botanic_garden/test/mask"
+        img: "data/tinyagri/test/img"
+        mask: "data/tinyagri/test/mask"
 
-    models_dir: "models"
+    models_dir: "models/tinyagri"
+    results_dir: "results/tinyagri"
     
-    models_dir: "models"
 
 # Model Architecture Definitions
 models:
@@ -52,19 +52,19 @@ models:
 # Training Hyperparameters
 training:
   # General settings
-  seed: 37
+  seed: 98
   
   # Teacher (BU_Net) training config
   bu_net:
-    epochs: 150
+    epochs: 100
     batch_size: 32
     learning_rate: 1e-3
-    weight_decay: 1e-3
+    weight_decay: 5e-3
     optimizer: "adamw"
     loss: "binary_crossentropy" 
     augment: true
     early_stopping: true
-    patience: 10
+    patience: 20
     lr_scheduler: "plateau"
     lr_plateau_patience: 10
     lr_plateau_factor: 0.2
@@ -72,7 +72,7 @@ training:
 
   # Student (Nano_U) training config
   nano_u:
-    epochs: 100
+    epochs: 150
     batch_size: 16 # try 32 
     learning_rate: 1e-3
     weight_decay: 1e-4
@@ -92,7 +92,7 @@ training:
     # Knowledge Distillation settings
     distillation:
       enabled: true
-      teacher_weights: "models/bu_net.h5"
+      teacher_weights: "models/tinyagri/bu_net.h5"
       alpha: 0.5        # Weight for student loss (1-alpha for teacher loss); lower => more teacher influence
       temperature: 4.0  # Higher temperature to soften teacher distribution for richer distillation gradients
 

@@ -7,20 +7,27 @@ fn main() {
     // make sure linkall.x is the last linker script (otherwise might cause problems with flip-link)
     println!("cargo:rustc-link-arg=-Tlinkall.x");
 
-    // ── Paths from Python pipeline (relative to esp_flash/ crate root) ─────────
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let project_root = manifest_dir
-        .parent()
-        .expect("esp_flash must be inside project root");
+    let models_dir_default = manifest_dir.parent().unwrap().join("models");
+    let test_img_dir_default = manifest_dir.parent().unwrap().join("data").join("botanic_garden").join("test").join("img");
+
+    let models_dir = env::var("MODELS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or(models_dir_default);
+    println!("cargo:rerun-if-env-changed=MODELS_DIR");
+    
+    let test_img_dir = env::var("TEST_IMG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or(test_img_dir_default);
+    println!("cargo:rerun-if-env-changed=TEST_IMG_DIR");
 
     // ── Model Selection ──────────────────────────────────────────────────────────
     let model_name = env::var("MODEL_NAME").unwrap_or_else(|_| "nano_u".to_string());
+    println!("cargo:rerun-if-env-changed=MODEL_NAME");
     println!("cargo:warning=Building for model: {}", model_name);
 
     // ── Quantization parameters ──────────────────────────────────────────────────
-    let quant_params_path = project_root
-        .join("models")
-        .join(format!("{}_quant_params.json", model_name));
+    let quant_params_path = models_dir.join(format!("{}_quant_params.json", model_name));
     println!("cargo:rerun-if-changed={}", quant_params_path.display());
 
     if quant_params_path.exists() {
@@ -63,26 +70,10 @@ fn main() {
             "cargo:warning=Normalization: mean={:?} std={:?}", mean, std
         );
     } else {
-        println!("cargo:rustc-env=NANO_U_INPUT_SCALE_BITS=0");
-        println!("cargo:rustc-env=NANO_U_INPUT_ZERO_POINT=0");
-        println!("cargo:rustc-env=NANO_U_OUTPUT_SCALE_BITS=0");
-        println!("cargo:rustc-env=NANO_U_OUTPUT_ZERO_POINT=0");
-        println!("cargo:rustc-env=NANO_U_IMG_H=60");
-        println!("cargo:rustc-env=NANO_U_IMG_W=80");
-        println!("cargo:rustc-env=NANO_U_MEAN_R_BITS=0");
-        println!("cargo:rustc-env=NANO_U_MEAN_G_BITS=0");
-        println!("cargo:rustc-env=NANO_U_MEAN_B_BITS=0");
-        println!("cargo:rustc-env=NANO_U_STD_R_BITS=0");
-        println!("cargo:rustc-env=NANO_U_STD_G_BITS=0");
-        println!("cargo:rustc-env=NANO_U_STD_B_BITS=0");
-        println!(
-            "cargo:warning={} not found at {}; \
-             run quantization to generate it.",
-            model_name, quant_params_path.display()
-        );
+        panic!("CRITICAL: {} not found at {}! Run python quantization pipeline first to generate calibration parameters, otherwise the hardware image will silently quantize pixels with NaN errors.", model_name, quant_params_path.display());
     }
 
-    let src_model = project_root.join("models").join(format!("{}.tflite", model_name));
+    let src_model = models_dir.join(format!("{}.tflite", model_name));
     let dst_model = manifest_dir.join("models").join("nano_u.tflite"); // Keep same destination name for simplicity in code
     fs::create_dir_all(dst_model.parent().unwrap()).expect("Cannot create models/ dir");
     if src_model.exists() {
@@ -99,13 +90,6 @@ fn main() {
     println!("cargo:rerun-if-changed={}", src_model.display());
     println!("cargo:rerun-if-env-changed=MODEL_NAME");
 
-    let dataset_name = if model_name == "nano_u2" { "tinyagri" } else { "botanic_garden" };
-    let test_img_dir = project_root
-        .join("data")
-        .join(dataset_name)
-        .join("test")
-        .join("img");
-
     println!("cargo:rerun-if-changed={}", test_img_dir.display());
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -114,63 +98,42 @@ fn main() {
 
     let img_h: u32 = env::var("NANO_U_IMG_H").unwrap_or("60".to_string()).parse().unwrap();
     let img_w: u32 = env::var("NANO_U_IMG_W").unwrap_or("80".to_string()).parse().unwrap();
-    const SET_SIZE: usize = 50;
 
-    let mut total_packed = 0usize;
-
-    for dataset in ["botanic_garden", "tinyagri"] {
-        let test_img_dir = project_root.join("data").join(dataset).join("test").join("img");
-        println!("cargo:rerun-if-changed={}", test_img_dir.display());
-
-        let mut count = 0usize;
-        if test_img_dir.exists() {
-            let mut entries: Vec<PathBuf> = fs::read_dir(&test_img_dir)
-                .expect("Cannot read test img dir")
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.extension()
-                        .map(|ext| ext.eq_ignore_ascii_case("png"))
-                        .unwrap_or(false)
-                })
-                .collect();
-                
-            entries.sort_by_key(|p| {
-                p.file_stem()
-                    .and_then(|s| s.to_str())
-                    .and_then(|s| s.split('_').last())
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .unwrap_or(0)
-            });
+    let mut count = 0usize;
+    if test_img_dir.exists() {
+        let mut entries: Vec<PathBuf> = fs::read_dir(&test_img_dir)
+            .expect("Cannot read test img dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension()
+                    .map(|ext| ext.eq_ignore_ascii_case("png"))
+                    .unwrap_or(false)
+            })
+            .collect();
             
-            // To get random selection for tinyagri but reproducible for standard rust builds
-            // We use a deterministic pseudo-random step or just take the first 50. 
-            // We'll take elements evenly spaced.
-            let take_iter: Vec<PathBuf> = if dataset == "tinyagri" && entries.len() > 50 {
-                let step = entries.len() as f32 / 50.0;
-                (0..50).map(|i| entries[(i as f32 * step) as usize].clone()).collect()
-            } else {
-                entries
-            };
-
-            for path in take_iter {
-                let img = image::open(&path)
-                    .unwrap_or_else(|e| panic!("Cannot open {}: {}", path.display(), e))
-                    .resize_exact(img_w, img_h, image::imageops::FilterType::Triangle)
-                    .to_rgb8();
-                bin_file
-                    .write_all(img.as_raw())
-                    .expect("Cannot write image bytes");
-                count += 1;
-                println!("cargo:rerun-if-changed={}", path.display());
-            }
+        entries.sort_by_key(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.split('_').last())
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0)
+        });
+        
+        for path in entries {
+            let img = image::open(&path)
+                .unwrap_or_else(|e| panic!("Cannot open {}: {}", path.display(), e))
+                .resize_exact(img_w, img_h, image::imageops::FilterType::Triangle)
+                .to_rgb8();
+            bin_file
+                .write_all(img.as_raw())
+                .expect("Cannot write image bytes");
+            count += 1;
+            println!("cargo:rerun-if-changed={}", path.display());
         }
-
-        println!("cargo:warning=Packed {} images from {} into input_images.bin", count, dataset);
-        total_packed += count;
     }
 
-    println!("cargo:warning=Packed total {} test images into input_images.bin", total_packed);
+    println!("cargo:warning=Packed {} images into input_images.bin", count);
 }
 
 // ── Lightweight JSON helpers ─────

@@ -139,9 +139,15 @@ def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tenso
     y_pred_sig = tf.nn.sigmoid(student_pred)
     y_pred_bin = tf.cast(y_pred_sig > 0.5, tf.float32)
     y_true_bin = tf.cast(y > 0.5, tf.float32)
-    intersection = tf.reduce_sum(y_true_bin * y_pred_bin)
-    union = tf.reduce_sum(y_true_bin) + tf.reduce_sum(y_pred_bin) - intersection
-    iou = intersection / (union + 1e-7)
+    intersection_fg = tf.reduce_sum(y_true_bin * y_pred_bin)
+    union_fg = tf.reduce_sum(y_true_bin) + tf.reduce_sum(y_pred_bin) - intersection_fg
+    iou_fg = intersection_fg / (union_fg + 1e-7)
+    
+    intersection_bg = tf.reduce_sum((1 - y_true_bin) * (1 - y_pred_bin))
+    union_bg = tf.reduce_sum(1 - y_true_bin) + tf.reduce_sum(1 - y_pred_bin) - intersection_bg
+    iou_bg = intersection_bg / (union_bg + 1e-7)
+    
+    iou = (iou_fg + iou_bg) / 2.0
 
     return {
         'loss': total_loss,
@@ -225,9 +231,10 @@ def train_single_model(
         )
     
     output_dir = experiment_dir
-    # Model checkpoint - always save as temp_model.h5 in models/
-    Path("models").mkdir(parents=True, exist_ok=True)
-    checkpoint_path = os.path.join("models", "temp_model.h5")
+    # Model checkpoint - always save as temp_model.h5 in models_dir
+    models_dir = Path(config.get("models_dir", "models"))
+    models_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = str(models_dir / "temp_model.h5")
     
     callbacks.append(
         keras.callbacks.ModelCheckpoint(
@@ -398,9 +405,10 @@ def train_with_distillation(
     else:
         optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
     
-    # Model checkpoint - always save as temp_model.h5 in models/
-    Path("models").mkdir(parents=True, exist_ok=True)
-    checkpoint_path = os.path.join("models", "temp_model.h5")
+    # Model checkpoint - always save as temp_model.h5 in models_dir
+    models_dir = Path(config.get("models_dir", "models"))
+    models_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = str(models_dir / "temp_model.h5")
     output_dir = experiment_dir
     
     print(
@@ -664,6 +672,9 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
 
         # Data loading
         data_paths = full_config.get("data", {}).get("paths", {})
+        models_dir = Path(data_paths.get("models_dir", "models"))
+        config["models_dir"] = str(models_dir)
+
         processed = data_paths.get("processed", {})
         
         if not isinstance(processed, dict) or "train" not in processed:
@@ -788,14 +799,14 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
 
         
         # Restore best weights before saving if they exist
-        temp_checkpoint = "models/temp_model.h5"
+        temp_checkpoint = str(models_dir / "temp_model.h5")
         if os.path.exists(temp_checkpoint):
             print(f"Loading best weights from {temp_checkpoint} for final save...")
             model_to_save.load_weights(temp_checkpoint)
 
-        Path("models").mkdir(parents=True, exist_ok=True)
+        models_dir.mkdir(parents=True, exist_ok=True)
         model_name = config.get('model_name', 'model')
-        model_path = Path("models") / f"{model_name}.h5"
+        model_path = models_dir / f"{model_name}.h5"
 
         if is_qat_model:
             # Strip the QAT annotation wrappers and save a plain float model.

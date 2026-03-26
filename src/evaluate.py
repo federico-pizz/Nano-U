@@ -117,8 +117,14 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
 
     mean = config['data']['normalization']['mean']
     std = config['data']['normalization']['std']
+    input_shape = config.get("data", {}).get("input_shape", [60, 80, 3])
 
-    test_ds = make_dataset(test_imgs, test_masks, batch_size=batch_size, shuffle=False, augment=False, mean=mean, std=std)
+    test_ds = make_dataset(
+        test_imgs, test_masks,
+        batch_size=batch_size, shuffle=False, augment=False,
+        target_size=(input_shape[0], input_shape[1]),
+        mean=mean, std=std
+    )
 
     # Resolve model by name (prefer .tflite, then .keras/.h5)
     models_dir = resolve_path(config['data']['paths']['models_dir'])
@@ -296,7 +302,7 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
         'bce': float(mean_bce.result().numpy()),
         'dice': float(mean_dice.result().numpy()),
         'focal': float(mean_focal.result().numpy()),
-        'iou': float(iou_metric.result().numpy()),
+        'miou': float(iou_metric.result().numpy()),
         'precision': float(precision.result().numpy()),
         'recall': float(recall.result().numpy()),
     }
@@ -350,7 +356,8 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
     plt.tight_layout()
 
     if out_path is None:
-        results_dir = os.path.join(root_dir, 'results', model_name)
+        config_results_dir = config.get("data", {}).get("paths", {}).get("results_dir", "results")
+        results_dir = os.path.join(root_dir, config_results_dir, model_name)
         os.makedirs(results_dir, exist_ok=True)
         out_path = os.path.join(results_dir, 'eval_predictions.png')
 
@@ -362,11 +369,12 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Evaluate and plot predictions')
-    parser.add_argument('model', choices=['bu_net', 'nano_u', 'nano_u2'], help='Model to evaluate (bu_net, nano_u, or nano_u2)')
+    parser.add_argument('model', nargs='?', default='nano_u', help='Model to evaluate (.h5 or .tflite basename without extension)')
+    parser.add_argument('--config', default='config/config.yaml', help='Path to config file')
     args = parser.parse_args()
 
     # Hardcoded configurations
-    config_path = 'config/config.yaml'
+    config_path = args.config
     model_name = args.model
     batch_size = 8
     threshold = 0.5  # Must match the threshold used during training

@@ -15,9 +15,6 @@ from typing import Optional, Type, Tuple
 from src.utils.config import load_config
 import cv2
 
-# Import the input shape from the config file globally
-_GLOBAL_CONFIG = load_config("config/config.yaml")
-INPUT_SHAPE = tuple(_GLOBAL_CONFIG["data"]["input_shape"])
 
 try:
     from src.utils.metrics import BinaryIoU as _BinaryIoU
@@ -28,7 +25,7 @@ except ImportError:
     print("Warning: Could not import BinaryIoU")
 
 
-def extract_quant_params(tflite_path: str) -> dict:
+def extract_quant_params(tflite_path: str, config_path: str = "config/config.yaml") -> dict:
     """
     Inspect a quantized TFLite model and return its input/output quantization
     parameters (scale and zero_point). These are needed by the on-device
@@ -72,22 +69,23 @@ def extract_quant_params(tflite_path: str) -> dict:
             "shape":      [int(s) for s in output_details["shape"]],
         },
         "normalization": {
-            "mean": list(load_config().get("data", {}).get("normalization", {}).get("mean", [0.5, 0.5, 0.5])),
-            "std":  list(load_config().get("data", {}).get("normalization", {}).get("std", [0.5, 0.5, 0.5])),
+            "mean": list(load_config(config_path).get("data", {}).get("normalization", {}).get("mean", [0.5, 0.5, 0.5])),
+            "std":  list(load_config(config_path).get("data", {}).get("normalization", {}).get("std", [0.5, 0.5, 0.5])),
         }
     }
     return params
 
 
-def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tuple[int, ...]] = None):
+def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tuple[int, ...]] = None, config_path: str = "config/config.yaml"):
     """
     Load a Keras model and convert it to a quantized TFLite model.
     After conversion, extract the actual quantization parameters from the
     produced .tflite and save them to a companion JSON file so that the
     on-device Rust code can use correct (non-hardcoded) values.
     """
+    config = load_config(config_path)
     if input_shape is None:
-        input_shape = (1, *INPUT_SHAPE)
+        input_shape = (1, *config.get("data", {}).get("input_shape", (60, 80, 3)))
         
     if not os.path.exists(model_path):
         print(f"Error: {model_path} not found!")
@@ -109,23 +107,19 @@ def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tupl
         traceback.print_exc()
         return False
     
-    config = load_config()
+
     
-    # Use secondary dataset if quantizing nano_u2, otherwise use the primary
-    # processed dataset. Both branches share the same lookup logic; only the
-    # source subtree differs.
-    is_secondary = "nano_u2" in model_path
     data_paths = config.get("data", {}).get("paths", {})
-    data_cfg = data_paths.get("secondary" if is_secondary else "processed", {})
-    train_img_dir = data_cfg.get("train", {}).get("img", "")
+    data_cfg = data_paths.get("processed", {})
+    val_img_dir = data_cfg.get("val", {}).get("img", "")
         
     mean = np.array(config.get("data", {}).get("normalization", {}).get("mean", [0.5, 0.5, 0.5]), dtype=np.float32)
     std = np.array(config.get("data", {}).get("normalization", {}).get("std", [0.5, 0.5, 0.5]), dtype=np.float32)
 
     img_files = []
-    if train_img_dir and os.path.isdir(train_img_dir):
-        img_files = [os.path.join(train_img_dir, f) for f in os.listdir(train_img_dir) if f.endswith('.png')]
-        img_files = sorted(img_files)[:200]  # Use up to 200 samples from train set
+    if val_img_dir and os.path.isdir(val_img_dir):
+        img_files = [os.path.join(val_img_dir, f) for f in os.listdir(val_img_dir) if f.endswith('.png')]
+        img_files = sorted(img_files)  # Use entire validation set for calibration
 
     def representative_data_gen():
         shape_to_gen = list(input_shape)
@@ -133,7 +127,7 @@ def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tupl
             shape_to_gen = [1] + shape_to_gen
             
         if img_files:
-            print(f"Calibration using {len(img_files)} images from {train_img_dir}")
+            print(f"Calibration using {len(img_files)} images from {val_img_dir}")
             for img_path in img_files:
                 img = cv2.imread(img_path)
                 if img is not None:
@@ -158,7 +152,7 @@ def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tupl
     if success:
         # Extract actual quant params from the produced .tflite and persist
         # them for the Rust build script.
-        params = extract_quant_params(output_path)
+        params = extract_quant_params(output_path, config_path)
     
         params_path = os.path.splitext(output_path)[0] + "_quant_params.json"
         with open(params_path, "w") as f:
@@ -174,12 +168,10 @@ def quantize_model(model_path: str, output_path: str, input_shape: Optional[Tupl
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 2:
-        model_path = sys.argv[1]
-        output_path = sys.argv[2]
-        quantize_model(model_path, output_path)
-    elif len(sys.argv) > 1 and sys.argv[1] == "nano_u2":
-        quantize_model("models/nano_u2.h5", "models/nano_u2.tflite")
-    else:
-        # verification/manual run
-        quantize_model("models/nano_u.h5", "models/nano_u.tflite")
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("model_path", nargs="?", default="models/nano_u.h5")
+    parser.add_argument("output_path", nargs="?", default="models/nano_u.tflite")
+    parser.add_argument("--config", default="config/config.yaml")
+    args = parser.parse_args()
+    quantize_model(args.model_path, args.output_path, config_path=args.config)

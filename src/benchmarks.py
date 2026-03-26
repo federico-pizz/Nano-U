@@ -18,13 +18,10 @@ from src.utils.config import load_config
 from src.data import make_dataset
 import argparse
 
-# Import the input shape from the config file globally
-_GLOBAL_CONFIG = load_config("config/config.yaml")
-INPUT_SHAPE = tuple(_GLOBAL_CONFIG["data"]["input_shape"])
 
 def benchmark_keras_inference(model_path: str,
                               dataset: Optional[tf.data.Dataset] = None,
-                              input_shape: Tuple[int, int, int] = INPUT_SHAPE,
+                              input_shape: Tuple[int, int, int] = (60, 80, 3),
                               num_iterations: int = 100) -> Dict[str, Any]:
     """Measure inference speed (latency and throughput) on a standard Keras model."""
     
@@ -116,7 +113,7 @@ def benchmark_keras_inference(model_path: str,
 
 def benchmark_tflite_inference(tflite_path: str, 
                                dataset: Optional[tf.data.Dataset] = None,
-                               input_shape: Tuple[int, int, int] = INPUT_SHAPE, 
+                               input_shape: Tuple[int, int, int] = (60, 80, 3), 
                                num_iterations: int = 100) -> Dict[str, Any]:
     """Measure inference speed (latency and throughput) directly on INT8 TFLite model."""
     
@@ -258,16 +255,13 @@ def run_benchmarks(model_name: str, config_path: str = "config/config.yaml") -> 
             
         print(f"Benchmarking model: {model_path}")
         
-        actual_shape = INPUT_SHAPE
+        actual_shape = tuple(config.get("data", {}).get("input_shape", (60, 80, 3)))
         
         # Try to load test dataset
         test_ds = None
         try:
-            # Select dataset based on model
-            if model_name == "nano_u2":
-                dataset_cfg = config.get("data", {}).get("paths", {}).get("secondary", {})
-                test_cfg = dataset_cfg.get("test", {})
-                print(f"Using secondary dataset ('tinyagri') for {model_name}")
+            if False:
+                pass
             else:
                 data_paths = config.get("data", {}).get("paths", {})
                 test_cfg = data_paths.get("processed", {}).get("test", {})
@@ -280,11 +274,16 @@ def run_benchmarks(model_name: str, config_path: str = "config/config.yaml") -> 
                 test_img_files = sorted([str(f) for f in t_img_dir.glob("*.png")])
                 test_mask_files = sorted([str(f) for f in t_mask_dir.glob("*.png")])
                 
+                norm_cfg = config.get("data", {}).get("normalization", {})
+                norm_mean = norm_cfg.get("mean", [0.5, 0.5, 0.5])
+                norm_std = norm_cfg.get("std", [0.5, 0.5, 0.5])
                 if test_img_files and len(test_img_files) == len(test_mask_files):
                     print(f"Found {len(test_img_files)} test pairs for benchmarking.")
                     test_ds = make_dataset(
                         test_img_files, test_mask_files,
-                        batch_size=1, augment=False # Batch size 1 for accurate latency
+                        batch_size=1, augment=False, # Batch size 1 for accurate latency
+                        target_size=(actual_shape[0], actual_shape[1]),
+                        mean=norm_mean, std=norm_std
                     )
         except Exception as e:
             print(f"Could not load test dataset for benchmarking: {e}")
@@ -304,14 +303,15 @@ def run_benchmarks(model_name: str, config_path: str = "config/config.yaml") -> 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Benchmark Nano-U or BU-Net model inference speed')
-    parser.add_argument('model', choices=['bu_net', 'nano_u', 'nano_u2'], help='Model to benchmark')
+    parser.add_argument('model', choices=['bu_net', 'nano_u'], help='Model to benchmark')
+    parser.add_argument('--config', default='config/config.yaml', help='Path to config file')
     args = parser.parse_args()
 
     print(f"{'='*55}")
     print(f"BENCHMARKING MODEL: {args.model}")
     print(f"{'='*55}")
     
-    results = run_benchmarks(args.model)
+    results = run_benchmarks(args.model, config_path=args.config)
     if "error" in results:
         print(f"\nBenchmark Failed: {results['error']}")
         print(results.get("traceback", ""))

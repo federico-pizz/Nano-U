@@ -17,6 +17,7 @@ Usage:
 
 import os
 import sys
+import argparse
 import shutil
 from pathlib import Path
 
@@ -27,12 +28,15 @@ from src.pipeline import run_training_pipeline, quantize_model_pipeline, benchma
 
 
 def main():
-    config_path = "config/config.yaml"
-    output_dir = "results/"
-    models_dir_path = "models/"
+    parser = argparse.ArgumentParser(description="Distillation pipeline: Teacher → Student")
+    parser.add_argument("--config", default="config/config.yaml", help="Path to config file")
+    args = parser.parse_args()
 
-    models_dir = Path(models_dir_path)
-    models_dir.mkdir(parents=True, exist_ok=True)
+    config_path = args.config
+    
+    from src.utils.config import load_config
+    config = load_config(config_path)
+    output_dir = config.get("data", {}).get("paths", {}).get("results_dir", "results/")
 
     print(f"\n{'='*55}")
     print("TEACHER → STUDENT DISTILLATION PIPELINE")
@@ -60,7 +64,9 @@ def main():
 
     # ── Phase 3 & 4: Quantize + Benchmark ───
     print(f"\n─── Phase 3 & 4: Quantize + Benchmark ───")
-    student_src = Path("models/nano_u.h5")
+    student_src = Path(student_res["model_path"])
+    models_dir_path = str(student_src.parent)
+    
     if not student_src.exists():
         print(f"Student model not found at {student_src}")
     else:
@@ -90,9 +96,6 @@ def main():
             config_path=config_path,
             out_path=str(teacher_eval_out)
         )
-        print(f"Teacher metrics:")
-        for k, v in eval_results_teacher.items():
-            print(f"  {k}: {v:.4f}")
         eval_results_all['teacher'] = eval_results_teacher
             
         # Evaluate Student
@@ -105,9 +108,6 @@ def main():
             out_path=str(student_eval_out)
         )
         
-        print(f"Student metrics:")
-        for k, v in eval_results_student.items():
-            print(f"  {k}: {v:.4f}")
         eval_results_all['student'] = eval_results_student
             
     except Exception as e:
@@ -129,8 +129,8 @@ def main():
         print(f"   Throughput:  {inf.get('throughput_fps', '?'):.1f} FPS")
         
     if eval_results_all and 'student' in eval_results_all:
-        print(f"   Test IoU:    {eval_results_all['student'].get('iou', 0):.4f}")
-        print(f"   Teacher IoU: {eval_results_all.get('teacher', {}).get('iou', 0):.4f}")
+        print(f"   Test mIoU:    {eval_results_all['student'].get('miou', 0):.4f}")
+        print(f"   Teacher mIoU: {eval_results_all.get('teacher', {}).get('miou', 0):.4f}")
         print(f"   Plots saved: {teacher_res['pipeline_dir']}/eval_predictions.png, {student_res['pipeline_dir']}/eval_predictions.png")
     print(f"{'='*55}\n")
 

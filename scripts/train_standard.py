@@ -24,11 +24,14 @@ def main():
         description="Standard training without KD → quantize → benchmark"
     )
     parser.add_argument("model", choices=["bu_net", "nano_u"], help="Model to train (bu_net or nano_u)")
+    parser.add_argument("--config", default="config/config.yaml", help="Path to config file")
     args = parser.parse_args()
 
-    config_path = "config/config.yaml"
-    output_dir = "results/"
-    models_dir_path = "models/"
+    config_path = args.config
+    
+    from src.utils.config import load_config
+    config = load_config(config_path)
+    output_dir = config.get("data", {}).get("paths", {}).get("results_dir", "results/")
 
     # ── 1. Train ──────────────────────────────────────────────────────────────
     print(f"\n{'='*55}")
@@ -36,10 +39,7 @@ def main():
     print(f"{'='*55}")
 
     # Explicitly load config to bypass KD for the standard training run
-    from src.utils.config import load_config
     import yaml
-    
-    config = load_config(config_path)
     
     # We must explicitly turn off distillation for standard training
     if "models" in config and args.model in config["models"]:
@@ -62,21 +62,12 @@ def main():
 
     print(f"\nTraining complete  →  {result['model_path']}")
 
-    # ── 2. Copy to models/ ────────────────────────────────────────────────────
-    print(f"\n─── Copy Models + Quantize + Benchmark ───")
-    models_dir = Path(models_dir_path)
-    models_dir.mkdir(parents=True, exist_ok=True)
-    
+    # ── 2. Post-processing ────────────────────────────────────────────────────
+    print(f"\n─── Quantize + Benchmark ───")
     src_model = Path(result["model_path"])
-    dst_model = models_dir / src_model.name
+    models_dir_path = str(src_model.parent)
     
-    if src_model.exists():
-        if src_model.absolute() != dst_model.absolute():
-            shutil.copy(src_model, dst_model)
-            print(f"Model weights copied  →  {dst_model}")
-        else:
-            print(f"Model weights already at destination  →  {dst_model}")
-    else:
+    if not src_model.exists():
         print(f"Completed model not found at {src_model}")
         sys.exit(1)
 
@@ -86,7 +77,7 @@ def main():
         print("POST-TRAINING: Quantize + Benchmark")
         print(f"{'─'*55}")
 
-        quant_res = quantize_model_pipeline(str(dst_model), models_dir=models_dir_path)
+        quant_res = quantize_model_pipeline(str(src_model), models_dir=models_dir_path)
         
         bench_res = {}
         if quant_res.get("status") == "success" and quant_res.get("tflite_path"):

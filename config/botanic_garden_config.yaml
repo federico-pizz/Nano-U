@@ -30,9 +30,9 @@ data:
         img: "data/botanic_garden/test/img"
         mask: "data/botanic_garden/test/mask"
 
-    models_dir: "models"
+    models_dir: "models/botanic_garden"
+    results_dir: "results/botanic_garden"
     
-    models_dir: "models"
 
 # Model Architecture Definitions
 models:
@@ -52,11 +52,11 @@ models:
 # Training Hyperparameters
 training:
   # General settings
-  seed: 37
+  seed: 98
   
   # Teacher (BU_Net) training config
   bu_net:
-    epochs: 150
+    epochs: 100
     batch_size: 32
     learning_rate: 1e-3
     weight_decay: 1e-3
@@ -64,7 +64,7 @@ training:
     loss: "binary_crossentropy" 
     augment: true
     early_stopping: true
-    patience: 10
+    patience: 20
     lr_scheduler: "plateau"
     lr_plateau_patience: 10
     lr_plateau_factor: 0.2
@@ -72,8 +72,8 @@ training:
 
   # Student (Nano_U) training config
   nano_u:
-    epochs: 100
-    batch_size: 16 # try 32 
+    epochs: 150
+    batch_size: 16
     learning_rate: 1e-3
     weight_decay: 1e-4
     optimizer: "adamw"
@@ -92,10 +92,9 @@ training:
     # Knowledge Distillation settings
     distillation:
       enabled: true
-      teacher_weights: "models/bu_net.h5"
-      alpha: 0.5        # Weight for student loss (1-alpha for teacher loss); lower => more teacher influence
-      temperature: 4.0  # Higher temperature to soften teacher distribution for richer distillation gradients
-
+      teacher_weights: "models/botanic_garden/bu_net.h5"
+      alpha: 0.3        # Lower alpha downweights standard BCE, focusing loss onto the teacher's predictions
+      temperature: 8.0  # Higher temperature dramatically softens teacher labels, passing fine-grained "dark knowledge" about small distant-path regions
 
 # Quantization settings (TFLite)
 quantization:

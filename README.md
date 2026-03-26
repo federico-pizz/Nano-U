@@ -60,7 +60,8 @@ To benchmark cross-domain generalization without camera-induced domain shift, we
 Nano-U/
 ├── config/                  # Global and experiment-level configuration
 │   ├── config.yaml          # Dataset paths, model shapes, global paths
-│   └── experiments.yaml     # Pre-defined experiments (standard, distillation, quick_test)
+│   ├── botanic_garden_config.yaml # Botanic Garden specific config
+│   └── tinyagri_config.yaml       # TinyAgri specific config
 ├── src/                     # Core library code
 │   ├── models/              # Model builders: Nano-U student and BU-Net teacher
 │   ├── utils/               # QAT wrappers, config loaders, and metrics
@@ -98,7 +99,7 @@ pip install -r requirements.txt
 Train Nano-U for 2 epochs to confirm the environment, datasets, and pipelines are configured correctly:
 
 ```bash
-python scripts/train_standard.py --experiment quick_test
+python scripts/train_standard.py nano_u --config config/botanic_garden_config.yaml
 ```
 
 ---
@@ -107,20 +108,26 @@ python scripts/train_standard.py --experiment quick_test
 
 ### Standard Training
 
-```bash
-# Train using the default configuration
-python scripts/train_standard.py
+Train models independently without Knowledge Distillation. You must explicitly specify whether to train the teacher (`bu_net`) or the student (`nano_u`).
 
-# Specify an experiment and target model
-python scripts/train_standard.py --experiment standard_training --model nano_u
+```bash
+# Train BU-Net using the default configuration
+python scripts/train_standard.py bu_net
+
+# Train Nano-U on a specific dataset configuration
+python scripts/train_standard.py nano_u --config config/botanic_garden_config.yaml
 ```
 
 ### Quantization-Aware Distillation (QAD)
 
-Trains the BU-Net teacher to convergence, then trains the Nano-U student with fused distillation and INT8 QAT:
+Trains both models in sequence: trains the BU-Net teacher to convergence, then trains the Nano-U student with fused distillation and INT8 QAT:
 
 ```bash
-python scripts/train_distillation.py --experiment distillation
+# Uses the default configuration
+python scripts/train_distillation.py
+
+# Uses a specific dataset configuration
+python scripts/train_distillation.py --config config/tinyagri_config.yaml
 ```
 
 ---
