@@ -13,6 +13,10 @@ name = "analysis"
 path = "./src/bin/analysis.rs"
 
 [[bin]]
+name = "single_inference"
+path = "./src/bin/single_inference.rs"
+
+[[bin]]
 name = "analysis_person_detect"
 path = "./src/bin/analysis_person_detect.rs"
 

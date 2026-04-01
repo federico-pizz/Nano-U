@@ -95,6 +95,10 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let bin_path = out_dir.join("input_images.bin");
     let mut bin_file = fs::File::create(&bin_path).expect("Cannot create input_images.bin");
+    
+    let target_idx = env::var("TARGET_IMG_IDX").unwrap_or("1".to_string());
+    println!("cargo:rustc-env=NANO_U_TARGET_IMG_IDX={}", target_idx);
+    println!("cargo:rerun-if-env-changed=TARGET_IMG_IDX");
 
     let img_h: u32 = env::var("NANO_U_IMG_H").unwrap_or("60".to_string()).parse().unwrap();
     let img_w: u32 = env::var("NANO_U_IMG_W").unwrap_or("80".to_string()).parse().unwrap();

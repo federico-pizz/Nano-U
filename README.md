@@ -10,15 +10,15 @@ The model is trained via **Quantization-Aware Distillation (QAD)** and deployed 
 
 ## Performance Highlights
 
-| Metric | Botanic Garden Dataset | Tiny Agri Dataset (Zero-Shot) |
-| :--- | :--- | :--- |
-| **mIoU** | 80.3% | 66.7% |
-| **Parameters** | 3,357 | 3,357 |
-| **Model Footprint** | 34 KB (.tflite) | 34 KB (.tflite) |
-| **Peak DRAM Usage** | 257 KB | 257 KB |
-| **Total Stack** | 313 KB | 313 KB |
-| **Latency** | 844 ms / inference | 844 ms / inference |
-| **Energy Consumption** | 422 mJ / inference (board-level) | 422 mJ / inference (board-level) |
+| Metric | Botanic Garden Dataset | Tiny Agri Dataset | Person Detection |
+| :--- | :--- | :--- | :--- |
+| **mIoU** | 89.7% | 68.9% | N/A |
+| **Parameters** | 3,357 | 3,357 | 210,708 |
+| **Model Footprint** | 34 KB (.tflite) | 34 KB (.tflite) | 293.5 KB (.tflite) |
+| **Peak DRAM Usage** | 257 KB | 257 KB | 170.5 KB |
+| **Total Stack** | 313 KB | 313 KB | 317 KB |
+| **Latency** | 844 ms / inference | 844 ms / inference | 3721 ms / inference |
+| **Energy Consumption** | 156 mJ / inference (board-level) | 156 mJ / inference (board-level) | ~688 mJ / inference (board-level) |
 
 ---
 
@@ -33,7 +33,7 @@ Nano-U relies on a strictly sequential encoder-decoder design to stay within the
 
 ### 2. Quantization-Aware Distillation (QAD)
 A network of fewer than 3,400 parameters cannot generalize from hard binary labels alone. QAD addresses this by fusing two training objectives into a single pass, rather than applying them sequentially:
-- **Knowledge Distillation:** Soft targets from BU-Net (12.85M parameters, trained to convergence) guide the student with temperature T=4.0 and α=0.5, exposing gradient signal on ambiguous boundary pixels that hard labels would suppress.
+- **Knowledge Distillation:** Soft targets from BU-Net (12.85M parameters, trained to convergence) guide the student with temperature $T=8.0$ and $\alpha=0.3$, exposing gradient signal on ambiguous boundary pixels that hard labels would suppress.
 - **Quantization-Aware Training (QAT):** Fake-quantization nodes are injected from the first epoch, allowing the optimizer to simultaneously minimize the distillation loss and quantization error. Fusing QAT with distillation from the start prevents the student from converging to float32 weights that are subsequently perturbed by integer conversion.
 
 ### 3. Rust Deployment via `microflow-rs`
@@ -50,7 +50,7 @@ Inference runs on bare-metal Xtensa LX7 using [our fork of MicroFlow](https://gi
 - **`no_std` Environment:** The wireless stack is never linked. PSRAM is initialized exclusively for input image storage. Only the CPU, internal DRAM, and PSRAM are active during inference, yielding a measured board-level power draw of 500 mW and 422 mJ per inference — approximately 25× lower than comparable WiFi-enabled ESP32 deployments.
 
 ### 4. TinyAgri Dataset
-To benchmark cross-domain generalization without camera-induced domain shift, we collected and publicly release **TinyAgri** — a terrain segmentation dataset captured directly via the onboard camera of an ESP32-CAM module in agricultural fields. Nano-U is evaluated on TinyAgri without any fine-tuning, achieving 66.7% mIoU under significant domain shift from the Botanic Garden training distribution.
+To benchmark cross-domain generalization without camera-induced domain shift, we collected and publicly release **TinyAgri** — a terrain segmentation dataset captured directly via the onboard camera of an ESP32-CAM module in agricultural fields. Nano-U is evaluated on TinyAgri without any fine-tuning, achieving 66.7% mIoU under significant domain shift from the Botanic Garden training distribution. For TinyAgri, Nano-U is also retrained from scratch using the same QAD pipeline and dataset-specific configuration ($T=4.0$ and $\alpha=0.5$), with no architectural changes.
 
 ---
 
