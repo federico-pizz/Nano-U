@@ -123,13 +123,25 @@ def run_training_pipeline(
 
         results_path = pipeline_dir / "results.json"
         
-        # Keep only the final epoch's results for a cleaner summary
+        # Report the best epoch's metrics for val-monitored keys (val_loss, val_binary_iou),
+        # and the last epoch's value for train keys.  The saved checkpoint corresponds to
+        # the epoch with the lowest val_loss, so using the last-epoch val metrics
+        # (which can be worse after LR decay or after the plateau) understates performance.
         summary_result = result.copy()
         if "final_metrics" in summary_result and isinstance(summary_result["final_metrics"], dict):
             final_epoch_metrics = {}
-            for k, v in summary_result["final_metrics"].items():
+            raw = summary_result["final_metrics"]
+            # Identify the best epoch by minimum val_loss
+            val_losses = raw.get("val_loss")
+            best_epoch = (
+                int(np.argmin(val_losses)) if isinstance(val_losses, list) and val_losses else None
+            )
+            for k, v in raw.items():
                 if isinstance(v, list) and len(v) > 0:
-                    final_epoch_metrics[k] = v[-1]
+                    if best_epoch is not None and k.startswith("val_"):
+                        final_epoch_metrics[k] = v[best_epoch]
+                    else:
+                        final_epoch_metrics[k] = v[-1]
                 else:
                     final_epoch_metrics[k] = v
             summary_result["final_metrics"] = final_epoch_metrics

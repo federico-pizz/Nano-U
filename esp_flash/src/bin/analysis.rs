@@ -16,7 +16,63 @@ use microflow::model;
 #[model("models/nano_u.tflite")]
 struct UNet;
 
-static mut INPUT_BUFFER: Option<Buffer4D<i8, 1, 60, 80, 3>> = None;
+const fn parse_u32_const(s: &str) -> u32 {
+    let bytes = s.as_bytes();
+    let mut val: u32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] >= b'0' && bytes[i] <= b'9' {
+            val = val * 10 + (bytes[i] - b'0') as u32;
+        }
+        i += 1;
+    }
+    val
+}
+
+const fn str_to_i32_const(s: &str) -> i32 {
+    let bytes = s.as_bytes();
+    let mut val: i64 = 0;
+    let mut neg = false;
+    let mut i = 0;
+
+    while i < bytes.len() && bytes[i] == b' ' { i += 1; }
+
+    if i < bytes.len() && bytes[i] == b'-' {
+        neg = true;
+        i += 1;
+    } else if i < bytes.len() && bytes[i] == b'+' {
+        i += 1;
+    }
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b >= b'0' && b <= b'9' {
+            val = val * 10 + (b - b'0') as i64;
+        } else if b == b'.' {
+            break;
+        }
+        i += 1;
+    }
+    let res = if neg { -val } else { val };
+    res as i32
+}
+
+const IMG_H: usize = parse_u32_const(env!("NANO_U_IMG_H")) as usize;
+const IMG_W: usize = parse_u32_const(env!("NANO_U_IMG_W")) as usize;
+const IMG_SIZE: usize = IMG_H * IMG_W * 3;
+
+// ── Quantization parameters ───────────────────────────────────────────────────
+const INPUT_SCALE: f32       = f32::from_bits(parse_u32_const(env!("NANO_U_INPUT_SCALE_BITS")));
+const INPUT_ZERO_POINT: i32  = str_to_i32_const(env!("NANO_U_INPUT_ZERO_POINT"));
+const NUM_IMAGES: usize      = parse_u32_const(env!("NANO_U_NUM_IMAGES")) as usize;
+const MEAN_R: f32 = f32::from_bits(parse_u32_const(env!("NANO_U_MEAN_R_BITS")));
+const MEAN_G: f32 = f32::from_bits(parse_u32_const(env!("NANO_U_MEAN_G_BITS")));
+const MEAN_B: f32 = f32::from_bits(parse_u32_const(env!("NANO_U_MEAN_B_BITS")));
+const STD_R: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_R_BITS")));
+const STD_G: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_G_BITS")));
+const STD_B: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_B_BITS")));
+
+static mut INPUT_BUFFER: Option<Buffer4D<i8, 1, IMG_H, IMG_W, 3>> = None;
 
 unsafe extern "C" {
     static mut _stack_start: u32;
@@ -99,7 +155,7 @@ fn main() -> ! {
     unsafe {
         if INPUT_BUFFER.is_none() {
             let input_image =
-                microflow::buffer::Buffer2D::<[i8; 3], 60, 80>::from_element([0, 0, 0]);
+                microflow::buffer::Buffer2D::<[i8; 3], IMG_H, IMG_W>::from_element([0, 0, 0]);
             INPUT_BUFFER = Some([input_image]);
         }
     }
@@ -109,24 +165,38 @@ fn main() -> ! {
     }
 
     const RAW_IMAGES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/input_images.bin"));
-    const IMG_SIZE: usize = 60 * 80 * 3;
+
+    // Build quantization LUTs once (same formula as inference.rs)
+    let mut quant_lut_r = [0i8; 256];
+    let mut quant_lut_g = [0i8; 256];
+    let mut quant_lut_b = [0i8; 256];
+    for j in 0..256 {
+        let x = j as f32 / 255.0;
+        let q_r = libm::roundf((x - MEAN_R) / STD_R / INPUT_SCALE + INPUT_ZERO_POINT as f32) as i32;
+        quant_lut_r[j] = q_r.clamp(-128, 127) as i8;
+        let q_g = libm::roundf((x - MEAN_G) / STD_G / INPUT_SCALE + INPUT_ZERO_POINT as f32) as i32;
+        quant_lut_g[j] = q_g.clamp(-128, 127) as i8;
+        let q_b = libm::roundf((x - MEAN_B) / STD_B / INPUT_SCALE + INPUT_ZERO_POINT as f32) as i32;
+        quant_lut_b[j] = q_b.clamp(-128, 127) as i8;
+    }
 
     // Run a finite number of iterations for stack analysis
     for i in 0..50 {
+        let img_idx = if NUM_IMAGES > 0 { i % NUM_IMAGES } else { 0 };
         println!("Running Inference Iteration {}...", i + 1);
 
-        let start_idx = i * IMG_SIZE;
+        let start_idx = img_idx * IMG_SIZE;
         unsafe {
             if let Some(ref mut batch) = INPUT_BUFFER {
                 if start_idx + IMG_SIZE <= RAW_IMAGES.len() {
                     let img_data = &RAW_IMAGES[start_idx..start_idx + IMG_SIZE];
 
-                    for h in 0..60 {
-                        for w in 0..80 {
-                            let base_idx = (h * 80 + w) * 3;
-                            let r = (img_data[base_idx] as i16 - 128) as i8;
-                            let g = (img_data[base_idx + 1] as i16 - 128) as i8;
-                            let b = (img_data[base_idx + 2] as i16 - 128) as i8;
+                    for h in 0..IMG_H {
+                        for w in 0..IMG_W {
+                            let base_idx = (h * IMG_W + w) * 3;
+                            let r = quant_lut_r[img_data[base_idx]     as usize];
+                            let g = quant_lut_g[img_data[base_idx + 1] as usize];
+                            let b = quant_lut_b[img_data[base_idx + 2] as usize];
                             batch[0][(h, w)] = [r, g, b];
                         }
                     }
@@ -153,7 +223,7 @@ fn main() -> ! {
         // Re-initialize for next loop safety
         unsafe {
             let dummy_image =
-                microflow::buffer::Buffer2D::<[i8; 3], 60, 80>::from_element([0, 0, 0]);
+                microflow::buffer::Buffer2D::<[i8; 3], IMG_H, IMG_W>::from_element([0, 0, 0]);
             INPUT_BUFFER = Some([dummy_image]);
         }
 
@@ -167,21 +237,21 @@ fn main() -> ! {
     // Pre-process a single image once into a buffer to avoid timing/energy jitter
     println!("Preparing static image for continuous inference...");
     let mut static_input_image =
-        microflow::buffer::Buffer2D::<[i8; 3], 60, 80>::from_element([0, 0, 0]);
+        microflow::buffer::Buffer2D::<[i8; 3], IMG_H, IMG_W>::from_element([0, 0, 0]);
     if IMG_SIZE <= RAW_IMAGES.len() {
         let img_data = &RAW_IMAGES[0..IMG_SIZE];
-        for h in 0..60 {
-            for w in 0..80 {
-                let base_idx = (h * 80 + w) * 3;
-                let r = (img_data[base_idx] as i16 - 128) as i8;
-                let g = (img_data[base_idx + 1] as i16 - 128) as i8;
-                let b = (img_data[base_idx + 2] as i16 - 128) as i8;
+        for h in 0..IMG_H {
+            for w in 0..IMG_W {
+                let base_idx = (h * IMG_W + w) * 3;
+                let r = quant_lut_r[img_data[base_idx]     as usize];
+                let g = quant_lut_g[img_data[base_idx + 1] as usize];
+                let b = quant_lut_b[img_data[base_idx + 2] as usize];
                 static_input_image[(h, w)] = [r, g, b];
             }
         }
     }
 
-    let static_batch: Buffer4D<i8, 1, 60, 80, 3> = [static_input_image];
+    let static_batch: Buffer4D<i8, 1, IMG_H, IMG_W, 3> = [static_input_image];
     println!("Starting continuous inference loop for power measurement.");
 
     loop {

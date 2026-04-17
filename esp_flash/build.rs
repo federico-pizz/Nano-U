@@ -8,7 +8,7 @@ fn main() {
     println!("cargo:rustc-link-arg=-Tlinkall.x");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let models_dir_default = manifest_dir.parent().unwrap().join("models");
+    let models_dir_default = manifest_dir.parent().unwrap().join("models").join("botanic_garden");
     let test_img_dir_default = manifest_dir.parent().unwrap().join("data").join("botanic_garden").join("test").join("img");
 
     let models_dir = env::var("MODELS_DIR")
@@ -138,6 +138,7 @@ fn main() {
     }
 
     println!("cargo:warning=Packed {} images into input_images.bin", count);
+    println!("cargo:rustc-env=NANO_U_NUM_IMAGES={}", count);
 }
 
 // ── Lightweight JSON helpers ─────

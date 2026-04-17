@@ -209,24 +209,67 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
 
     print('Running evaluation on test set...')
 
+    # -----------------------------------------------------------------------
+    # Determine ONCE whether the model outputs probabilities or raw logits.
+    # Doing this per-batch is unreliable: a batch of uncertain logit values
+    # that happen to fall in [0, 1] would be wrongly treated as probabilities.
+    # We probe a single sample before the main loop instead.
+    # -----------------------------------------------------------------------
+    def _run_single_sample(sample_img):
+        """Run the model on one sample (shape [1, H, W, C]) and return a numpy array."""
+        if is_tflite and interpreter is not None:
+            in_det = input_details[0]
+            in_dtype = in_det['dtype']
+            inp = sample_img.numpy()
+            q_sc, q_zp = (None, None)
+            if 'quantization' in in_det and in_det['quantization'] != (0.0, 0):
+                q_sc, q_zp = in_det['quantization']
+            if (in_dtype == np.int8 or in_dtype == np.uint8) and q_sc is not None:
+                inp = np.clip(np.round(inp / q_sc) + q_zp,
+                              np.iinfo(in_dtype).min, np.iinfo(in_dtype).max).astype(in_dtype)
+            else:
+                inp = inp.astype(in_dtype)
+            interpreter.set_tensor(in_det['index'], inp)
+            interpreter.invoke()
+            out_det = output_details[0]
+            out = interpreter.get_tensor(out_det['index'])
+            out_dtype = out_det['dtype']
+            out_qs, out_qz = (None, None)
+            if 'quantization' in out_det and out_det['quantization'] != (0.0, 0):
+                out_qs, out_qz = out_det['quantization']
+            if (out_dtype == np.int8 or out_dtype == np.uint8) and out_qs is not None:
+                out = (out.astype(np.float32) - out_qz) * out_qs
+            else:
+                out = out.astype(np.float32)
+            return out
+        else:
+            return model(sample_img, training=False).numpy()
+
+    _probe_batch = next(iter(test_ds))
+    _probe_out = _run_single_sample(_probe_batch[0][0:1])
+    is_prob = bool(_probe_out.min() >= -1e-3 and _probe_out.max() <= 1.0 + 1e-3)
+    print(f'Output type: {"probabilities" if is_prob else "logits"} '
+          f'(probe range [{_probe_out.min():.3f}, {_probe_out.max():.3f}])')
+
+    # Cache TFLite quantization params outside the inner loop to avoid re-reading per batch
+    if is_tflite and interpreter is not None:
+        in_det = input_details[0]
+        in_index = in_det['index']
+        in_dtype = in_det['dtype']
+        q_scale, q_zero = (None, None)
+        if 'quantization' in in_det and in_det['quantization'] != (0.0, 0):
+            q_scale, q_zero = in_det['quantization']
+        out_det = output_details[0]
+        out_dtype = out_det['dtype']
+        out_qscale, out_qzero = (None, None)
+        if 'quantization' in out_det and out_det['quantization'] != (0.0, 0):
+            out_qscale, out_qzero = out_det['quantization']
+
     for imgs, masks in test_ds:
         # If we loaded a TFLite interpreter and it is usable, run it; otherwise use the Keras model
         if is_tflite and interpreter is not None:
             # TFLite interpreter may not accept dynamic batch sizes; run sample-wise to be safe
             batch_outs = []
-            in_det = input_details[0]
-            in_index = in_det['index']
-            in_dtype = in_det['dtype']
-            q_scale, q_zero = (None, None)
-            if 'quantization' in in_det and in_det['quantization'] != (0.0, 0):
-                q_scale, q_zero = in_det['quantization']
-
-            # Prepare output dequantization info
-            out_det = output_details[0]
-            out_dtype = out_det['dtype']
-            out_qscale, out_qzero = (None, None)
-            if 'quantization' in out_det and out_det['quantization'] != (0.0, 0):
-                out_qscale, out_qzero = out_det['quantization']
 
             for i in range(imgs.shape[0]):
                 inp = imgs[i:i+1].numpy()
@@ -253,15 +296,13 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
         else:
             outputs = model(imgs, training=False)
 
-        # Detect whether model output is probabilities (in [0,1]) or raw logits.
         # Ensure we operate on a numpy float32 array for dtype-safe ops
         if isinstance(outputs, tf.Tensor):
             out_np = outputs.numpy()
         else:
             out_np = np.array(outputs)
 
-        is_prob = out_np.min() >= -1e-3 and out_np.max() <= 1.0 + 1e-3
-
+        # is_prob is determined once before the loop — do not recompute here
         if is_prob:
             probs = tf.convert_to_tensor(out_np, dtype=tf.float32)
             # convert probabilities to logits for loss functions expecting logits
@@ -363,6 +404,14 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
 
     plt.savefig(out_path, dpi=150)
     print(f'Plot saved to {out_path}')
+
+    # Always save metrics to eval_results.json alongside the plot so that
+    # summarize_results.py can compare float32 and INT8 on the same test set.
+    eval_results_path = os.path.join(os.path.dirname(out_path), 'eval_results.json')
+    import json as _json
+    with open(eval_results_path, 'w') as _f:
+        _json.dump(results, _f, indent=2)
+    print(f'Metrics saved to {eval_results_path}')
 
     return results
 

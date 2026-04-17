@@ -11,7 +11,6 @@ import yaml
 import json
 import traceback
 import tensorflow_model_optimization as tfmot
-import numpy as np
 
 class NumpyEncoder(json.JSONEncoder):
     """Custom JSON encoder for NumPy types."""
@@ -134,26 +133,23 @@ def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tenso
     gradients = tape.gradient(total_loss, student.trainable_variables)
     optimizer.apply_gradients(zip(gradients, student.trainable_variables))
     
-    # Compute batch-level binary_iou functionally for progress logging
-    # (stateful Metric objects cannot be initialized inside tf.function)
+    # Return raw TP/FP/FN/TN counts so the caller can accumulate them across
+    # batches and compute mIoU with the same formula as BinaryIoU, keeping
+    # the train metric consistent with the validation metric.
+    # (stateful Metric objects cannot be used inside tf.function)
     y_pred_sig = tf.nn.sigmoid(student_pred)
     y_pred_bin = tf.cast(y_pred_sig > 0.5, tf.float32)
     y_true_bin = tf.cast(y > 0.5, tf.float32)
-    intersection_fg = tf.reduce_sum(y_true_bin * y_pred_bin)
-    union_fg = tf.reduce_sum(y_true_bin) + tf.reduce_sum(y_pred_bin) - intersection_fg
-    iou_fg = intersection_fg / (union_fg + 1e-7)
-    
-    intersection_bg = tf.reduce_sum((1 - y_true_bin) * (1 - y_pred_bin))
-    union_bg = tf.reduce_sum(1 - y_true_bin) + tf.reduce_sum(1 - y_pred_bin) - intersection_bg
-    iou_bg = intersection_bg / (union_bg + 1e-7)
-    
-    iou = (iou_fg + iou_bg) / 2.0
+    tp = tf.reduce_sum(y_true_bin * y_pred_bin)
+    fp = tf.reduce_sum((1 - y_true_bin) * y_pred_bin)
+    fn = tf.reduce_sum(y_true_bin * (1 - y_pred_bin))
+    tn = tf.reduce_sum((1 - y_true_bin) * (1 - y_pred_bin))
 
     return {
         'loss': total_loss,
         'student_loss': student_loss,
         'distillation_loss': distill_loss,
-        'binary_iou': iou
+        'tp': tp, 'fp': fp, 'fn': fn, 'tn': tn,
     }
 
 
@@ -470,36 +466,58 @@ def train_with_distillation(
                 "loss": [],
                 "student_loss": [],
                 "distillation_loss": [],
-                "binary_iou": []
             }
-            
+            # Accumulate confusion-matrix counts across batches to compute
+            # mIoU with the same formula as BinaryIoU (consistent with val metric).
+            train_tp = train_fp = train_fn = train_tn = 0.0
+
             print(f"Epoch {epoch + 1}/{epochs}")
             progbar = keras.utils.Progbar(target=len(train_dataset), stateful_metrics=['loss', 'binary_iou', 'lr'])
-            
+
             for step, (x_batch, y_batch) in enumerate(train_dataset):
                 losses = train_step(
                     student, teacher, x_batch, y_batch, optimizer, alpha, temperature,
                     bce_loss_fn, mse_loss_fn
                 )
-                
+
                 for key, value in losses.items():
+                    if key in ('tp', 'fp', 'fn', 'tn'):
+                        continue  # handled separately below
                     if key not in epoch_losses:
                         epoch_losses[key] = []
                     epoch_losses[key].append(value.numpy())
-                
+
+                train_tp += losses['tp'].numpy()
+                train_fp += losses['fp'].numpy()
+                train_fn += losses['fn'].numpy()
+                train_tn += losses['tn'].numpy()
+
+                # Running mIoU for progress bar (same formula as BinaryIoU)
+                _eps = 1e-7
+                _iou_fg = train_tp / (train_tp + train_fp + train_fn + _eps)
+                _iou_bg = train_tn / (train_tn + train_fp + train_fn + _eps)
+                running_iou = (_iou_fg + _iou_bg) / 2.0
+
                 # Update progress bar
                 lr = float(optimizer.learning_rate.numpy())
                 current_metrics = [
                     ('loss', losses['loss'].numpy()),
-                    ('binary_iou', losses['binary_iou'].numpy()),
+                    ('binary_iou', running_iou),
                     ('lr', lr)
                 ]
                 progbar.update(step + 1, values=current_metrics)
-            
+
             # Calculate epoch averages - convert to standard float for JSON serialization
             for key, values in epoch_losses.items():
                 history.setdefault(key, [])
                 history[key].append(float(np.mean(values)))
+
+            # Epoch-level mIoU from accumulated counts
+            _eps = 1e-7
+            _iou_fg = train_tp / (train_tp + train_fp + train_fn + _eps)
+            _iou_bg = train_tn / (train_tn + train_fp + train_fn + _eps)
+            history.setdefault('binary_iou', [])
+            history['binary_iou'].append(float((_iou_fg + _iou_bg) / 2.0))
             
             # Validation phase
             if val_dataset:
@@ -562,6 +580,7 @@ def train_with_distillation(
 
                 # Model checkpointing + LR scheduling + early stopping
                 improved = current_val_loss < best_val_loss
+                old_best = best_val_loss
                 best_val_loss, patience_counter, lr_patience_counter, stopped = update_plateau_and_early_stopping(
                     epoch,
                     config,
@@ -574,7 +593,7 @@ def train_with_distillation(
 
                 if improved:
                     print(
-                        f"Epoch {epoch + 1}: val_loss improved from {best_val_loss:.5f} to {current_val_loss:.5f}, "
+                        f"Epoch {epoch + 1}: val_loss improved from {old_best:.5f} to {current_val_loss:.5f}, "
                         f"saving model to {checkpoint_path}"
                     )
                     student.save(checkpoint_path)
@@ -585,9 +604,12 @@ def train_with_distillation(
                         student.load_weights(checkpoint_path)
                     break
             
-            # Trigger NAS callback manually at epoch end
+            # Trigger NAS callback manually at epoch end.
+            # Keras expects logs to be the current epoch's metrics dict, not
+            # the full history — pass only the last recorded value per key.
             if nas_callback:
-                nas_callback.on_epoch_end(epoch, logs=history)
+                epoch_logs = {k: v[-1] for k, v in history.items() if v}
+                nas_callback.on_epoch_end(epoch, logs=epoch_logs)
         
         # Single-line completion summary
         completed_epochs = len(history.get("loss", []))
