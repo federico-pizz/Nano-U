@@ -14,26 +14,27 @@ The model is trained via **Quantization-Aware Distillation (QAD)**, a single-pas
 
 | Model | Dataset | mIoU | F1 | Precision | Recall |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| BU-Net (Teacher) | Botanic Garden | 96.6% | 97.1% | 97.3% | 96.8% |
-| Nano-U (Float32) | Botanic Garden | 89.9% | 90.7% | 95.8% | 86.0% |
-| **Nano-U (INT8, ESP32)** | **Botanic Garden** | **89.8%** | **90.7%** | **95.9%** | **86.0%** |
-| BU-Net (Teacher) | TinyAgri | 92.7% | 96.2% | 94.8% | 97.6% |
-| Nano-U (Float32) | TinyAgri | 88.0% | 93.6% | 92.0% | 95.3% |
-| **Nano-U (INT8, ESP32)** | **TinyAgri** | **68.8%** | **81.4%** | **79.9%** | **82.9%** |
+| BU-Net (Teacher) | Botanic Garden | 95.1% | 95.7% | 96.2% | 95.2% |
+| Nano-U (Float32) | Botanic Garden | 87.0% | 87.6% | 96.0% | 80.6% |
+| **Nano-U (INT8, ESP32)** | **Botanic Garden** | **87.0%** | **87.7%** | **96.0%** | **80.7%** |
+| BU-Net (Teacher) | TinyAgri | 90.9% | 95.1% | 94.5% | 95.7% |
+| Nano-U (Float32) | TinyAgri | 88.3% | 93.8% | 91.9% | 95.7% |
+| **Nano-U (INT8, ESP32)** | **TinyAgri** | **70.0%** | **82.3%** | **80.7%** | **84.0%** |
 
-The negligible 0.1% mIoU drop from Float32 to INT8 on Botanic Garden confirms that the QAD pipeline successfully preserves accuracy through integer conversion. The larger drop on TinyAgri reflects the increased difficulty of encoding dense, overlapping vegetation boundaries into INT8 precision.
+The negligible mIoU drop from Float32 to INT8 on Botanic Garden confirms that the QAD pipeline successfully preserves accuracy through integer conversion. The larger drop on TinyAgri reflects the increased difficulty of encoding dense, overlapping vegetation boundaries into INT8 precision.
 
 ### Hardware Efficiency on ESP32-S3
 
-| Metric | Value |
-| :--- | :--- |
-| Parameters | 3,357 |
-| Model size (.tflite) | 33 KB |
-| Output | 60×80 binary mask |
-| Peak internal Data RAM | 257 KB |
-| Inference latency | 844 ms (~1.2 FPS) |
-| Energy per inference (SoC-level, 3.3 V) | 156 mJ |
-| Energy per inference (board-level, 5 V USB) | 422 mJ |
+| Metric | MobileNetV1-0.25 | Nano-U |
+| :--- | :--- | :--- |
+| Task | Binary classification | Binary segmentation |
+| Parameters | 210,708 | 3,357 |
+| Model size (.tflite) | 294 KB | 33 KB |
+| Output | 1 scalar | 60×80 pixel mask |
+| Peak internal Data RAM | 170 KB | 257 KB |
+| Inference latency | 3,721 ms | 845 ms (~1.2 FPS) |
+
+Board-level power consumption during inference is 470 mW (idle baseline: 137 mW), yielding an energy cost of **397 mJ per inference** (470 mW × 0.845 s). This measurement is inclusive of all onboard components: the LDO regulator, OV2640 camera module, and USB-UART bridge.
 
 Peak RAM is measured via **stack painting** — the stack is pre-filled with a known byte pattern before inference and scanned afterward to find the high-water mark. The 257 KB figure is a direct hardware measurement inclusive of all MicroFlow tensor allocations and call-frame overhead, and it remains safely within the 320 KB Data RAM budget.
 
@@ -49,6 +50,8 @@ Nano-U is a strictly sequential encoder-decoder with seven stages, operating on 
 - **Asymmetric Pooling**: a 3×2 MaxPool at Stage 3 reduces 15×20 cleanly to 5×10, avoiding the spatial misalignment a standard 2×2 pool would introduce.
 - **Nearest-Neighbor Upsampling** in the decoder requires no multiply-accumulate operations and is numerically stable under INT8 quantization.
 - **Channel widths** [4, 8, 16] are co-designed with spatial dimensions so the largest intermediate activation tensor is 60×80×4 = 19.2 KB in INT8, keeping the total tensor arena within 320 KB.
+
+The original FP32 model contains 4,688 parameters; at TFLite export time, batch normalization statistics are folded into the preceding convolutional weights and adjacent layers are fused, reducing the stored parameter count to 3,357 without any loss of representational capacity.
 
 | Stage | Input | Output | Channels | Op |
 | :--- | :--- | :--- | :--- | :--- |
@@ -80,7 +83,7 @@ where $\mathcal{L}_\text{KD}$ is the MSE between temperature-scaled sigmoid outp
 Inference runs on bare-metal Xtensa LX7 using our [fork of MicroFlow](https://github.com/federico-pizz/microflow-rs), extended with three operators required by Nano-U: `MaxPool2D`, nearest-neighbor `UpSampling2D`, and `Sigmoid`.
 
 - **Compile-Time Graph Evaluation**: MicroFlow resolves the full operator graph at compile time via a Rust procedural macro. All tensor buffers are placed in static DRAM at link time — no heap allocator, no dynamic dispatch, no interpreter overhead.
-- **`no_std` environment**: the wireless stack is never initialized. Only the CPU, internal DRAM, and PSRAM (for input image storage) are active during inference. This minimalist execution model is responsible for the low energy figures reported above.
+- **`no_std` environment**: the wireless stack is never initialized. Only the CPU, internal DRAM, and PSRAM (for input image storage) are active during inference. This minimalist execution model eliminates the power overhead of background OS tasks and unused hardware subsystems.
 
 ```rust
 #[model("models/nano_u.tflite")]
@@ -270,16 +273,16 @@ All on-device experiments use an **ESP32-S3-CAM** (dual-core Xtensa LX7 @ 240 MH
 
 During benchmarks, the OV2640 camera is not used for live capture. Input images are loaded from PSRAM to isolate pure inference latency from peripheral I/O. Inference is constrained to a single core, leaving the secondary core available for concurrent system tasks.
 
-SoC-level energy (156 mJ) is measured by reading current directly at the 3.3 V pin. Board-level energy (422 mJ) is measured at the 5 V USB supply rail and includes the LDO regulator, camera module, and USB-UART bridge.
+Board-level energy (397 mJ) is measured at the 5 V USB supply rail and includes the LDO regulator, camera module, and USB-UART bridge. Over 50 consecutive inference runs, latency varied by only 2 ms (845–847 ms), confirming that MicroFlow's static allocation model produces fully deterministic execution with no heap-induced jitter.
 
 ---
 
 ## Limitations and Future Work
 
-- **Quantization bottleneck on complex scenes**: the 68.8% mIoU on TinyAgri reveals that forcing dense, overlapping vegetation boundaries into INT8 precision causes accuracy degradation the QAD pipeline only partially mitigates. Higher bit-width quantization or mixed-precision schemes may help.
-- **Single-core inference**: the secondary Xtensa LX7 core is currently idle during inference. Distributing the inference graph across both cores within MicroFlow is the most direct path to reducing the 844 ms latency.
-- **Board-level energy measurement**: reported figures are inclusive of the LDO, camera module, and USB-UART bridge. GPIO-isolated measurement at the SoC power pin would yield a more precise per-inference figure.
-- **Fixed-domain deployment**: Nano-U is currently re-trained from scratch for each new domain. On-device continual learning using the second core could enable deployment-time adaptation to unseen terrain types without full retraining.
+- **Quantization bottleneck on complex scenes**: the 18.3 pp mIoU gap on TinyAgri reveals that forcing dense, overlapping vegetation boundaries into INT8 precision causes accuracy degradation the QAD pipeline only partially mitigates. Higher bit-width quantization or mixed-precision schemes (e.g., INT16 in the final decoder stage) may help.
+- **Single-core inference**: the secondary Xtensa LX7 core is currently idle during inference. Distributing the inference graph across both cores within MicroFlow is the most direct path to reducing the 845 ms latency.
+- **Live capture pipeline**: the current evaluation isolates pure inference latency by loading images from PSRAM. Closing the full pipeline — live capture, JPEG decompression, preprocessing, inference, and mask output — on a moving rover would validate real-world throughput.
+- **Fixed-domain deployment**: Nano-U is currently re-trained from scratch for each new domain. SVD-based redundancy scores suggest the encoder generalizes across terrain types while the decoder is domain-specific, motivating a transfer strategy in which only the decoder is re-distilled on new data.
 
 ---
 
@@ -292,7 +295,7 @@ If you use Nano-U or the TinyAgri dataset in your work, please cite:
   title     = {Nano-U: Efficient Terrain Segmentation for Tiny Robot Navigation},
   author    = {Pizzolato, Federico and Pasti, Francesco and Bellotto, Nicola},
   booktitle = {TODO: conference/journal},
-  year      = {2025}
+  year      = {2026}
 }
 ```
 
