@@ -16,8 +16,6 @@ dist/
 # Virtual Environments
 .venv-tf/
 
-# Pytest
-pytest.ini
 
 # --- IDE / Editors ---
 .vscode/
@@ -26,12 +24,12 @@ pytest.ini
 .DS_Store
 Thumbs.db
 
-# Data
-data/
+# Data (structure tracked via .gitkeep; see data/.gitignore)
 results/
 
-# Models
-models/
+# Dataset-specific configs (config/config.yaml is the public template)
+config/botanic_garden_config.yaml
+config/tinyagri_config.yaml
 
 # Legacy / Old folder content
 old_nano_u/
@@ -50,13 +48,16 @@ Cargo.lock
 *.tiff
 *.json
 
-# Rust subproject esp_flash
-esp_flash/target/
-esp_flash/.cargo/
+# Rust subproject firmware
+firmware/target/
+firmware/.cargo/
+
+# Tools (utility/private scripts — not part of public API)
+tools/
 
 # data processing
 extract_botanicgarden.py
-extract_tinyagri.py 
+extract_tinyagri.py
 
-# article outline 
+# article outline
 outline.txt

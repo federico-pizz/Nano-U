@@ -1,0 +1,6 @@
+# Ignore all data content; only folder structure (via .gitkeep) is tracked.
+# Download datasets from HuggingFace and place them here.
+*
+!.gitignore
+!*/
+!.gitkeep

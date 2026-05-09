@@ -1,67 +1,65 @@
-# Configuration for Nano-U Project (TensorFlow)
+# Configuration template for Nano-U
+# Copy this file, rename it (e.g. my_dataset_config.yaml), and fill in your paths.
 
 # Global Data settings
 data:
   input_shape: [60, 80, 3]  # Height, Width, Channels (TF format: NHWC)
   num_classes: 1            # Binary segmentation
-  
-  # Normalization parameters (used in training and inference preprocessing)
-  # Data is normalized to [-1, 1] range: (x / 255.0 - mean) / std
+
+  # Normalization: (x / 255.0 - mean) / std  →  [-1, 1] range
   normalization:
     mean: [0.5, 0.5, 0.5]
     std: [0.5, 0.5, 0.5]
 
-  # Data splitting strategy used in preparation
+  # Data splitting strategy used during preparation
   split:
     train: 0.7
     validation: 0.2
     test: 0.1
 
   paths:
-    processed: 
-      root: "data/botanic_garden"
+    processed:
+      root: "data/<your_dataset>"
       train:
-        img: "data/botanic_garden/train/img"
-        mask: "data/botanic_garden/train/mask"
+        img: "data/<your_dataset>/train/img"
+        mask: "data/<your_dataset>/train/mask"
       val:
-        img: "data/botanic_garden/val/img"
-        mask: "data/botanic_garden/val/mask"
+        img: "data/<your_dataset>/val/img"
+        mask: "data/<your_dataset>/val/mask"
       test:
-        img: "data/botanic_garden/test/img"
-        mask: "data/botanic_garden/test/mask"
+        img: "data/<your_dataset>/test/img"
+        mask: "data/<your_dataset>/test/mask"
 
     models_dir: "models"
-    
-    models_dir: "models"
+
 
 # Model Architecture Definitions
 models:
-  # Teacher Model (BU_Net) - UNet-like architecture
+  # Teacher Model (BU-Net) — UNet-like architecture
   bu_net:
-    filters: [64, 128, 256, 512, 1024] # Encoder filters
+    filters: [64, 128, 256, 512, 1024]
     bottleneck: 1024
     decoder_filters: [512, 256, 128, 64]
-    
-  # Student Model (Nano_U) - Ultra-light model for embedded deployment
+
+  # Student Model (Nano-U) — ultra-light model for embedded deployment
   nano_u:
     filters: [4, 8, 16]
-    bottleneck: 16 # try 32
+    bottleneck: 16
     decoder_filters: [16, 8, 4]
 
 
 # Training Hyperparameters
 training:
-  # General settings
   seed: 37
-  
-  # Teacher (BU_Net) training config
+
+  # Teacher (BU-Net) training config
   bu_net:
     epochs: 150
     batch_size: 32
     learning_rate: 1e-3
     weight_decay: 1e-3
     optimizer: "adamw"
-    loss: "binary_crossentropy" 
+    loss: "binary_crossentropy"
     augment: true
     early_stopping: true
     patience: 10
@@ -70,10 +68,10 @@ training:
     lr_plateau_factor: 0.2
     min_lr: 1e-6
 
-  # Student (Nano_U) training config
+  # Student (Nano-U) training config
   nano_u:
     epochs: 100
-    batch_size: 16 # try 32 
+    batch_size: 16
     learning_rate: 1e-3
     weight_decay: 1e-4
     optimizer: "adamw"
@@ -88,18 +86,18 @@ training:
     lr_plateau_factor: 0.2
     min_lr: 1e-6
     layers_to_monitor: ['enc1a_dw', 'bottleneck_a_dw', 'dec2_conv_b_pw']
-    
+
     # Knowledge Distillation settings
     distillation:
       enabled: true
-      teacher_weights: "models/bu_net.h5"
-      alpha: 0.5        # Weight for student loss (1-alpha for teacher loss); lower => more teacher influence
-      temperature: 4.0  # Higher temperature to soften teacher distribution for richer distillation gradients
+      teacher_weights: "models/<your_dataset>/bu_net.h5"
+      alpha: 0.5       # Weight for student loss (1-alpha for teacher loss)
+      temperature: 4.0 # Higher temperature softens teacher distribution
 
 
-# Quantization settings (TFLite)
+# Quantization settings (TFLite INT8 export)
 quantization:
-  method: "dynamic_range" # or "full_integer"
+  method: "dynamic_range"  # or "full_integer"
   representative_dataset_size: 100
   input_type: "int8"
   output_type: "int8"
