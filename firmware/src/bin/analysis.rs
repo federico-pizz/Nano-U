@@ -11,51 +11,12 @@ esp_bootloader_esp_idf::esp_app_desc!();
 use microflow::buffer::Buffer4D;
 use microflow::model;
 
+use nano_u_esp::{parse_u32_const, str_to_i32_const};
+
 // Model is copied from ../models/nano_u.tflite by build.rs (Python pipeline output)
 // Input: 60x80x3, Output: 60x80x1
 #[model("models/nano_u.tflite")]
 struct UNet;
-
-const fn parse_u32_const(s: &str) -> u32 {
-    let bytes = s.as_bytes();
-    let mut val: u32 = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] >= b'0' && bytes[i] <= b'9' {
-            val = val * 10 + (bytes[i] - b'0') as u32;
-        }
-        i += 1;
-    }
-    val
-}
-
-const fn str_to_i32_const(s: &str) -> i32 {
-    let bytes = s.as_bytes();
-    let mut val: i64 = 0;
-    let mut neg = false;
-    let mut i = 0;
-
-    while i < bytes.len() && bytes[i] == b' ' { i += 1; }
-
-    if i < bytes.len() && bytes[i] == b'-' {
-        neg = true;
-        i += 1;
-    } else if i < bytes.len() && bytes[i] == b'+' {
-        i += 1;
-    }
-
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b >= b'0' && b <= b'9' {
-            val = val * 10 + (b - b'0') as i64;
-        } else if b == b'.' {
-            break;
-        }
-        i += 1;
-    }
-    let res = if neg { -val } else { val };
-    res as i32
-}
 
 const IMG_H: usize = parse_u32_const(env!("NANO_U_IMG_H")) as usize;
 const IMG_W: usize = parse_u32_const(env!("NANO_U_IMG_W")) as usize;
@@ -220,13 +181,6 @@ fn main() -> ! {
             println!("STACK_TOTAL:{}", stack_start - stack_end);
         }
 
-        // Re-initialize for next loop safety
-        unsafe {
-            let dummy_image =
-                microflow::buffer::Buffer2D::<[i8; 3], IMG_H, IMG_W>::from_element([0, 0, 0]);
-            INPUT_BUFFER = Some([dummy_image]);
-        }
-
         delay.delay_millis(500);
     }
 
@@ -254,7 +208,12 @@ fn main() -> ! {
     let static_batch: Buffer4D<i8, 1, IMG_H, IMG_W, 3> = [static_input_image];
     println!("Starting continuous inference loop for power measurement.");
 
+    let mut tick: u32 = 0;
     loop {
         let _output_batch = UNet::predict_quantized(static_batch);
+        tick = tick.wrapping_add(1);
+        if tick % 100 == 0 {
+            println!("POWER_TICK:{}", tick);
+        }
     }
 }

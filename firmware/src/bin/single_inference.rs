@@ -10,6 +10,8 @@ esp_bootloader_esp_idf::esp_app_desc!();
 use microflow::buffer::{Buffer2D, Buffer4D};
 use microflow::model;
 
+use nano_u_esp::{parse_u32_const, str_to_i32_const};
+
 // Input: 60x80x3, Output: 60x80x1
 #[model("models/nano_u.tflite")]
 struct UNet;
@@ -17,8 +19,6 @@ struct UNet;
 // ── Quantization parameters ───────────────────────────────────────────────────
 const INPUT_SCALE: f32      = f32::from_bits(parse_u32_const(env!("NANO_U_INPUT_SCALE_BITS")));
 const INPUT_ZERO_POINT: i32 = str_to_i32_const(env!("NANO_U_INPUT_ZERO_POINT"));
-const OUTPUT_SCALE: f32     = f32::from_bits(parse_u32_const(env!("NANO_U_OUTPUT_SCALE_BITS")));
-const OUTPUT_ZERO_POINT: i32= str_to_i32_const(env!("NANO_U_OUTPUT_ZERO_POINT"));
 
 const IMG_H: usize = parse_u32_const(env!("NANO_U_IMG_H")) as usize;
 const IMG_W: usize = parse_u32_const(env!("NANO_U_IMG_W")) as usize;
@@ -31,47 +31,6 @@ const STD_G: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_G_BITS")));
 const STD_B: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_B_BITS")));
 
 const TARGET_IDX: usize = parse_u32_const(env!("NANO_U_TARGET_IMG_IDX")) as usize;
-
-const fn parse_u32_const(s: &str) -> u32 {
-    let bytes = s.as_bytes();
-    let mut val: u32 = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] >= b'0' && bytes[i] <= b'9' {
-            val = val * 10 + (bytes[i] - b'0') as u32;
-        }
-        i += 1;
-    }
-    val
-}
-
-const fn str_to_i32_const(s: &str) -> i32 {
-    let bytes = s.as_bytes();
-    let mut val: i64 = 0;
-    let mut neg = false;
-    let mut i = 0;
-    
-    while i < bytes.len() && bytes[i] == b' ' { i += 1; }
-
-    if i < bytes.len() && bytes[i] == b'-' {
-        neg = true;
-        i += 1;
-    } else if i < bytes.len() && bytes[i] == b'+' {
-        i += 1;
-    }
-
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b >= b'0' && b <= b'9' {
-            val = val * 10 + (b - b'0') as i64;
-        } else if b == b'.' {
-            break;
-        }
-        i += 1;
-    }
-    let res = if neg { -val } else { val };
-    res as i32
-}
 
 #[main]
 fn main() -> ! {
@@ -149,20 +108,20 @@ fn main() -> ! {
 
     println!("IMG_OUTPUT_START:{}", TARGET_IDX);
 
-    let mut hex_buf = [0u8; 320];
-    let row_len = IMG_W * 2;
+    let mut hex_buf = [0u8; IMG_W * 8];
+    let row_len = IMG_W * 8;
 
     for h in 0..IMG_H {
         for w in 0..IMG_W {
-            let f_val = output_batch[0][(h, w)][0];  
-            
-            let q_val = libm::roundf((f_val / OUTPUT_SCALE) + OUTPUT_ZERO_POINT as f32) as i32;
-            let val = q_val.clamp(-128, 127) as i8 as u8;
-
-            let hi = val >> 4;
-            let lo = val & 0x0F;
-            hex_buf[w * 2]     = if hi < 10 { b'0' + hi } else { b'a' + (hi - 10) };
-            hex_buf[w * 2 + 1] = if lo < 10 { b'0' + lo } else { b'a' + (lo - 10) };
+            let f_val = output_batch[0][(h, w)][0];
+            let bits = f_val.to_bits();
+            for byte_idx in 0..4usize {
+                let byte = ((bits >> (byte_idx * 8)) & 0xFF) as u8;
+                let hi = byte >> 4;
+                let lo = byte & 0x0F;
+                hex_buf[w * 8 + byte_idx * 2]     = if hi < 10 { b'0' + hi } else { b'a' + (hi - 10) };
+                hex_buf[w * 8 + byte_idx * 2 + 1] = if lo < 10 { b'0' + lo } else { b'a' + (lo - 10) };
+            }
         }
         let s = unsafe { core::str::from_utf8_unchecked(&hex_buf[..row_len]) };
         println!("{}", s);
