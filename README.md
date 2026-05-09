@@ -114,9 +114,7 @@ TinyAgri is significantly harder than Botanic Garden: dense foliage, greater lea
 ```
 Nano-U/
 ├── config/
-│   ├── config.yaml                  # Default configuration (Botanic Garden)
-│   ├── botanic_garden_config.yaml   # Botanic Garden dataset configuration
-│   └── tinyagri_config.yaml         # TinyAgri dataset configuration
+│   └── config.yaml                  # Configuration template (copy and fill in your paths)
 ├── src/
 │   ├── models/                      # Nano-U and BU-Net model builders
 │   ├── utils/                       # QAT wrappers, config loader, metrics
@@ -127,11 +125,12 @@ Nano-U/
 │   ├── quantize_model.py            # INT8 TFLite export and calibration
 │   └── train.py                     # Training loops (standard and distillation)
 ├── scripts/
-│   ├── train_standard.py            # Standard training without distillation
-│   ├── train_distillation.py        # Full QAD pipeline (teacher → student)
-│   ├── benchmark_on_esp.py          # On-device inference and metric evaluation
-│   └── stack_analyzer.py            # On-device stack and energy profiling
-├── esp_flash/                       # ESP32-S3 bare-metal Rust firmware
+│   ├── run_qad.py                   # Full QAD pipeline (teacher → student → INT8)
+│   ├── train_model.py               # Single model training without distillation
+│   ├── eval_esp32.py                # On-device inference and metric evaluation
+│   ├── profile_nano_u.py            # Stack painting and energy profiling for Nano-U
+│   └── profile_mobilenet.py         # Same for MobileNet baseline
+├── firmware/                        # ESP32-S3 bare-metal Rust firmware
 │   ├── src/bin/
 │   │   ├── main.rs                  # Float32 inference loop
 │   │   ├── inference.rs             # INT8 inference with full output capture
@@ -139,7 +138,13 @@ Nano-U/
 │   │   └── analysis.rs              # Stack painting and energy profiling
 │   ├── build.rs                     # Compile-time quantization param extraction
 │   └── Cargo.toml
-├── results/                         # Training logs, metrics, and plots
+├── models/
+│   ├── BotanicGarden/nano_u.tflite  # Pre-trained INT8 model
+│   └── TinyAgri/nano_u.tflite       # Pre-trained INT8 model
+├── data/
+│   ├── BotanicGarden/               # Place dataset here (see HuggingFace link below)
+│   ├── TinyAgri/                    # Place dataset here (see HuggingFace link below)
+│   └── labels/                      # Model-generated pseudo-labels (output of generate_new_labels.py)
 └── tests/                           # Pytest suite
 ```
 
@@ -172,10 +177,10 @@ Trains BU-Net to convergence, then trains Nano-U via Quantization-Aware Distilla
 
 ```bash
 # Botanic Garden (default)
-python scripts/train_distillation.py
+python scripts/run_qad.py
 
 # TinyAgri
-python scripts/train_distillation.py --config config/tinyagri_config.yaml
+python scripts/run_qad.py --config config/TinyAgri_config.yaml
 ```
 
 ### Standard Training (no distillation)
@@ -184,10 +189,10 @@ Trains a single model without knowledge distillation. Useful for training BU-Net
 
 ```bash
 # Train the BU-Net teacher
-python scripts/train_standard.py bu_net
+python scripts/train_model.py bu_net
 
 # Train Nano-U without distillation (weaker baseline)
-python scripts/train_standard.py nano_u --config config/botanic_garden_config.yaml
+python scripts/train_model.py nano_u --config config/BotanicGarden_config.yaml
 ```
 
 ### Manual INT8 Export
@@ -195,7 +200,7 @@ python scripts/train_standard.py nano_u --config config/botanic_garden_config.ya
 To export an existing `.keras` model to a calibrated INT8 `.tflite` file:
 
 ```bash
-python src/quantize_model.py path/to/model.keras path/to/model.tflite --config config/botanic_garden_config.yaml
+python src/quantize_model.py path/to/model.keras path/to/model.tflite --config config/BotanicGarden_config.yaml
 ```
 
 Calibration uses the full validation split to compute INT8 scale factors and zero-points. Quantization parameters are also saved to a companion `_quant_params.json` file consumed by the Rust build script.
@@ -207,7 +212,7 @@ Calibration uses the full validation split to compute INT8 scale factors and zer
 Evaluate segmentation metrics on the test split and generate prediction visualizations:
 
 ```bash
-python src/evaluate.py nano_u --config config/botanic_garden_config.yaml
+python src/evaluate.py nano_u --config config/BotanicGarden_config.yaml
 ```
 
 The script automatically resolves the best available model format (`.tflite` > `.h5`). Results and plots are saved to `results/`.
@@ -219,7 +224,7 @@ The script automatically resolves the best available model format (`.tflite` > `
 ### Flashing and Running Inference
 
 ```bash
-cd esp_flash
+cd firmware
 source $HOME/export-esp.sh
 
 # Standard INT8 inference loop
@@ -233,8 +238,8 @@ To target a different model or dataset directory:
 
 ```bash
 MODEL_NAME=nano_u \
-MODELS_DIR=models/tinyagri \
-TEST_IMG_DIR=data/tinyagri/test/img \
+MODELS_DIR=models/TinyAgri \
+TEST_IMG_DIR=data/TinyAgri/test/img \
 cargo run --release --bin inference
 ```
 
@@ -243,7 +248,7 @@ cargo run --release --bin inference
 Run inference on the ESP32 and compute segmentation metrics against the test set ground truth:
 
 ```bash
-python scripts/benchmark_on_esp.py nano_u --config config/botanic_garden_config.yaml
+python scripts/eval_esp32.py nano_u --config config/BotanicGarden_config.yaml
 ```
 
 ### Hardware Profiling (Stack and Energy)
@@ -252,10 +257,10 @@ Measures peak RAM consumption via stack painting and provides a steady-state inf
 
 ```bash
 # Requires ESP32-S3 connected via USB
-python scripts/stack_analyzer.py
+python scripts/profile_nano_u.py
 ```
 
-Results and plots are saved to `results/nano_u/`.
+Results and plots are saved to `results/hardware/nano_u/`.
 
 ---
 

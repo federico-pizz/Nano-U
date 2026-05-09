@@ -15,7 +15,9 @@ import tensorflow as tf
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.models import create_nano_u, create_model_from_config, count_parameters
-from src.train import train_model, train_single_model, _get_experiment_config
+from src.train import train_model, train_single_model, _get_config
+
+_get_experiment_config = _get_config
 from src.utils.config import load_config
 from src.nas import compute_layer_redundancy, validate_nas_computation, NASCallback
 

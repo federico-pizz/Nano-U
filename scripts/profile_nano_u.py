@@ -202,14 +202,14 @@ def plot_stack_usage(peaks, total_stack, output_file='stack_usage.png'):
 def main():
     script_dir = Path(__file__).parent.resolve()
     repo_root = script_dir.parent
-    out_dir = repo_root / 'results' / 'nano_u'
+    out_dir = repo_root / 'results' / 'hardware' / 'nano_u'
     out_dir.mkdir(parents=True, exist_ok=True)
     log_file = out_dir / 'stack_log.txt'
 
     print("[1/3] Compiling analysis binary...")
     subprocess.run(
         ["cargo", "build", "--release", "--bin", "analysis"],
-        cwd=repo_root / "esp_flash",
+        cwd=repo_root / "firmware",
         check=True,
     )
 
@@ -221,7 +221,7 @@ def main():
     voltage_v = None
     for attempt in range(3):
         success, current_ma, voltage_v = run_analysis_on_device(
-            cmd, str(log_file), cwd=repo_root / 'esp_flash'
+            cmd, str(log_file), cwd=repo_root / 'firmware'
         )
         if success:
             break

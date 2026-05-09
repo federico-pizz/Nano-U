@@ -167,7 +167,7 @@ fn main() -> ! {
             for w in 0..IMG_W {
                 let f_val = output_batch[0][(h, w)][0];  
                 
-                // Map back to i8 for Python benchmark_on_esp.py
+                // Map back to i8 for Python eval_esp32.py
                 // Formula: q = round(f / scale) + zp
                 let q_val = libm::roundf((f_val / OUTPUT_SCALE) + OUTPUT_ZERO_POINT as f32) as i32;
                 let val = q_val.clamp(-128, 127) as i8 as u8;

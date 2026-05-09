@@ -8,8 +8,8 @@ fn main() {
     println!("cargo:rustc-link-arg=-Tlinkall.x");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let models_dir_default = manifest_dir.parent().unwrap().join("models").join("botanic_garden");
-    let test_img_dir_default = manifest_dir.parent().unwrap().join("data").join("botanic_garden").join("test").join("img");
+    let models_dir_default = manifest_dir.parent().unwrap().join("models").join("BotanicGarden");
+    let test_img_dir_default = manifest_dir.parent().unwrap().join("data").join("BotanicGarden").join("test").join("img");
 
     let models_dir = env::var("MODELS_DIR")
         .map(PathBuf::from)

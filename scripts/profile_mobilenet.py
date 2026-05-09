@@ -149,7 +149,7 @@ def plot_stack_usage(peaks, total_stack, output_file='stack_usage.png'):
 def main():
     script_dir = Path(__file__).parent.resolve()
     repo_root = script_dir.parent
-    models_dir = repo_root / 'esp_flash' / 'models'
+    models_dir = repo_root / 'firmware' / 'models'
 
     found_images = [name for name in IMAGE_NAMES if (models_dir / name).exists()]
     if len(found_images) < MIN_IMAGES:
@@ -162,14 +162,14 @@ def main():
 
     print(f"Found {len(found_images)} test image(s): {', '.join(found_images)}")
 
-    out_dir = repo_root / 'results' / 'person_detect'
+    out_dir = repo_root / 'results' / 'hardware' / 'person_detect'
     out_dir.mkdir(parents=True, exist_ok=True)
     log_file = out_dir / 'stack_log.txt'
 
     print("[1/3] Compiling analysis_person_detect binary...")
     subprocess.run(
         ["cargo", "build", "--release", "--bin", "analysis_person_detect"],
-        cwd=repo_root / "esp_flash", check=True
+        cwd=repo_root / "firmware", check=True
     )
 
     print("\n[2/3] Flashing and running analysis...")
@@ -178,7 +178,7 @@ def main():
     success = False
     current_ma = None
     for attempt in range(3):
-        success, current_ma = run_analysis_on_device(cmd, str(log_file), cwd=repo_root / 'esp_flash')
+        success, current_ma = run_analysis_on_device(cmd, str(log_file), cwd=repo_root / 'firmware')
         if success:
             break
         print("Retrying...")

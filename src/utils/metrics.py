@@ -1,5 +1,19 @@
+import json
+import numpy as np
 import tensorflow as tf
 import tf_keras as keras
+
+
+class NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles NumPy scalars and arrays."""
+    def default(self, obj):
+        if isinstance(obj, (np.float32, np.float64)):
+            return float(obj)
+        if isinstance(obj, (np.int32, np.int64)):
+            return int(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 class BinaryIoU(keras.metrics.Metric):
     def __init__(self, threshold=0.5, from_logits=False, name="binary_iou", **kwargs):

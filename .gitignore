@@ -28,8 +28,8 @@ Thumbs.db
 results/
 
 # Dataset-specific configs (config/config.yaml is the public template)
-config/botanic_garden_config.yaml
-config/tinyagri_config.yaml
+config/BotanicGarden_config.yaml
+config/TinyAgri_config.yaml
 
 # Legacy / Old folder content
 old_nano_u/

@@ -260,12 +260,9 @@ def run_benchmarks(model_name: str, config_path: str = "config/config.yaml") -> 
         # Try to load test dataset
         test_ds = None
         try:
-            if False:
-                pass
-            else:
-                data_paths = config.get("data", {}).get("paths", {})
-                test_cfg = data_paths.get("processed", {}).get("test", {})
-                print(f"Using standard dataset ('botanic_garden') for {model_name}")
+            data_paths = config.get("data", {}).get("paths", {})
+            test_cfg = data_paths.get("processed", {}).get("test", {})
+            print(f"Loading test dataset for {model_name}...")
             
             t_img_dir = Path(test_cfg.get("img", ""))
             t_mask_dir = Path(test_cfg.get("mask", ""))

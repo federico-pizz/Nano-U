@@ -47,7 +47,7 @@ def create_nano_u(
 
     Kept parameter-minimal by design; skip connections are omitted to reduce
     parameter count and avoid overfitting on small agricultural datasets.
-    TFLite export is trivial — MCU-inference details live in ``esp_flash/``.
+    TFLite export is trivial — MCU-inference details live in ``firmware/``.
     """
     inputs = layers.Input(shape=input_shape, name='input_image')
 

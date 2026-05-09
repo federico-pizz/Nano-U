@@ -33,30 +33,27 @@ def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/
     data_paths = config.get("data", {}).get("paths", {})
     models_dir = repo_root / data_paths.get("models_dir", "models")
     test_img_dir = repo_root / data_paths.get("processed", {}).get("test", {}).get("img", "")
+    input_shape = config.get("data", {}).get("input_shape", [60, 80, 3])
 
     env = os.environ.copy()
     env["MODEL_NAME"] = model_name
     env["MODELS_DIR"] = str(models_dir)
     env["TEST_IMG_DIR"] = str(test_img_dir)
-    subprocess.run(["cargo", "build", "--release", "--bin", "inference"], cwd=repo_root / "esp_flash", check=True, env=env)
-    
+    subprocess.run(["cargo", "build", "--release", "--bin", "inference"], cwd=repo_root / "firmware", check=True, env=env)
+
     print(f"\n[2/3] Flashing and running inference for {model_name}...")
     cmd = ["cargo", "run", "--release", "--bin", "inference"]
-    
+
     master, slave = pty.openpty()
-    p = subprocess.Popen(cmd, cwd=repo_root / "esp_flash", stdin=slave, stdout=slave, stderr=subprocess.STDOUT, close_fds=True, env=env)
+    p = subprocess.Popen(cmd, cwd=repo_root / "firmware", stdin=slave, stdout=slave, stderr=subprocess.STDOUT, close_fds=True, env=env)
     os.close(slave)
-    
+
     buffer = b""
     start_time = time.time()
     capturing = False
     current_img = -1
     img_data = {}
-    
-    config = load_config(str(repo_root / config_path))
-    input_shape = config.get("data", {}).get("input_shape", [60, 80, 3])
     expected_row_len = input_shape[1] * 2
-    expected_rows = input_shape[0]
     
     try:
         while True:
@@ -157,38 +154,28 @@ def evaluate_esp_outputs(img_data_dict, repo_root, model_name="nano_u", config_p
         print(f"Warning: No test images loaded.")
         return None
         
-    # 2. Load Dequantization Params from JSON (most reliable)
     params_path = repo_root / config['data']['paths']['models_dir'] / f"{model_name}_quant_params.json"
     if params_path.exists():
         with open(params_path, 'r') as f:
             params = json.load(f)
         out_qscale = params['output']['scale']
         out_qzero = params['output']['zero_point']
+        expected_h = params['output']['shape'][1]
     else:
         out_qscale, out_qzero = 1.0, 0
-        
-    # 3. Process ESP Outputs
+        expected_h = config['data']['input_shape'][0]
+
     mean_bce = keras.metrics.Mean(name='bce')
     mean_dice = keras.metrics.Mean(name='dice')
     mean_focal = keras.metrics.Mean(name='focal')
     iou_metric = BinaryIoU(threshold=threshold, name='binary_iou')
     precision = keras.metrics.Precision(name='precision')
     recall = keras.metrics.Recall(name='recall')
-    
+
     all_probs = []
     all_preds_bin = []
-    
-    # We evaluate all images
-    batch_img_indices = range(0, len(img_data_dict))
-    num_to_eval = len(batch_img_indices)
-    
-    print(f"\nEvaluating batch ({num_to_eval} images) for {model_name}...")
-    
-    expected_h = config['data']['input_shape'][0]
-    if params_path.exists():
-        with open(params_path, 'r') as f:
-            p_data = json.load(f)
-            expected_h = p_data['output']['shape'][1]
+
+    print(f"\nEvaluating {len(img_data_dict)} images for {model_name}...")
 
     for i_in_batch, i_global in enumerate(batch_img_indices):
         raw_rows = img_data_dict[i_global]

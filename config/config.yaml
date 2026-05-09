@@ -31,6 +31,7 @@ data:
         mask: "data/<your_dataset>/test/mask"
 
     models_dir: "models"
+    results_dir: "results/<your_dataset>"
 
 
 # Model Architecture Definitions

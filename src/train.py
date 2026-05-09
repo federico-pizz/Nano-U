@@ -12,23 +12,12 @@ import json
 import traceback
 import tensorflow_model_optimization as tfmot
 
-class NumpyEncoder(json.JSONEncoder):
-    """Custom JSON encoder for NumPy types."""
-    def default(self, obj):
-        if isinstance(obj, (np.float32, np.float64)):
-            return float(obj)
-        if isinstance(obj, (np.int32, np.int64)):
-            return int(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return super(NumpyEncoder, self).default(obj)
-
 # Allow running the script directly (python src/train.py)
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.models import create_nano_u, create_bu_net, create_model_from_config
-from src.utils import BinaryIoU
+from src.utils import BinaryIoU, NumpyEncoder
 from src.utils.config import load_config
 from src.utils.qat import apply_qat_to_model
 from src.data import make_dataset
@@ -65,15 +54,6 @@ def _get_config(full_config: Dict[str, Any], experiment_name: str) -> Dict[str, 
         f"Top-level keys: {list(full_config.keys())}"
     )
 
-
-def _get_experiment_config(full_config: Dict[str, Any], experiment_name: str) -> Dict[str, Any]:
-    """Backward-compatible alias for older code/tests expecting `_get_experiment_config`.
-
-    New code should call `_get_config` directly; this wrapper exists so that
-    external callers and the test suite can continue to import the previous
-    helper name without breaking.
-    """
-    return _get_config(full_config, experiment_name)
 
 
 
@@ -630,18 +610,17 @@ def train_with_distillation(
 
 
 def train_model(config_path: str = "config/config.yaml", experiment_name: str = "default",
-                output_dir: Optional[str] = None) -> Dict[str, Any]:
+                output_dir: Optional[str] = None,
+                extra_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Execute training pipeline coordinating dataset construction and model selection.
-    
-    This overarching orchestrator loads the configuration definitions, parses and prepares
-    normalized tf.data image datasets, constructs either a generic single network or initializes
-    a teacher/student distillation pair, and dispatches the execution to the relevant training loop.
-    
+
     Args:
         config_path: Path to the main YAML configuration file.
         experiment_name: Internal name pointing to a hyperparameter block in the configuration.
         output_dir: Manual override directory to store the resulting checkpoints and metric jsons.
-        
+        extra_config: Optional dict merged on top of the resolved experiment config after all
+            YAML processing. Caller-supplied values always win (e.g. dynamic teacher_weights).
+
     Returns:
         A dictionary containing termination status, path strings, and the final history structure.
     """
@@ -649,10 +628,10 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
         # Load full configuration and resolve experiment
         full_config = load_config(config_path)
         config = dict(_get_config(full_config, experiment_name))
-        
-        # Override the model_name to be the experiment_name since we call run_training_pipeline("bu_net")
+
+        # Override the model_name to match the experiment_name passed by run_training()
         config["model_name"] = experiment_name
-        
+
         # Merge model architecture config if available
         if "models" in full_config and experiment_name in full_config["models"]:
             model_config = full_config["models"][experiment_name]
@@ -679,6 +658,11 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
                 config.setdefault("alpha", dist_cfg["alpha"])
             if "temperature" in dist_cfg:
                 config.setdefault("temperature", dist_cfg["temperature"])
+
+        # Apply caller overrides last so they win over everything in the YAML
+        # (e.g. teacher_weights dynamically resolved by the QAD pipeline).
+        if extra_config:
+            config.update(extra_config)
 
         if "data" in full_config and "input_shape" in full_config["data"]:
             config.setdefault("input_shape", full_config["data"]["input_shape"])
