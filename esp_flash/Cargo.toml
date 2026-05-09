@@ -46,7 +46,7 @@ nalgebra = { version = "0.32.6", default-features = false, features = [
   "libm",
 ] }
 libm = "0.2"
-microflow = { path = "../../microflow-rs", version = "0.1.3" }
+microflow = { git = "https://github.com/federico-pizz/microflow-rs" }
 
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
