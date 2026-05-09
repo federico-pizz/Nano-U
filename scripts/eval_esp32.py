@@ -53,11 +53,16 @@ def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/
     capturing = False
     current_img = -1
     img_data = {}
-    expected_row_len = input_shape[1] * 2
+    latency_us = {}
+    stats = {}
+    expected_row_len = input_shape[1] * 8
     
     try:
         while True:
             if p.poll() is not None:
+                break
+            if time.time() - start_time > 300:
+                print("\nTimeout reached (300s). Aborting.")
                 break
             r, _, _ = select.select([master], [], [], 0.1)
             if master in r:
@@ -90,10 +95,30 @@ def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/
                     elif line_str.startswith("IMG_OUTPUT_END:"):
                         capturing = False
                         
+                    elif line_str.startswith("IMG_PREPROCESS:"):
+                        parts = line_str.split(":")
+                        idx = int(parts[1])
+                        if idx not in latency_us:
+                            latency_us[idx] = {}
+                        latency_us[idx]["preprocess"] = int(parts[2].rstrip("us"))
+
+                    elif line_str.startswith("IMG_INFERENCE:"):
+                        parts = line_str.split(":")
+                        idx = int(parts[1])
+                        if idx not in latency_us:
+                            latency_us[idx] = {}
+                        latency_us[idx]["inference"] = int(parts[2].rstrip("us"))
+
+                    elif line_str.startswith("IMG_STATS:"):
+                        parts = line_str.split(":")
+                        idx = int(parts[1])
+                        min_v, max_v = parts[2].split(",")
+                        stats[idx] = {"min": float(min_v), "max": float(max_v)}
+
                     elif line_str == "BENCHMARK_DONE":
                         p.terminate()
-                        return img_data
-                        
+                        return {"img_data": img_data, "latency_us": latency_us, "stats": stats}
+
                     elif capturing:
                         # Dynamic hex string length checking
                         if len(line_str) == expected_row_len:
@@ -101,14 +126,11 @@ def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/
                             try:
                                 row_bytes = bytes.fromhex(line_str)
                                 # convert to signed int8
-                                row_i8 = np.frombuffer(row_bytes, dtype=np.int8)
-                                img_data[current_img].append(row_i8)
+                                row_f32 = np.frombuffer(row_bytes, dtype='<f4')
+                                img_data[current_img].append(row_f32)
                             except ValueError:
                                 pass
                                 
-        if time.time() - start_time > 300:
-            print("\nTimeout reached!")
-            
     except KeyboardInterrupt:
         print("\nInterrupted.")
     finally:
@@ -119,9 +141,11 @@ def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/
                 p.kill()
         os.close(master)
         
-    return img_data
+    return {"img_data": img_data, "latency_us": latency_us, "stats": stats}
 
-def evaluate_esp_outputs(img_data_dict, repo_root, model_name="nano_u", config_path="config/config.yaml", threshold=0.5, samples_to_plot=6):
+def evaluate_esp_outputs(device_result, repo_root, model_name="nano_u", config_path="config/config.yaml", threshold=0.5, samples_to_plot=6):
+    img_data_dict = device_result["img_data"]
+    latency_us = device_result.get("latency_us", {})
     config = load_config(str(repo_root / config_path))
     
     data_paths = config.get("data", {}).get("paths", {})
@@ -154,16 +178,7 @@ def evaluate_esp_outputs(img_data_dict, repo_root, model_name="nano_u", config_p
         print(f"Warning: No test images loaded.")
         return None
         
-    params_path = repo_root / config['data']['paths']['models_dir'] / f"{model_name}_quant_params.json"
-    if params_path.exists():
-        with open(params_path, 'r') as f:
-            params = json.load(f)
-        out_qscale = params['output']['scale']
-        out_qzero = params['output']['zero_point']
-        expected_h = params['output']['shape'][1]
-    else:
-        out_qscale, out_qzero = 1.0, 0
-        expected_h = config['data']['input_shape'][0]
+    expected_h = config['data']['input_shape'][0]
 
     mean_bce = keras.metrics.Mean(name='bce')
     mean_dice = keras.metrics.Mean(name='dice')
@@ -175,7 +190,8 @@ def evaluate_esp_outputs(img_data_dict, repo_root, model_name="nano_u", config_p
     all_probs = []
     all_preds_bin = []
 
-    print(f"\nEvaluating {len(img_data_dict)} images for {model_name}...")
+    batch_img_indices = sorted(img_data_dict.keys())[:len(all_masks)]
+    print(f"\nEvaluating {len(batch_img_indices)} images for {model_name}...")
 
     for i_in_batch, i_global in enumerate(batch_img_indices):
         raw_rows = img_data_dict[i_global]
@@ -183,11 +199,9 @@ def evaluate_esp_outputs(img_data_dict, repo_root, model_name="nano_u", config_p
             print(f"Warning: Image {i_global} has incomplete data, skipping.")
             continue
             
-        out_i8 = np.stack(raw_rows, axis=0) 
-        out_i8 = np.expand_dims(np.expand_dims(out_i8, axis=0), axis=-1)
-        
-        logits_f32 = (out_i8.astype(np.float32) - out_qzero) * out_qscale
-        logits = tf.convert_to_tensor(logits_f32, dtype=tf.float32)
+        out_f32 = np.stack(raw_rows, axis=0)
+        out_f32 = np.expand_dims(np.expand_dims(out_f32, axis=0), axis=-1)
+        logits = tf.convert_to_tensor(out_f32, dtype=tf.float32)
         probs = sigmoid(logits)
             
         masks_t = tf.convert_to_tensor(np.expand_dims(all_masks[i_in_batch], 0), dtype=tf.float32)
@@ -224,6 +238,15 @@ def evaluate_esp_outputs(img_data_dict, repo_root, model_name="nano_u", config_p
         'recall': float(recall.result().numpy()),
     }
     results['f1'] = 2 * results['precision'] * results['recall'] / (results['precision'] + results['recall'] + EPS)
+    if latency_us:
+        infer_times = [v["inference"] for v in latency_us.values() if "inference" in v]
+        preprocess_times = [v["preprocess"] for v in latency_us.values() if "preprocess" in v]
+        if infer_times:
+            results["inference_mean_us"] = float(np.mean(infer_times))
+            results["inference_min_us"] = int(min(infer_times))
+            results["inference_max_us"] = int(max(infer_times))
+        if preprocess_times:
+            results["preprocess_mean_us"] = float(np.mean(preprocess_times))
     
     print(f'Results from ESP32 inference:')
     for k, v in results.items():
@@ -276,13 +299,13 @@ def main():
     print(f"ESP32 Benchmarking Pipeline ({args.model})")
     print("==========================================")
     
-    img_data = run_inference_on_device(repo_root, model_name=args.model, config_path=args.config)
-    if not img_data:
+    device_result = run_inference_on_device(repo_root, model_name=args.model, config_path=args.config)
+    if not device_result or not device_result.get("img_data"):
         print("Failed to collect inference data from ESP32.")
         sys.exit(1)
-        
-    print(f"\n[3/3] Dequantizing ESP32 outputs and calculating metrics...")
-    evaluate_esp_outputs(img_data, repo_root, model_name=args.model, config_path=args.config)
+
+    print(f"\n[3/3] Evaluating ESP32 outputs and calculating metrics...")
+    evaluate_esp_outputs(device_result, repo_root, model_name=args.model, config_path=args.config)
 
 if __name__ == '__main__':
     main()
