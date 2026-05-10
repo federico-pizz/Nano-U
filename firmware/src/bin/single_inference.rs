@@ -2,7 +2,7 @@
 #![no_main]
 
 use esp_backtrace as _;
-use esp_hal::{clock::CpuClock, delay::Delay, main, rtc_cntl::Rtc, timer::timg::TimerGroup};
+use esp_hal::{clock::CpuClock, delay::Delay, main, rtc_cntl::Rtc, system::software_reset, timer::timg::TimerGroup};
 use esp_println::println;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -58,7 +58,8 @@ fn main() -> ! {
     if TARGET_IDX >= num_images {
         println!("Error: Target index {} is out of bounds (0..{})", TARGET_IDX, num_images - 1);
         println!("BENCHMARK_DONE");
-        loop { delay.delay_millis(1000); }
+        delay.delay_millis(200);
+        loop { software_reset(); }
     }
 
     let mut input_image = Buffer2D::<[i8; 3], IMG_H, IMG_W>::from_element([0, 0, 0]);
@@ -130,7 +131,7 @@ fn main() -> ! {
 
     println!("BENCHMARK_DONE");
 
-    loop {
-        delay.delay_millis(1000);
-    }
+    // Flush UART then reset so the host receives BENCHMARK_DONE cleanly.
+    delay.delay_millis(200);
+    loop { software_reset(); }
 }

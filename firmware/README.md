@@ -1,72 +1,63 @@
-# Nano-U: Rust Bare-Metal Inference (`firmware/`)
+# Nano-U Firmware
 
-> Zero-allocation, `no_std` deterministic execution for the Nano-U model on the ESP32-S3 using `microflow-rs`.
+Bare-metal Rust inference for the ESP32-S3. No RTOS, no heap allocator — the full operator graph is resolved at compile time by [MicroFlow](https://github.com/federico-pizz/microflow-rs).
 
-This directory contains the firmware required to run the trained INT8 Nano-U models directly on the ESP32-S3-CAM hardware. It leverages the Rust embedded ecosystem to achieve maximum efficiency within the strict memory constraints of commodity microcontrollers.
+## Requirements
 
----
-
-## Why Rust and `microflow-rs`?
-
-Given the absence of an ML accelerator or hardware FPU on the ESP32-S3, and a hard ceiling of ~320 KB for DRAM, standard interpreter-based frameworks (like TFLite Micro) present challenges due to dynamic dispatch overhead and memory fragmentation from heap allocations.
-
-Instead, we use [microflow-rs](https://github.com/microflow-rs/microflow-rs) (Note: Update link if different):
-- **Compile-Time Graph Evaluation:** All tensor shapes and operations are known at compile time and encoded into the Rust type system. 
-- **Zero Dynamic Allocation (no heap):** The compiled binary contains the entire inference graph as a sequence of statically allocated operations.
-- **Deterministic Execution:** Eliminates memory faults and latency spikes associated with garbage collection or heap fragmentation.
-
-### Hardware Efficiency Gains
-- **Wireless Isolation:** The WiFi and Bluetooth stacks are never initialized in our `no_std` Rust build, saving ~5-15 mA compared to a standard C++ ESP-IDF deployment.
-- **PSRAM Bypass:** We explicitly avoid initializing the 8 MB octal PSRAM, bypassing an additional ~10-20 mA required for refresh currents.
-
----
-
-## Memory Layout and Inference Strategy
-
-### The 320 KB DRAM Arena
-All tensors—including the peak intermediate tensor of 19.2 KB (60x80x4) generated during the first encoder stage—live entirely in statically allocated DRAM. 
-- **Stack Painting Profile:** Our profiling shows a total allocated region of 312.6 KB, with an actual high-water mark peak usage of **257 KB**.
-
-### Instruction RAM (IRAM)
-Currently, the inference code lives in flash memory and is fetched through the instruction cache. The remaining ~192 KB of internal SRAM is designated as IRAM. 
-*Future Optimization:* Pinning hot loops directly to IRAM using the `#[ram]` attribute is projected to reduce latency by a further 10-20% through single-cycle fetches.
-
-### The Quantization Pipeline
-- **Build-Time Extraction:** Input scales and zero-points are extracted directly from the `.tflite` model at build time via `build.rs`.
-- **Pre-computed LUT:** Preprocessing uses a per-channel Look-Up Table (256 entries x 3 channels) computed once prior to inference. This avoids expensive floating-point operations per pixel on the soft-float CPU.
-- **Thresholded Output:** The final INT8 output tensor is mapped directly to our background vs. traversable binary mask using the dequantized scale and zero-point.
-
----
-
-## Profiling Tools: Stack Analyzer
-
-This crate includes code specifically written to profile the ESP32-S3.
-
-- **Stack Painting:** Before inference begins, the entire DRAM stack region is filled with a known byte pattern (`0xAA`). After inference, a bottom-up memory scan identifies the first modified byte to establish the precise high-water mark of RAM usage.
-- **Energy Measurement Preparation:** The inference is designed to run in a continuous steady-state loop, allowing board-level power measurements (V/A) via a multimeter on the 5V USB rail.
-
----
-
-## Build and Flash
-
-*(Assuming the standard Rust ESP toolchain is installed)*
-
-First, export the ESP-RS environment variables (path may vary depending on your installation):
+Install the ESP Rust toolchain, then source it before every build session:
 
 ```bash
+# https://esp-rs.github.io/book/installation/index.html
 source $HOME/export-esp.sh
 ```
 
-This project contains two primary binaries:
-1. `inference`: Runs the standard segmentation inference loop.
-2. `analysis`: Runs the stack painting and energy profiling steady-state loop.
+## Binaries
 
-To build and flash a specific binary to the ESP32-S3 and monitor the serial output:
+| Binary | Description |
+|:---|:---|
+| `inference` | Continuous INT8 inference loop over all packed test images |
+| `single_inference` | Single-image inference; streams the output mask over serial for host-side capture |
+| `analysis` | Stack painting + power profiling for Nano-U |
+| `analysis_person_detect` | Same profiling pipeline for the MobileNet-based person-detect baseline |
+
+## Usage
 
 ```bash
-# Run the standard inference binary
+# Run a binary (builds automatically)
 cargo run --release --bin inference
 
-# Run the stack and energy profiling binary
-cargo run --release --bin analysis
+# Target a specific dataset
+MODELS_DIR=../models/TinyAgri \
+TEST_IMG_DIR=../data/TinyAgri/test/img \
+cargo run --release --bin inference
+
+# Select a single image by index
+TARGET_IMG_IDX=42 cargo run --release --bin single_inference
+```
+
+## Build-time configuration
+
+The model and quantization parameters are embedded at compile time via `build.rs`. All defaults target BotanicGarden.
+
+| Env var | Default | Description |
+|:---|:---|:---|
+| `MODELS_DIR` | `../models/BotanicGarden` | Directory containing `.tflite` and `_quant_params.json` |
+| `TEST_IMG_DIR` | `../data/BotanicGarden/test/img` | PNG images packed into the binary |
+| `MODEL_NAME` | `nano_u` | Stem of the model file |
+| `TARGET_IMG_IDX` | `1` | Image index used by `single_inference` |
+
+## Project structure
+
+```
+firmware/
+├── src/
+│   ├── bin/
+│   │   ├── inference.rs              # Inference loop
+│   │   ├── single_inference.rs       # Single-image + serial output
+│   │   ├── analysis.rs               # Stack painting + power profiling
+│   │   └── analysis_person_detect.rs # MobileNet baseline profiling
+│   └── lib.rs                        # Shared helpers
+├── models/                           # Copied here by build.rs at compile time
+├── build.rs                          # Quantization param extraction + image packing
+└── Cargo.toml
 ```

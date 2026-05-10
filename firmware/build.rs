@@ -120,6 +120,8 @@ fn main() {
             p.file_stem()
                 .and_then(|s| s.to_str())
                 .and_then(|s| s.split('_').last())
+                // strip leading non-digits so "frame500" -> "500", bare numbers pass through
+                .map(|s| s.trim_start_matches(|c: char| !c.is_ascii_digit()))
                 .and_then(|s| s.parse::<u32>().ok())
                 .unwrap_or(0)
         });
