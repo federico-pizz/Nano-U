@@ -1,6 +1,6 @@
 # Nano-U
 
-> **4,688-parameter binary terrain segmentation for bare-metal microcontrollers.**  
+> **3,357-parameter binary terrain segmentation for bare-metal microcontrollers.**  
 > Trained via Quantization-Aware Distillation · Deployed in Rust · Runs at 1.2 FPS on a $10 SoC.
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
