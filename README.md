@@ -1,6 +1,6 @@
 # Nano-U
 
-> **4,688-parameter binary terrain segmentation for bare-metal microcontrollers.**  
+> **3,357-parameter binary terrain segmentation for bare-metal microcontrollers.**  
 > Trained via Quantization-Aware Distillation · Deployed in Rust · Runs at 1.2 FPS on a $10 SoC.
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
@@ -19,6 +19,8 @@ The model is trained with **Quantization-Aware Distillation (QAD)** — a single
 
 ## Results
 
+<img src="tools/predictions_comparison.png" alt="Nano-U predictions at different stages" width="800"/>
+
 ### Segmentation Accuracy
 
 | Model | Dataset | mIoU | F1 | Precision | Recall |
@@ -31,6 +33,9 @@ The model is trained with **Quantization-Aware Distillation (QAD)** — a single
 | **Nano-U (INT8, on ESP32)** | **TinyAgri** | **70.6%** | **83.0%** | **80.1%** | **86.1%** |
 
 The negligible Float32→INT8 gap on Botanic Garden confirms the QAD pipeline successfully preserves accuracy through quantization. The larger drop on TinyAgri reflects the difficulty of encoding dense overlapping vegetation into INT8 precision.
+
+<img src="tools/figure_2.png" alt="Nano-U training pipeline" width="800"/>
+
 
 ### Hardware Efficiency (ESP32-S3)
 

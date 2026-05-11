@@ -52,8 +52,11 @@ Cargo.lock
 firmware/target/
 firmware/.cargo/
 
-# Tools (utility/private scripts — not part of public API)
-tools/
+# Tools 
+tools/**
+!tools/
+!tools/figure_2.png
+!tools/predictions_comparison.png
 
 # data processing
 extract_botanicgarden.py
