@@ -82,7 +82,7 @@ where $\mathcal{L}_\text{KD}$ is MSE between temperature-scaled sigmoid outputs 
 ### Botanic Garden
 An outdoor robot navigation benchmark collected in a 48,000 m² unstructured environment. We use 1,181 images from all 5 annotated sequences, split by contiguous sequence (70/20/10) to prevent temporal leakage. Binary traversability masks are derived from the original *path* class annotations.
 
-🤗 Dataset: [federico-pizz/BotanicGarden](https://huggingface.co/datasets/federico-pizz/BotanicGarden)
+**Original Source:** [robot-pesg/BotanicGarden](https://github.com/robot-pesg/BotanicGarden)
 
 ### TinyAgri
 A custom terrain segmentation dataset collected via the onboard OV2640 camera of an ESP32-CAM mounted on a SunFounder Galaxy RVR rover. It contains 2,659 images across two agricultural environments (tomato and corn fields), annotated with SAM 2. TinyAgri is released alongside this project to support future research in edge robotics.
