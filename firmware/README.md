@@ -15,7 +15,8 @@ source $HOME/export-esp.sh
 
 | Binary | Description |
 |:---|:---|
-| `inference` | Continuous INT8 inference loop over all packed test images |
+| `run` | Continuous inference loop (default `cargo run` target); prints per-frame summary |
+| `inference` | One-shot benchmark over all packed test images; per-image timing, stats, and hex dump |
 | `single_inference` | Single-image inference; streams the output mask over serial for host-side capture |
 | `analysis` | Stack painting + power profiling for Nano-U |
 | `analysis_person_detect` | Same profiling pipeline for the MobileNet-based person-detect baseline |
@@ -52,11 +53,12 @@ The model and quantization parameters are embedded at compile time via `build.rs
 firmware/
 ├── src/
 │   ├── bin/
-│   │   ├── inference.rs              # Inference loop
+│   │   ├── run.rs                    # Continuous inference loop (default target)
+│   │   ├── inference.rs              # One-shot benchmark over all test images
 │   │   ├── single_inference.rs       # Single-image + serial output
 │   │   ├── analysis.rs               # Stack painting + power profiling
 │   │   └── analysis_person_detect.rs # MobileNet baseline profiling
-│   └── lib.rs                        # Shared helpers
+│   └── lib.rs                        # Shared helpers (quant constants, preprocess, stack utils)
 ├── models/                           # Copied here by build.rs at compile time
 ├── build.rs                          # Quantization param extraction + image packing
 └── Cargo.toml

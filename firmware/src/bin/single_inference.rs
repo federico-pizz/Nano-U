@@ -10,25 +10,11 @@ esp_bootloader_esp_idf::esp_app_desc!();
 use microflow::buffer::{Buffer2D, Buffer4D};
 use microflow::model;
 
-use nano_u_esp::{parse_u32_const, str_to_i32_const};
+use nano_u_esp::{build_quant_luts, parse_u32_const, preprocess_rgb, IMG_H, IMG_SIZE, IMG_W};
 
 // Input: 60x80x3, Output: 60x80x1
 #[model("models/nano_u.tflite")]
 struct UNet;
-
-// ── Quantization parameters ───────────────────────────────────────────────────
-const INPUT_SCALE: f32      = f32::from_bits(parse_u32_const(env!("NANO_U_INPUT_SCALE_BITS")));
-const INPUT_ZERO_POINT: i32 = str_to_i32_const(env!("NANO_U_INPUT_ZERO_POINT"));
-
-const IMG_H: usize = parse_u32_const(env!("NANO_U_IMG_H")) as usize;
-const IMG_W: usize = parse_u32_const(env!("NANO_U_IMG_W")) as usize;
-
-const MEAN_R: f32 = f32::from_bits(parse_u32_const(env!("NANO_U_MEAN_R_BITS")));
-const MEAN_G: f32 = f32::from_bits(parse_u32_const(env!("NANO_U_MEAN_G_BITS")));
-const MEAN_B: f32 = f32::from_bits(parse_u32_const(env!("NANO_U_MEAN_B_BITS")));
-const STD_R: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_R_BITS")));
-const STD_G: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_G_BITS")));
-const STD_B: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_B_BITS")));
 
 const TARGET_IDX: usize = parse_u32_const(env!("NANO_U_TARGET_IMG_IDX")) as usize;
 
@@ -52,14 +38,13 @@ fn main() -> ! {
     println!("Target Image Index: {}", TARGET_IDX);
 
     const RAW_IMAGES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/input_images.bin"));
-    const IMG_SIZE: usize = IMG_H * IMG_W * 3;
     let num_images = RAW_IMAGES.len() / IMG_SIZE;
 
     if TARGET_IDX >= num_images {
         println!("Error: Target index {} is out of bounds (0..{})", TARGET_IDX, num_images - 1);
         println!("BENCHMARK_DONE");
         delay.delay_millis(200);
-        loop { software_reset(); }
+        software_reset();
     }
 
     let mut input_image = Buffer2D::<[i8; 3], IMG_H, IMG_W>::from_element([0, 0, 0]);
@@ -69,35 +54,9 @@ fn main() -> ! {
     let start_idx = TARGET_IDX * IMG_SIZE;
     let img_data = &RAW_IMAGES[start_idx..start_idx + IMG_SIZE];
 
-    let mut quant_lut_r = [0i8; 256];
-    let mut quant_lut_g = [0i8; 256];
-    let mut quant_lut_b = [0i8; 256];
+    let luts = build_quant_luts();
 
-    for j in 0..256 {
-        let x = j as f32 / 255.0;
-        
-        let q_float_r = (x - MEAN_R) / STD_R / INPUT_SCALE + INPUT_ZERO_POINT as f32;
-        let q_int_r = libm::roundf(q_float_r) as i32;
-        quant_lut_r[j] = q_int_r.clamp(-128, 127) as i8;
-
-        let q_float_g = (x - MEAN_G) / STD_G / INPUT_SCALE + INPUT_ZERO_POINT as f32;
-        let q_int_g = libm::roundf(q_float_g) as i32;
-        quant_lut_g[j] = q_int_g.clamp(-128, 127) as i8;
-
-        let q_float_b = (x - MEAN_B) / STD_B / INPUT_SCALE + INPUT_ZERO_POINT as f32;
-        let q_int_b = libm::roundf(q_float_b) as i32;
-        quant_lut_b[j] = q_int_b.clamp(-128, 127) as i8;
-    }
-
-    for h in 0..IMG_H {
-        for w in 0..IMG_W {
-            let base_idx = (h * IMG_W + w) * 3;
-            let r = quant_lut_r[img_data[base_idx]     as usize];
-            let g = quant_lut_g[img_data[base_idx + 1] as usize];
-            let b = quant_lut_b[img_data[base_idx + 2] as usize];
-            input_image[(h, w)] = [r, g, b];
-        }
-    }
+    preprocess_rgb(img_data, &luts, &mut input_image);
 
     let input_batch: Buffer4D<i8, 1, IMG_H, IMG_W, 3> = [input_image];
 
@@ -124,7 +83,8 @@ fn main() -> ! {
                 hex_buf[w * 8 + byte_idx * 2 + 1] = if lo < 10 { b'0' + lo } else { b'a' + (lo - 10) };
             }
         }
-        let s = unsafe { core::str::from_utf8_unchecked(&hex_buf[..row_len]) };
+        // hex_buf holds only ASCII hex digits, so this never fails.
+        let s = core::str::from_utf8(&hex_buf[..row_len]).unwrap_or("");
         println!("{}", s);
     }
     println!("IMG_OUTPUT_END:{}", TARGET_IDX);
@@ -133,5 +93,5 @@ fn main() -> ! {
 
     // Flush UART then reset so the host receives BENCHMARK_DONE cleanly.
     delay.delay_millis(200);
-    loop { software_reset(); }
+    software_reset();
 }

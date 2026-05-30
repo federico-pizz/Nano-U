@@ -88,7 +88,6 @@ fn main() {
         println!("cargo:warning=Copied model: {} → {}", src_model.display(), dst_model.display());
     }
     println!("cargo:rerun-if-changed={}", src_model.display());
-    println!("cargo:rerun-if-env-changed=MODEL_NAME");
 
     println!("cargo:rerun-if-changed={}", test_img_dir.display());
 

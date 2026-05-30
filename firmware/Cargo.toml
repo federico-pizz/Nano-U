@@ -20,6 +20,10 @@ path = "./src/bin/single_inference.rs"
 name = "analysis_person_detect"
 path = "./src/bin/analysis_person_detect.rs"
 
+[[bin]]
+name = "run"
+path = "./src/bin/run.rs"
+
 [dependencies]
 # Core ESP32-S3 HAL
 esp-hal = { version = "~1.0", features = ["esp32s3", "log-04", "unstable"] }
@@ -53,7 +57,14 @@ microflow = { git = "https://github.com/federico-pizz/microflow-rs", branch = "m
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [profile.dev]
-opt-level = "s"
+opt-level = 3   # else will not run
+overflow-checks = true
+debug-assertions = true
+panic = 'abort'
+lto = "fat"
+codegen-units = 1
+incremental = false
+debug = 1
 
 [profile.release]
 codegen-units = 1
@@ -62,5 +73,4 @@ debug-assertions = false
 incremental = false
 lto = 'fat'
 opt-level = 3
-overflow-checks = true
 panic = 'abort'

@@ -16,7 +16,6 @@ dist/
 # Virtual Environments
 .venv-tf/
 
-
 # --- IDE / Editors ---
 .vscode/
 *.swp
@@ -57,6 +56,7 @@ tools/**
 !tools/
 !tools/figure_2.png
 !tools/predictions_comparison.png
+!tools/tinyagri_grid.png
 
 # data processing
 extract_botanicgarden.py
@@ -64,3 +64,7 @@ extract_tinyagri.py
 
 # article outline
 outline.txt
+
+# markdowns
+*.md
+!README.md

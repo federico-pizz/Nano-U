@@ -8,6 +8,7 @@
 [![Rust](https://img.shields.io/badge/rust-esp--rs-red.svg)](https://esp-rs.github.io/book/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Dataset](https://img.shields.io/badge/🤗%20Dataset-TinyAgri-yellow)](https://huggingface.co/datasets/federico-pizz/TinyAgri)
 
 ---
 
@@ -18,8 +19,6 @@ The model is trained with **Quantization-Aware Distillation (QAD)** — a single
 ---
 
 ## Results
-
-<img src="tools/predictions_comparison.png" alt="Nano-U predictions at different stages" width="800"/>
 
 ### Segmentation Accuracy
 
@@ -32,12 +31,21 @@ The model is trained with **Quantization-Aware Distillation (QAD)** — a single
 | Nano-U (Float32) | TinyAgri | 87.5% | 93.4% | 90.2% | 97.0% |
 | **Nano-U (INT8, on ESP32)** | **TinyAgri** | **70.6%** | **83.0%** | **80.1%** | **86.1%** |
 
-The negligible Float32→INT8 gap on Botanic Garden confirms the QAD pipeline successfully preserves accuracy through quantization. The larger drop on TinyAgri reflects the difficulty of encoding dense overlapping vegetation into INT8 precision.
+The negligible Float32→INT8 gap on Botanic Garden confirms the QAD pipeline successfully preserves accuracy through quantization. The larger drop on TinyAgri reflects the difficulty of encoding dense overlapping vegetation into INT8 precision (see [Limitations](#limitations)).
 
-<img src="tools/figure_2.png" alt="Nano-U training pipeline" width="800"/>
+### Qualitative Results
 
+Side-by-side comparison of raw input, ground-truth mask, and Nano-U INT8 prediction across both domains:
 
-### Hardware Efficiency (ESP32-S3)
+<img src="tools/predictions_comparison.png" alt="Input, ground truth, and Nano-U INT8 prediction on Botanic Garden and TinyAgri" width="800"/>
+
+### Training Pipeline
+
+The diagram below shows the QAD training loop: fake-quantization nodes are injected from epoch one so the optimizer simultaneously minimizes distillation loss (teacher soft targets) and quantization error (INT8 rounding).
+
+<img src="tools/figure_2.png" alt="Quantization-Aware Distillation training pipeline" width="800"/>
+
+### Hardware Efficiency (ESP32-S3-CAM)
 
 | Metric | Value |
 |:---|:---:|
@@ -69,6 +77,8 @@ The asymmetric 3×2 MaxPool at Stage 3 reduces 15×20 cleanly to 5×10 without s
 
 At TFLite export, batch normalization statistics are folded into preceding convolutions, reducing stored parameters from 4,688 (Float32) to 3,357 (INT8) with no accuracy loss.
 
+SVD-based redundancy scores (`src/nas.py`) are tracked during training to monitor layer utilization. These scores empirically confirm that encoder layers generalize across domains while decoder layers are domain-specific — motivating the decoder-only re-distillation strategy described in [Limitations](#limitations).
+
 ### Quantization-Aware Distillation
 
 $$\mathcal{L} = \alpha \cdot T^2 \cdot \mathcal{L}_\text{KD} + (1 - \alpha) \cdot \mathcal{L}_\text{CE}$$
@@ -87,7 +97,7 @@ An outdoor robot navigation benchmark collected in a 48,000 m² unstructured env
 ### TinyAgri
 A custom terrain segmentation dataset collected via the onboard OV2640 camera of an ESP32-CAM mounted on a SunFounder Galaxy RVR rover. It contains 2,659 images across two agricultural environments (tomato and corn fields), annotated with SAM 2. TinyAgri is released alongside this project to support future research in edge robotics.
 
-🤗 Dataset: [federico-pizz/TinyAgri](https://huggingface.co/datasets/federico-pizz/TinyAgri)
+<img src="tools/tinyagri_grid.png" alt="Sample images from the TinyAgri dataset — tomato and corn field terrain" width="800"/>
 
 ---
 
@@ -102,34 +112,43 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-For the Rust firmware, install the ESP Rust toolchain:
-
-```bash
-# See https://esp-rs.github.io/book/installation/index.html
-source $HOME/export-esp.sh
-```
+For Rust firmware build and deployment, see [`firmware/README.md`](firmware/README.md).
 
 ---
 
 ## Usage
 
-### Full QAD Pipeline (recommended)
+### Pre-trained Models
 
-Copy and fill in `config/config.yaml` with your dataset paths, then run the full pipeline in one shot:
+Pre-trained INT8 TFLite models for both domains are included in the repository under `models/`:
 
-```bash
-source .venv/bin/activate && \
-  python scripts/train_model.py bu_net --config config/config.yaml && \
-  python scripts/train_model.py nano_u --config config/config.yaml && \
-  python scripts/run_qad.py            --config config/config.yaml && \
-  python scripts/eval_esp32.py nano_u  --config config/config.yaml
+```
+models/
+├── BotanicGarden/nano_u.tflite
+└── TinyAgri/nano_u.tflite
 ```
 
-### Train Individual Models
+You can run evaluation directly against these without training from scratch (see [Evaluate](#evaluate) below).
+
+### Training
+
+Copy and fill in `config/config.yaml` with your dataset paths, then choose one of the two options below — they are mutually exclusive.
+
+**Option A — QAD Pipeline (recommended)**
+
+Runs all four phases in one shot: teacher training → student training with distillation → INT8 TFLite export → evaluation.
+
+```bash
+python scripts/run_qad.py --config config/config.yaml
+```
+
+**Option B — Standard training (no distillation)**
+
+Trains teacher and student independently without knowledge distillation.
 
 ```bash
 python scripts/train_model.py bu_net --config config/config.yaml   # Teacher
-python scripts/train_model.py nano_u --config config/config.yaml   # Student (no distillation)
+python scripts/train_model.py nano_u --config config/config.yaml   # Student
 ```
 
 ### Evaluate
@@ -138,15 +157,15 @@ python scripts/train_model.py nano_u --config config/config.yaml   # Student (no
 python src/evaluate.py nano_u --config config/config.yaml
 ```
 
-### MCU Deployment
-
-See [`firmware/README.md`](firmware/README.md) for build setup, binary descriptions, and environment variables.
-
 ### On-Device Evaluation
 
 ```bash
 python scripts/eval_esp32.py nano_u --config config/config.yaml
 ```
+
+### MCU Deployment
+
+See [`firmware/README.md`](firmware/README.md) for build setup, binary descriptions, and environment variables.
 
 ---
 
@@ -171,10 +190,12 @@ Nano-U/
 │   └── profile_mobilenet.py    # MobileNet baseline profiling
 ├── firmware/                   # ESP32-S3 bare-metal Rust
 │   ├── src/bin/
-│   │   ├── inference.rs        # INT8 inference loop
-│   │   ├── single_inference.rs # Single-image inference
-│   │   └── analysis.rs         # Stack painting + energy profiling
-│   └── build.rs                # Compile-time quantization param extraction
+│   │   ├── run.rs                    # Continuous inference loop (default target)
+│   │   ├── inference.rs              # One-shot INT8 benchmark over all test images
+│   │   ├── single_inference.rs       # Single-image inference + serial output
+│   │   ├── analysis.rs               # Stack painting + power profiling (Nano-U)
+│   │   └── analysis_person_detect.rs # Stack painting + power profiling (person_detect)
+│   ├── build.rs                      # Compile-time quantization param extraction + image 
 ├── models/
 │   ├── BotanicGarden/nano_u.tflite
 │   └── TinyAgri/nano_u.tflite
@@ -187,7 +208,7 @@ Nano-U/
 
 ## Hardware
 
-All experiments use an **ESP32-S3-CAM** (dual-core Xtensa LX7 @ 240 MHz, 512 KB internal SRAM, 16 MB PSRAM, OV2640 camera). No ML accelerator is present; all integer arithmetic runs on the general-purpose ALU. See [`firmware/README.md`](firmware/README.md) for build and deployment details.
+All experiments use an **ESP32-S3-CAM** (dual-core Xtensa LX7 @ 240 MHz, 512 KB internal SRAM, 16 MB PSRAM, OV2640 camera). No ML accelerator is present; all integer arithmetic runs on the general-purpose ALU. See [`firmware/README.md`](firmware/README.md) for build, binary descriptions, and environment variables.
 
 ---
 
@@ -204,14 +225,14 @@ All experiments use an **ESP32-S3-CAM** (dual-core Xtensa LX7 @ 240 MHz, 512 KB 
 If you use Nano-U or the TinyAgri dataset, please cite:
 
 ```bibtex
-@misc{pizzolato2025nanou,
-  title         = {Nano-U: Binary Terrain Segmentation for Bare-Metal Microcontrollers via Quantization-Aware Distillation},
-  author        = {Pizzolato, Federico and Pasti, Francesco and Bellotto, Nicola},
-  year          = {2025},
-  eprint        = {XXXX.XXXXX},
-  archivePrefix = {arXiv},
-  primaryClass  = {cs.RO},
-  url           = {https://arxiv.org/abs/XXXX.XXXXX},
+@misc{pizzolato2026nanou,
+      title={Nano-U: Efficient Terrain Segmentation for Tiny Robot Navigation}, 
+      author={Federico Pizzolato and Francesco Pasti and Nicola Bellotto},
+      year={2026},
+      eprint={2605.10210},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2605.10210}, 
 }
 ```
 
