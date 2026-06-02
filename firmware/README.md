@@ -38,7 +38,7 @@ TARGET_IMG_IDX=42 cargo run --release --bin single_inference
 
 ## Build-time configuration
 
-The model and quantization parameters are embedded at compile time via `build.rs`. All defaults target BotanicGarden.
+The model and quantization parameters are embedded at compile time via `build.rs`. Point the env vars below at any dataset's model directory; the defaults target BotanicGarden.
 
 | Env var | Default | Description |
 |:---|:---|:---|
@@ -46,6 +46,23 @@ The model and quantization parameters are embedded at compile time via `build.rs
 | `TEST_IMG_DIR` | `../data/BotanicGarden/test/img` | PNG images packed into the binary |
 | `MODEL_NAME` | `nano_u` | Stem of the model file |
 | `TARGET_IMG_IDX` | `1` | Image index used by `single_inference` |
+
+### Calibration parameters (required before first build)
+
+`build.rs` embeds the model's INT8 quantization scales, zero-points, and input
+normalization from a `<MODEL_NAME>_quant_params.json` file sitting next to the `.tflite`
+in `MODELS_DIR`. This JSON is a **generated artifact and is not committed** — without it
+`build.rs` panics. Regenerate it for whichever dataset you're building (run from the repo
+root, inside the Python env), substituting your dataset name for `<dataset>`:
+
+```bash
+python -c "import json; from src.quantize_model import extract_quant_params; \
+p = extract_quant_params('models/<dataset>/nano_u.tflite', 'config/config.yaml'); \
+json.dump(p, open('models/<dataset>/nano_u_quant_params.json', 'w'), indent=2)"
+```
+
+For the models shipped in this repo, `<dataset>` is `BotanicGarden` or `TinyAgri`. The
+full training pipeline (`scripts/train_model.py`) also writes this file automatically.
 
 ## Project structure
 

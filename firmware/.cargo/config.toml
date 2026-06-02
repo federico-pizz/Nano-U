@@ -1,0 +1,13 @@
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --monitor"
+
+[env]
+ESP_LOG = "info"
+
+[build]
+rustflags = ["-C", "link-arg=-nostartfiles", "-C", "target-cpu=esp32s3"]
+
+target = "xtensa-esp32s3-none-elf"
+
+[unstable]
+build-std = ["core"]

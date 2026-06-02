@@ -89,6 +89,11 @@ where $\mathcal{L}_\text{KD}$ is MSE between temperature-scaled sigmoid outputs 
 
 ## Datasets
 
+Nano-U is dataset-agnostic: any binary terrain-segmentation dataset laid out as
+`data/<name>/{train,val,test}/{img,mask}` works by pointing `config/config.yaml` at it.
+The two datasets below are the ones used for the results in this repository and its
+accompanying publication.
+
 ### Botanic Garden
 An outdoor robot navigation benchmark collected in a 48,000 m² unstructured environment. We use 1,181 images from all 5 annotated sequences, split by contiguous sequence (70/20/10) to prevent temporal leakage. Binary traversability masks are derived from the original *path* class annotations.
 
@@ -195,7 +200,7 @@ Nano-U/
 │   │   ├── single_inference.rs       # Single-image inference + serial output
 │   │   ├── analysis.rs               # Stack painting + power profiling (Nano-U)
 │   │   └── analysis_person_detect.rs # Stack painting + power profiling (person_detect)
-│   ├── build.rs                      # Compile-time quantization param extraction + image 
+│   └── build.rs                      # Compile-time quantization param extraction + image packing
 ├── models/
 │   ├── BotanicGarden/nano_u.tflite
 │   └── TinyAgri/nano_u.tflite

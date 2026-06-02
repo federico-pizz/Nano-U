@@ -37,6 +37,8 @@ old_nano_u/
 /target/
 **/target/
 Cargo.lock
+# ...but the firmware is a binary crate: commit its lock for reproducible builds
+!firmware/Cargo.lock
 
 # --- Large Media Files ---
 *.png
@@ -49,7 +51,8 @@ Cargo.lock
 
 # Rust subproject firmware
 firmware/target/
-firmware/.cargo/
+firmware/.cargo/*
+!firmware/.cargo/config.toml
 
 # Tools 
 tools/**
