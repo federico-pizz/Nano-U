@@ -86,9 +86,9 @@ def test_pipeline_dice_coef_in_range(tmp_png_dataset, tiny_model):
 # ── gradient update ───────────────────────────────────────────────────────────
 
 def test_pipeline_training_step_reduces_loss(tmp_png_dataset):
-    """One gradient step on a fresh model must produce a finite loss."""
+    """Overfitting a single batch for several steps must reduce the loss."""
     model = create_nano_u(input_shape=(H, W, 3), filters=[4, 8, 16], bottleneck=16)
-    optimizer = keras.optimizers.Adam(learning_rate=1e-3)
+    optimizer = keras.optimizers.Adam(learning_rate=1e-2)
 
     ds = make_dataset(
         tmp_png_dataset["imgs"], tmp_png_dataset["masks"],
@@ -96,16 +96,25 @@ def test_pipeline_training_step_reduces_loss(tmp_png_dataset):
     )
     img_batch, mask_batch = next(iter(ds))
 
-    with tf.GradientTape() as tape:
-        logits = model(img_batch, training=True)
-        loss = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(labels=mask_batch, logits=logits)
-        )
-    grads = tape.gradient(loss, model.trainable_variables)
-    optimizer.apply_gradients(zip(grads, model.trainable_variables))
+    def step():
+        with tf.GradientTape() as tape:
+            logits = model(img_batch, training=True)
+            loss = tf.reduce_mean(
+                tf.nn.sigmoid_cross_entropy_with_logits(labels=mask_batch, logits=logits)
+            )
+        grads = tape.gradient(loss, model.trainable_variables)
+        optimizer.apply_gradients(zip(grads, model.trainable_variables))
+        return float(loss.numpy())
 
-    assert np.isfinite(loss.numpy())
-    assert loss.numpy() > 0.0
+    initial_loss = step()
+    final_loss = initial_loss
+    for _ in range(30):
+        final_loss = step()
+
+    assert np.isfinite(final_loss)
+    assert final_loss < initial_loss, (
+        f"loss did not decrease over 30 steps: {initial_loss:.4f} -> {final_loss:.4f}"
+    )
 
 
 def test_pipeline_gradients_not_none(tmp_png_dataset):

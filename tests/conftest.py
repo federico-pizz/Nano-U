@@ -8,6 +8,16 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
+# Enable GPU memory growth before any op initializes the device. The suite mixes
+# GPU forward/training passes with INT8 TFLite conversion; without growth, TF
+# pre-allocates the whole GPU and the converter can intermittently fail under the
+# resulting memory pressure. Harmless on CPU-only machines.
+for _gpu in tf.config.list_physical_devices("GPU"):
+    try:
+        tf.config.experimental.set_memory_growth(_gpu, True)
+    except RuntimeError:
+        pass  # device already initialized; nothing we can do this late
+
 H, W = 60, 80
 
 

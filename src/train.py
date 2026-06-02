@@ -397,6 +397,8 @@ def train_with_distillation(
     
     # dummy loss since we use custom loop
     student.compile(optimizer=optimizer, loss='mse')
+
+    optimizer.build(student.trainable_variables)
     
     try:
         epochs = config.get("epochs", 100)
@@ -814,18 +816,12 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
         model_name = config.get('model_name', 'model')
         model_path = models_dir / f"{model_name}.h5"
 
+        # Save the trained model. QAT models are saved with their quantization
+        # wrappers intact; the TFLite converter in quantize_model.py then applies
+        # PTQ on top of the QAT-trained weights to produce the final INT8 model.
+        model_to_save.save(model_path)
         if is_qat_model:
-            # Strip the QAT annotation wrappers and save a plain float model.
-            # The TFLite converter in quantize_model.py will then apply PTQ
-            # (post-training quantization) on top of the QAT-trained weights,
-            if hasattr(model_to_save, "_is_qat_model") and model_to_save._is_qat_model:
-                print("QAT detected — saving model with quantization wrappers...")
-                model_to_save.save(model_path)
-                print(f"QAT model saved to {model_path}")
-            else:
-                model_to_save.save(model_path)
-        else:
-            model_to_save.save(model_path)
+            print(f"QAT model saved to {model_path}")
 
         if os.path.exists(temp_checkpoint):
             os.remove(temp_checkpoint)

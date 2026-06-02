@@ -1,91 +1,62 @@
-"""Unit tests for the serial protocol parsing logic used in scripts/eval_esp32.py.
+"""Unit tests for the serial protocol parsing logic in scripts/eval_esp32.py.
 
-The parsing code lives inline in run_inference_on_device, so we replicate
-the exact same logic here to keep each test a pure function.
+These import the real parser functions used by run_inference_on_device, so the
+tests track the production wire format instead of a private copy of the logic.
 """
 
 import struct
 import numpy as np
 import pytest
 
-
-# ── helpers that mirror eval_esp32.py parsing logic ──────────────────────────
-
-def _parse_preprocess_line(line_str: str) -> dict:
-    """IMG_PREPROCESS:{idx}:{us}us  →  {idx: int, us: int}"""
-    parts = line_str.split(":")
-    idx = int(parts[1])
-    us = int(parts[2].rstrip("us"))
-    return {"idx": idx, "us": us}
-
-
-def _parse_inference_line(line_str: str) -> dict:
-    parts = line_str.split(":")
-    idx = int(parts[1])
-    us = int(parts[2].rstrip("us"))
-    return {"idx": idx, "us": us}
-
-
-def _parse_stats_line(line_str: str) -> dict:
-    """IMG_STATS:{idx}:{min},{max}  →  {idx: int, min: float, max: float}"""
-    parts = line_str.split(":")
-    idx = int(parts[1])
-    min_v, max_v = parts[2].split(",")
-    return {"idx": idx, "min": float(min_v), "max": float(max_v)}
-
-
-def _decode_hex_row(hex_str: str) -> np.ndarray:
-    """8-char hex per pixel → little-endian f32 array."""
-    row_bytes = bytes.fromhex(hex_str)
-    return np.frombuffer(row_bytes, dtype="<f4")
+from scripts.eval_esp32 import parse_idx_us_line, parse_stats_line, decode_hex_row
 
 
 # ── IMG_PREPROCESS parsing ────────────────────────────────────────────────────
 
 def test_parse_preprocess_basic():
-    result = _parse_preprocess_line("IMG_PREPROCESS:3:1234us")
-    assert result["idx"] == 3
-    assert result["us"] == 1234
+    idx, us = parse_idx_us_line("IMG_PREPROCESS:3:1234us")
+    assert idx == 3
+    assert us == 1234
 
 
 def test_parse_preprocess_zero_index():
-    result = _parse_preprocess_line("IMG_PREPROCESS:0:99us")
-    assert result["idx"] == 0
-    assert result["us"] == 99
+    idx, us = parse_idx_us_line("IMG_PREPROCESS:0:99us")
+    assert idx == 0
+    assert us == 99
 
 
 def test_parse_preprocess_large_value():
-    result = _parse_preprocess_line("IMG_PREPROCESS:10:999999us")
-    assert result["us"] == 999999
+    _, us = parse_idx_us_line("IMG_PREPROCESS:10:999999us")
+    assert us == 999999
 
 
-# ── IMG_INFERENCE parsing ─────────────────────────────────────────────────────
+# ── IMG_INFERENCE parsing (same wire format as IMG_PREPROCESS) ─────────────────
 
 def test_parse_inference_basic():
-    result = _parse_inference_line("IMG_INFERENCE:0:54321us")
-    assert result["idx"] == 0
-    assert result["us"] == 54321
+    idx, us = parse_idx_us_line("IMG_INFERENCE:0:54321us")
+    assert idx == 0
+    assert us == 54321
 
 
 # ── IMG_STATS parsing ─────────────────────────────────────────────────────────
 
 def test_parse_stats_positive():
-    result = _parse_stats_line("IMG_STATS:0:1.23,4.56")
-    assert result["idx"] == 0
-    assert abs(result["min"] - 1.23) < 1e-5
-    assert abs(result["max"] - 4.56) < 1e-5
+    idx, min_v, max_v = parse_stats_line("IMG_STATS:0:1.23,4.56")
+    assert idx == 0
+    assert abs(min_v - 1.23) < 1e-5
+    assert abs(max_v - 4.56) < 1e-5
 
 
 def test_parse_stats_negative_min():
-    result = _parse_stats_line("IMG_STATS:2:-3.14,2.71")
-    assert abs(result["min"] - (-3.14)) < 1e-4
-    assert abs(result["max"] - 2.71) < 1e-4
+    _, min_v, max_v = parse_stats_line("IMG_STATS:2:-3.14,2.71")
+    assert abs(min_v - (-3.14)) < 1e-4
+    assert abs(max_v - 2.71) < 1e-4
 
 
 def test_parse_stats_index_preserved():
     for i in range(5):
-        result = _parse_stats_line(f"IMG_STATS:{i}:0.0,1.0")
-        assert result["idx"] == i
+        idx, _, _ = parse_stats_line(f"IMG_STATS:{i}:0.0,1.0")
+        assert idx == i
 
 
 # ── f32 hex row encoding round-trip ──────────────────────────────────────────
@@ -105,7 +76,7 @@ def test_hex_row_roundtrip_single_pixel():
     """One pixel: encode f32 → 8 hex chars (firmware byte order) → decode back."""
     value = np.float32(-1.234567)
     hex_str = _f32_to_firmware_hex(float(value))
-    decoded = _decode_hex_row(hex_str)
+    decoded = decode_hex_row(hex_str)
     assert abs(decoded[0] - value) < 1e-6
 
 
@@ -114,7 +85,7 @@ def test_hex_row_roundtrip_row_of_80():
     rng = np.random.default_rng(42)
     values = rng.standard_normal(80).astype(np.float32)
     hex_str = "".join(_f32_to_firmware_hex(float(v)) for v in values)
-    decoded = _decode_hex_row(hex_str)
+    decoded = decode_hex_row(hex_str)
     np.testing.assert_array_almost_equal(decoded, values, decimal=6)
 
 
@@ -128,7 +99,7 @@ def test_hex_row_length_is_width_times_8():
 def test_hex_row_special_values():
     for v in [0.0, 1.0, -1.0, float("inf"), float("-inf")]:
         hex_str = _f32_to_firmware_hex(v)
-        decoded = _decode_hex_row(hex_str)
+        decoded = decode_hex_row(hex_str)
         if np.isfinite(v):
             assert abs(decoded[0] - v) < 1e-6
         else:

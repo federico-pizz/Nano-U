@@ -75,7 +75,7 @@ Nano-U is a strictly sequential 7-stage encoder-decoder. Skip connections are om
 
 The asymmetric 3×2 MaxPool at Stage 3 reduces 15×20 cleanly to 5×10 without spatial misalignment. The largest intermediate tensor is 60×80×4 = 19.2 KB (INT8), keeping the total arena within budget.
 
-At TFLite export, batch normalization statistics are folded into preceding convolutions, reducing stored parameters from 4,688 (Float32) to 3,357 (INT8) with no accuracy loss.
+The parameter count is reported at three stages: the plain Float32 architecture has **4,212** weights; quantization-aware training wraps these in fake-quant nodes for a saved-checkpoint count of **4,688**; and at TFLite export the batch-normalization statistics are folded into the preceding convolutions, leaving **3,357** stored INT8 parameters with no accuracy loss.
 
 SVD-based redundancy scores (`src/nas.py`) are tracked during training to monitor layer utilization. These scores empirically confirm that encoder layers generalize across domains while decoder layers are domain-specific — motivating the decoder-only re-distillation strategy described in [Limitations](#limitations).
 

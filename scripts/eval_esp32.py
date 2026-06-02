@@ -26,6 +26,30 @@ import matplotlib.pyplot as plt
 
 EPS = 1e-7
 
+
+# ── Serial protocol parsers ──────────────────────────────────────────────────
+# Pure functions so the wire format is unit-tested directly (see
+# tests/unit/test_esp32_parser.py) instead of via a copy of the logic.
+
+def parse_idx_us_line(line_str: str) -> tuple:
+    """Parse 'PREFIX:{idx}:{us}us' (IMG_PREPROCESS / IMG_INFERENCE) → (idx, us)."""
+    parts = line_str.split(":")
+    return int(parts[1]), int(parts[2].rstrip("us"))
+
+
+def parse_stats_line(line_str: str) -> tuple:
+    """Parse 'IMG_STATS:{idx}:{min},{max}' → (idx, min, max)."""
+    parts = line_str.split(":")
+    idx = int(parts[1])
+    min_v, max_v = parts[2].split(",")
+    return idx, float(min_v), float(max_v)
+
+
+def decode_hex_row(hex_str: str) -> np.ndarray:
+    """Decode a row of little-endian f32 pixels from the firmware hex output."""
+    return np.frombuffer(bytes.fromhex(hex_str), dtype="<f4")
+
+
 def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/config.yaml"):
     print(f"[1/3] Building inference binary for {model_name}...")
     
@@ -96,24 +120,16 @@ def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/
                         capturing = False
                         
                     elif line_str.startswith("IMG_PREPROCESS:"):
-                        parts = line_str.split(":")
-                        idx = int(parts[1])
-                        if idx not in latency_us:
-                            latency_us[idx] = {}
-                        latency_us[idx]["preprocess"] = int(parts[2].rstrip("us"))
+                        idx, us = parse_idx_us_line(line_str)
+                        latency_us.setdefault(idx, {})["preprocess"] = us
 
                     elif line_str.startswith("IMG_INFERENCE:"):
-                        parts = line_str.split(":")
-                        idx = int(parts[1])
-                        if idx not in latency_us:
-                            latency_us[idx] = {}
-                        latency_us[idx]["inference"] = int(parts[2].rstrip("us"))
+                        idx, us = parse_idx_us_line(line_str)
+                        latency_us.setdefault(idx, {})["inference"] = us
 
                     elif line_str.startswith("IMG_STATS:"):
-                        parts = line_str.split(":")
-                        idx = int(parts[1])
-                        min_v, max_v = parts[2].split(",")
-                        stats[idx] = {"min": float(min_v), "max": float(max_v)}
+                        idx, min_v, max_v = parse_stats_line(line_str)
+                        stats[idx] = {"min": min_v, "max": max_v}
 
                     elif line_str == "BENCHMARK_DONE":
                         p.terminate()
@@ -122,12 +138,8 @@ def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/
                     elif capturing:
                         # Dynamic hex string length checking
                         if len(line_str) == expected_row_len:
-                            # parse hex to int8
                             try:
-                                row_bytes = bytes.fromhex(line_str)
-                                # convert to signed int8
-                                row_f32 = np.frombuffer(row_bytes, dtype='<f4')
-                                img_data[current_img].append(row_f32)
+                                img_data[current_img].append(decode_hex_row(line_str))
                             except ValueError:
                                 pass
                                 
