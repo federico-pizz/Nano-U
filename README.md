@@ -108,7 +108,7 @@ A custom terrain segmentation dataset collected via the onboard OV2640 camera of
 
 ## Installation
 
-Requires Python 3.12+.
+Requires Python 3.12 (TensorFlow has no wheels for 3.13/3.14).
 
 ```bash
 git clone https://github.com/federico-pizz/Nano-U.git
@@ -116,6 +116,19 @@ cd Nano-U
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+### GPU (optional)
+
+The pinned install is CPU-only so it works everywhere; the test suite runs on CPU and
+GPU-marked tests skip automatically. For an NVIDIA GPU, install a CUDA-capable build:
+
+```bash
+pip install "tensorflow[and-cuda]==2.20.0"
+```
+
+> Very new GPUs (RTX 50-series / Blackwell, sm_120) aren't covered by stock TensorFlow
+> builds yet — they need a CUDA 12.8+ toolkit and a TensorFlow nightly, typically in a
+> separate conda environment. See NVIDIA's Blackwell compatibility guide.
 
 For Rust firmware build and deployment, see [`firmware/README.md`](firmware/README.md).
 
