@@ -107,13 +107,19 @@ jobs:
           MODEL_NAME: nano_u
           TARGET_IMG_IDX: "0"
         # Target triple comes from firmware/.cargo/config.toml ([build] target).
-        run: cargo build --release
+        # Build only the Nano-U bins: they use the shipped nano_u model + the
+        # build.rs-generated input_images.bin. `analysis_person_detect` is
+        # excluded — it needs person_detect.tflite + test_img.bmp, which are a
+        # separate (unshipped, gitignored) model unrelated to this deploy.
+        run: >-
+          cargo build --release
+          --bin inference --bin run --bin single_inference --bin analysis
 
       - name: Collect firmware binaries
         run: |
           mkdir -p artifacts
           rel="firmware/target/xtensa-esp32s3-none-elf/release"
-          for bin in inference run single_inference analysis analysis_person_detect; do
+          for bin in inference run single_inference analysis; do
             [ -f "$rel/$bin" ] && cp "$rel/$bin" "artifacts/$bin.elf"
           done
           ls -la artifacts
