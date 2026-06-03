@@ -6,15 +6,20 @@ numeric frame ordering that keeps the sequential split in true capture order.
 """
 
 import numpy as np
+import pytest
 from PIL import Image
 
-from tools.extract_botanicgarden import (
-    ROAD_COLOR,
-    extract_binary_road,
-    frame_key,
-    sequential_split,
-)
-from tools.extract_tinyagri import get_frame_num
+# The tools/ extraction scripts are kept out of the repo (gitignored), so they
+# are only importable in a local dev checkout. Skip this module cleanly when they
+# are absent (e.g. on CI / a fresh clone) instead of failing collection.
+_eb = pytest.importorskip("tools.extract_botanicgarden")
+_et = pytest.importorskip("tools.extract_tinyagri")
+
+ROAD_COLOR = _eb.ROAD_COLOR
+extract_binary_road = _eb.extract_binary_road
+frame_key = _eb.frame_key
+sequential_split = _eb.sequential_split
+get_frame_num = _et.get_frame_num
 
 
 # ── sequential_split ─────────────────────────────────────────────────────────

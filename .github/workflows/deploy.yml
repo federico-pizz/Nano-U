@@ -1,0 +1,125 @@
+name: deploy
+
+# CPU-only: GitHub-hosted runners have no GPU, so we never train the teacher or
+# flash hardware here. The pipeline tests on the pinned (CPU) stack and builds
+# the deployable ESP32-S3 firmware artifact from the committed INT8 model.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Test gate on the exact pinned stack we ship (requirements.txt) ──────────
+  test:
+    name: Test (CPU, pinned stack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12" # required: TF ships no wheels for 3.13/3.14
+          cache: pip
+
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests (GPU suite excluded — no GPU on hosted runners)
+        run: pytest -m "not gpu" -q
+
+      # firmware/build.rs needs <model>_quant_params.json, which is NOT committed
+      # (only the .tflite is). Regenerate it from the committed model so the
+      # firmware job can consume it.
+      - name: Generate firmware quant params from committed .tflite
+        run: |
+          python - <<'PY'
+          import json
+          from src.quantize_model import extract_quant_params
+          params = extract_quant_params(
+              "models/TinyAgri/nano_u.tflite", "config/config.yaml"
+          )
+          out = "models/TinyAgri/nano_u_quant_params.json"
+          with open(out, "w") as f:
+              json.dump(params, f, indent=2)
+          print("input scale/zp:", params["input"]["scale"], params["input"]["zero_point"])
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quant-params
+          path: models/TinyAgri/nano_u_quant_params.json
+          if-no-files-found: error
+
+  # ── Build the deployable firmware (only on tags / manual dispatch) ──────────
+  firmware:
+    name: Build ESP32-S3 firmware
+    needs: test
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore quant params (consumed by firmware/build.rs)
+        uses: actions/download-artifact@v4
+        with:
+          name: quant-params
+          path: models/TinyAgri
+
+      - name: Install Xtensa (esp) Rust toolchain
+        uses: esp-rs/xtensa-toolchain@v1.5
+        with:
+          default: true
+          buildtargets: esp32s3
+          ldproxy: false # bare-metal no_std build, not flashing — ldproxy not needed
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Real test images are gitignored; build.rs only embeds them for on-device
+      # benchmarking, so placeholders are sufficient to produce the binary.
+      - name: Synthesize placeholder test images
+        run: |
+          python -m pip install --quiet pillow
+          python - <<'PY'
+          import os
+          from PIL import Image
+          d = "ci_test_img"
+          os.makedirs(d, exist_ok=True)
+          for i in range(4):
+              Image.new("RGB", (80, 60), (i * 40, i * 40, i * 40)).save(f"{d}/frame_{i:03d}.png")
+          print("wrote 4 placeholder images to", d)
+          PY
+
+      - name: Build firmware (release)
+        working-directory: firmware
+        env:
+          MODELS_DIR: ${{ github.workspace }}/models/TinyAgri
+          TEST_IMG_DIR: ${{ github.workspace }}/ci_test_img
+          MODEL_NAME: nano_u
+          TARGET_IMG_IDX: "0"
+        # Target triple comes from firmware/.cargo/config.toml ([build] target).
+        run: cargo build --release
+
+      - name: Collect firmware binaries
+        run: |
+          mkdir -p artifacts
+          rel="firmware/target/xtensa-esp32s3-none-elf/release"
+          for bin in inference run single_inference analysis analysis_person_detect; do
+            [ -f "$rel/$bin" ] && cp "$rel/$bin" "artifacts/$bin.elf"
+          done
+          ls -la artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nano-u-esp32s3-firmware
+          path: artifacts/*
+          if-no-files-found: error

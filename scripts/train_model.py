@@ -4,7 +4,7 @@ Useful for training BU-Net as a standalone teacher, or as an ablation baseline.
 
 Usage:
     python scripts/train_model.py bu_net
-    python scripts/train_model.py nano_u --config config/BotanicGarden_config.yaml
+    python scripts/train_model.py nano_u --config config/TinyAgri_config.yaml
 """
 
 import os

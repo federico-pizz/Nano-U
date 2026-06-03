@@ -1,4 +1,4 @@
-# --- General Python / Environment ---
+# ── Python / build artifacts ────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -13,34 +13,28 @@ dist/
 .pytest_cache/
 .mypy_cache/
 
-# Virtual Environments
-.venv-tf/
+# ── Virtual environments ─────────────────────────────────────────────────────
+.venv*/
+venv/
+env/
+ENV/
 
-# --- IDE / Editors ---
+# ── IDE / editor / OS ────────────────────────────────────────────────────────
 .vscode/
+.idea/
 *.swp
+*.swo
 *~
 .DS_Store
 Thumbs.db
 
-# Data (structure tracked via .gitkeep; see data/.gitignore)
+# ── Run outputs & local config (only the public template is tracked) ─────────
 results/
+config/*.yaml
+config/*.yml
+!config/config.yaml
 
-# Dataset-specific configs (config/config.yaml is the public template)
-config/BotanicGarden_config.yaml
-config/TinyAgri_config.yaml
-
-# Legacy / Old folder content
-old_nano_u/
-
-# --- Rust ---
-/target/
-**/target/
-Cargo.lock
-# ...but the firmware is a binary crate: commit its lock for reproducible builds
-!firmware/Cargo.lock
-
-# --- Large Media Files ---
+# ── Media & data blobs (tracked exceptions whitelisted further down) ─────────
 *.png
 *.jpg
 *.jpeg
@@ -49,25 +43,22 @@ Cargo.lock
 *.tiff
 *.json
 
-# Rust subproject firmware
-firmware/target/
+# ── Rust ─────────────────────────────────────────────────────────────────────
+/target/
+**/target/
+Cargo.lock
+!firmware/Cargo.lock
 firmware/.cargo/*
 !firmware/.cargo/config.toml
+firmware/models/*.tflite
 
-# Tools 
+# ── tools/: ignore scratch, keep committed figures ──────────────────────────
 tools/**
 !tools/
 !tools/figure_2.png
 !tools/predictions_comparison.png
 !tools/tinyagri_grid.png
 
-# data processing
-extract_botanicgarden.py
-extract_tinyagri.py
-
-# article outline
-outline.txt
-
-# markdowns
+# ── Docs: keep READMEs, ignore other markdown drafts ────────────────────────
 *.md
 !README.md
