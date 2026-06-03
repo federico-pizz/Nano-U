@@ -73,12 +73,16 @@ def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 
                  target_size: Optional[Tuple[int, int]] = None,
                  mean: Union[List[float], np.ndarray] = [0.5, 0.5, 0.5],
                  std: Union[List[float], np.ndarray] = [0.5, 0.5, 0.5],
+                 seed: Optional[int] = None,
                  **augment_kwargs) -> tf.data.Dataset:
     """Create a TensorFlow dataset from image and mask files.
 
     Any extra keyword arguments are forwarded to `augment_pair` when
     `augment=True`. Unknown keys raise a ValueError early so that typos in
     config do not silently get ignored.
+
+    `seed` seeds the shuffle so that, given the same global seed, the epoch
+    order is reproducible across runs.
     """
     # Pair each image to its mask by identical basename. The extraction tools
     # give every img/mask pair the same unique filename, so this is exact and
@@ -145,7 +149,7 @@ def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 
 
     ds = tf.data.Dataset.from_tensor_slices((img_files, mask_files))
     if shuffle:
-        ds = ds.shuffle(buffer_size=len(img_files))
+        ds = ds.shuffle(buffer_size=len(img_files), seed=seed)
         
     ds = ds.map(_load_pair_tf, num_parallel_calls=tf.data.AUTOTUNE)
     

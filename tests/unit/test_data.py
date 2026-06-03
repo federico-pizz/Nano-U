@@ -1,6 +1,8 @@
 """Unit tests for src/data.py."""
 
+import os
 import random
+import re
 
 import cv2
 import numpy as np
@@ -219,3 +221,83 @@ def test_augment_pair_mask_stays_binary():
     _, aug_mask = augment_pair(img, mask)
     unique = set(np.unique(aug_mask.numpy()))
     assert unique <= {0.0, 1.0}
+
+
+# ── seeded shuffle / reproducibility ─────────────────────────────────────────
+
+def test_make_dataset_seeded_shuffle_is_reproducible(tmp_path):
+    """Same seed → identical epoch order, and pairing survives the shuffle."""
+    names = [f"frame_{k:03d}" for k in range(12)]
+    ids = list(range(12))
+    imgs, masks = _build_pair_dir(tmp_path, names, ids)
+
+    def order(seed):
+        ds = make_dataset(imgs, masks, batch_size=4, shuffle=True, seed=seed,
+                          mean=[0, 0, 0], std=[1, 1, 1])
+        return _recover_pairs(ds)
+
+    run_a = order(123)
+    run_b = order(123)
+    assert run_a == run_b, "same seed must give the same order"
+    # every image is still with its own mask after shuffling
+    for img_id, mask_id in run_a:
+        assert img_id == mask_id
+    # it is a genuine permutation of all items
+    assert sorted(img_id for img_id, _ in run_a) == ids
+
+
+def test_make_dataset_different_seed_changes_order(tmp_path):
+    names = [f"frame_{k:03d}" for k in range(16)]
+    imgs, masks = _build_pair_dir(tmp_path, names, list(range(16)))
+
+    def order(seed):
+        ds = make_dataset(imgs, masks, batch_size=4, shuffle=True, seed=seed,
+                          mean=[0, 0, 0], std=[1, 1, 1])
+        return [img_id for img_id, _ in _recover_pairs(ds)]
+
+    assert order(1) != order(2), "different seeds should shuffle differently"
+
+
+# ── Python ↔ Rust frame-ordering parity ──────────────────────────────────────
+
+def _rust_frame_key(filename):
+    """Faithful transcription of the sort key in firmware/build.rs:118-125:
+
+        file_stem -> split('_').last()
+                  -> trim_start_matches(non-ascii-digit)
+                  -> parse::<u32>().ok()
+                  -> unwrap_or(0)
+
+    Kept in lockstep with build.rs so the parity test below detects drift on
+    either side. eval_esp32 compares Python and firmware outputs frame-by-frame,
+    so the two orderings MUST agree on the real processed filenames.
+    """
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    last = stem.split('_')[-1]
+    stripped = re.sub(r'^\D+', '', last)          # strip leading non-digits
+    return int(stripped) if stripped.isdigit() else 0
+
+
+def test_sorted_by_frame_matches_build_rs_ordering():
+    """sorted_by_frame must order files identically to firmware/build.rs across
+    the real processed naming schemes of both datasets (plus a few variants)."""
+    names = [
+        # BotanicGarden processed: folder prefix + zero-padded trailing counter
+        "1005_05_img_c54d7a_22290063136_seq_000000_000101.png",
+        "1005_07_img_c54d7a_22290071278_seq_000000_000001.png",
+        "1006_01_img_c54d7a_22291022414_seq_000000_001201.png",
+        "1008_01_img_c54d7a_22293041248_seq_000000_000301.png",
+        # TinyAgri processed: scene prefix + frameN
+        "Crops_scene1_frame100.png",
+        "Crops_scene2_frame9.png",
+        "Tomatoes_scene1_frame100.png",
+        "Tomatoes_scene2_frame2.png",
+        # bare-numeric and frameN variants
+        "frame500.png", "frame20.png", "0421.png",
+    ]
+    shuffled = names[:]
+    random.Random(0).shuffle(shuffled)
+
+    py_order = sorted_by_frame(shuffled)
+    rust_order = sorted(shuffled, key=_rust_frame_key)  # stable, like Rust sort_by_key
+    assert py_order == rust_order

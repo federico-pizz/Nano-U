@@ -24,6 +24,20 @@ from src.data import make_dataset
 from src.nas import NASCallback as NASMonitorCallback
 
 
+def set_global_seed(seed: Optional[int]) -> None:
+    """Seed Python, NumPy and TensorFlow RNGs for reproducible runs.
+
+    No-op when ``seed`` is None. Combined with a seeded ``make_dataset`` shuffle,
+    this makes a training run repeatable given the same config.
+    """
+    if seed is None:
+        return
+    import random as _random
+    _random.seed(seed)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+
+
 def _get_config(full_config: Dict[str, Any], experiment_name: str) -> Dict[str, Any]:
     """Retrieve the experiment configuration from the full config dictionary.
     
@@ -727,7 +741,13 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
 
         if "data" in full_config and "input_shape" in full_config["data"]:
             config.setdefault("input_shape", full_config["data"]["input_shape"])
-        
+
+        # Seed all RNGs up front so the run is reproducible. `seed` lives in the
+        # `training` block alongside the experiment hyperparameter sets.
+        seed = full_config.get("training", {}).get("seed")
+        config.setdefault("seed", seed)
+        set_global_seed(seed)
+
         if output_dir is not None:
             experiment_dir = Path(output_dir)
         else:
@@ -766,15 +786,15 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
             train_img_files, train_mask_files,
             batch_size=batch_size, augment=config.get("augment", False),
             target_size=target_size,
-            mean=norm_mean, std=norm_std
+            mean=norm_mean, std=norm_std, seed=seed
         )
         val_ds: Optional[tf.data.Dataset] = None
         if val_img_files:
             val_ds = make_dataset(
                 val_img_files, val_mask_files,
-                batch_size=batch_size, augment=False,
+                batch_size=batch_size, augment=False, shuffle=False,
                 target_size=target_size,
-                mean=norm_mean, std=norm_std
+                mean=norm_mean, std=norm_std, seed=seed
             )
 
         train_data = train_ds
