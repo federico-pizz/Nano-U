@@ -1,5 +1,8 @@
 """Unit tests for src/data.py."""
 
+import random
+
+import cv2
 import numpy as np
 import pytest
 import tensorflow as tf
@@ -74,6 +77,107 @@ def test_make_dataset_unknown_augment_kwarg_raises(tmp_png_dataset):
     with pytest.raises(ValueError, match="Unknown augmentation kwargs"):
         make_dataset(imgs, masks, batch_size=2, shuffle=False, augment=True,
                      target_size=(60, 80), nonexistent_param=0.5)
+
+
+# ── image ↔ mask alignment ───────────────────────────────────────────────────
+#
+# make_dataset must pair each image with the mask sharing its basename, NOT by
+# position. Independent sorting + positional zipping is fragile because
+# sorted_by_frame keys only on the trailing frame number, which collides across
+# scenes/subfolders; the surviving order then depends on arbitrary directory
+# enumeration, so a plain re-copy can silently mispair >50% of the data.
+#
+# Encoding trick: each pair's image AND mask are painted a solid value equal to
+# the pair's id, so after loading we can recover both ids and assert they match.
+
+def _write_solid_png(path, value, channels):
+    shape = (60, 80, 3) if channels == 3 else (60, 80)
+    cv2.imwrite(str(path), np.full(shape, value, dtype=np.uint8))
+
+
+def _build_pair_dir(tmp_path, names, ids):
+    """Write img/ and mask/ PNGs where pair ``names[k]`` is painted ``ids[k]`` in
+    both the image and the mask. Returns (img_paths, mask_paths)."""
+    img_dir = tmp_path / "img"
+    mask_dir = tmp_path / "mask"
+    img_dir.mkdir()
+    mask_dir.mkdir()
+    img_paths, mask_paths = [], []
+    for name, id_ in zip(names, ids):
+        ip, mp = img_dir / f"{name}.png", mask_dir / f"{name}.png"
+        _write_solid_png(ip, id_, channels=3)
+        _write_solid_png(mp, id_, channels=1)
+        img_paths.append(str(ip))
+        mask_paths.append(str(mp))
+    return img_paths, mask_paths
+
+
+def _recover_pairs(ds):
+    """Recover per-item (img_id, mask_id) from the solid pixel values.
+
+    Built with mean=0, std=1 so a value v survives as v/255; ×255 recovers v.
+    """
+    pairs = []
+    for img_b, mask_b in ds:
+        for i in range(int(img_b.shape[0])):
+            img_id = int(round(float(tf.reduce_mean(img_b[i])) * 255.0))
+            mask_id = int(round(float(tf.reduce_mean(mask_b[i])) * 255.0))
+            pairs.append((img_id, mask_id))
+    return pairs
+
+
+def test_make_dataset_pairs_by_basename_not_position(tmp_path):
+    """Right image ↔ right mask even when the two lists are enumerated in
+    different orders and frame numbers collide across 'scenes'."""
+    # sceneA_frameK and sceneB_frameK both reduce to frame number K under
+    # sorted_by_frame — the exact collision present in the real datasets.
+    names = [f"sceneA_frame{k}" for k in range(4)] + [f"sceneB_frame{k}" for k in range(4)]
+    ids = list(range(4)) + [10 + k for k in range(4)]
+    imgs, masks = _build_pair_dir(tmp_path, names, ids)
+
+    # Enumerate the two directories in unrelated orders (the re-copy scenario).
+    random.Random(1).shuffle(imgs)
+    random.Random(2).shuffle(masks)
+
+    ds = make_dataset(imgs, masks, batch_size=3, shuffle=False, augment=False,
+                      mean=[0, 0, 0], std=[1, 1, 1])
+    pairs = _recover_pairs(ds)
+    assert len(pairs) == len(names)
+    for img_id, mask_id in pairs:
+        assert img_id == mask_id, f"mispaired: image {img_id} with mask {mask_id}"
+
+
+def test_make_dataset_missing_mask_raises(tmp_path):
+    """An image without a same-name mask must error, not silently truncate."""
+    names = [f"frame_{k:03d}" for k in range(5)]
+    imgs, masks = _build_pair_dir(tmp_path, names, list(range(5)))
+    with pytest.raises(ValueError, match="no mask"):
+        make_dataset(imgs, masks[:-1], batch_size=2, shuffle=False)
+
+
+def test_make_dataset_no_shared_basename_raises(tmp_path):
+    imgs, _ = _build_pair_dir(tmp_path, [f"img_{k}" for k in range(3)], list(range(3)))
+    other = tmp_path / "other"
+    other.mkdir()
+    bad_masks = []
+    for k in range(3):
+        p = other / f"unrelated_{k}.png"
+        _write_solid_png(p, k, channels=1)
+        bad_masks.append(str(p))
+    with pytest.raises(ValueError, match="share a basename"):
+        make_dataset(imgs, bad_masks, batch_size=2, shuffle=False)
+
+
+def test_make_dataset_extra_masks_ignored(tmp_path):
+    """More masks than images is fine — pairing is driven by the images."""
+    names = [f"frame_{k:03d}" for k in range(5)]
+    imgs, masks = _build_pair_dir(tmp_path, names, list(range(5)))
+    ds = make_dataset(imgs[:3], masks, batch_size=2, shuffle=False,
+                      mean=[0, 0, 0], std=[1, 1, 1])
+    pairs = _recover_pairs(ds)
+    assert len(pairs) == 3
+    for img_id, mask_id in pairs:
+        assert img_id == mask_id
 
 
 # ── augment_pair ─────────────────────────────────────────────────────────────

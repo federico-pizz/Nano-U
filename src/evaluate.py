@@ -25,44 +25,6 @@ import matplotlib.pyplot as plt
 EPS = 1e-7
 
 
-def _align_masks_to_images(img_paths: list, mask_paths: list) -> list:
-    """Return mask_paths reordered to align with img_paths by frame number.
-
-    Falls back to positional pairing with a warning when frame numbers are absent.
-    """
-    import re
-
-    def first_num(path):
-        m = re.search(r'(\d+)', os.path.basename(path))
-        return int(m.group(1)) if m else None
-
-    img_nums = [first_num(p) for p in img_paths]
-    mask_nums = [first_num(p) for p in mask_paths]
-
-    if any(n is not None for n in img_nums) and any(n is not None for n in mask_nums):
-        if img_nums != mask_nums:
-            mask_map = {n: p for n, p in zip(mask_nums, mask_paths) if n is not None}
-            aligned = []
-            missing = False
-            fallback = list(mask_paths)
-            for n in img_nums:
-                if n in mask_map:
-                    aligned.append(mask_map[n])
-                else:
-                    missing = True
-                    aligned.append(fallback.pop(0) if fallback else None)
-            print(f'Warning: reordered masks to match image frame numbers; missing matches: {missing}')
-            return aligned
-    else:
-        imgs_b = [os.path.basename(p) for p in img_paths]
-        masks_b = [os.path.basename(p) for p in mask_paths]
-        mismatches = sum(1 for a, b in zip(imgs_b, masks_b) if a != b)
-        if mismatches:
-            print(f'Warning: {mismatches} filename mismatches between images and masks; proceeding with positional pairing.')
-
-    return mask_paths
-
-
 def sigmoid(x):
     return tf.math.sigmoid(x)
 
@@ -112,9 +74,9 @@ def evaluate_and_plot(model_name, config_path, batch_size=8, threshold=0.5, samp
     test_imgs = [os.path.join(test_img_dir, f) for f in sorted(os.listdir(test_img_dir)) if f.endswith('.png')]
     test_masks = [os.path.join(test_mask_dir, f) for f in sorted(os.listdir(test_mask_dir)) if f.endswith('.png')]
 
+    # make_dataset pairs images to masks by basename, so no manual alignment here.
     test_imgs = sorted_by_frame(test_imgs)
     test_masks = sorted_by_frame(test_masks)
-    test_masks = _align_masks_to_images(test_imgs, test_masks)
 
     if len(test_imgs) == 0:
         raise RuntimeError('No test images found')

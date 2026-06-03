@@ -80,13 +80,30 @@ def make_dataset(img_files: List[str], mask_files: List[str], batch_size: int = 
     `augment=True`. Unknown keys raise a ValueError early so that typos in
     config do not silently get ignored.
     """
-    img_files = sorted_by_frame(img_files)
-    mask_files = sorted_by_frame(mask_files)
-    
-    if len(img_files) != len(mask_files):
-        min_len = min(len(img_files), len(mask_files))
-        img_files = img_files[:min_len]
-        mask_files = mask_files[:min_len]
+    # Pair each image to its mask by identical basename. The extraction tools
+    # give every img/mask pair the same unique filename, so this is exact and
+    # independent of directory enumeration order. Positional zipping after two
+    # independent sorts is fragile: sorted_by_frame keys only on the trailing
+    # frame number, which collides across scenes/subfolders, and stable-sort
+    # tie-breaking then leaks the arbitrary glob order of each directory.
+    img_files = sorted_by_frame(img_files)  # determines split / shuffle order
+    mask_by_name = {os.path.basename(m): m for m in mask_files}
+    paired = [(i, mask_by_name[os.path.basename(i)])
+              for i in img_files if os.path.basename(i) in mask_by_name]
+
+    if not paired:
+        raise ValueError(
+            "No image/mask pairs share a basename; cannot build dataset "
+            f"({len(img_files)} images, {len(mask_files)} masks)."
+        )
+    missing = len(img_files) - len(paired)
+    if missing:
+        raise ValueError(
+            f"{missing} image(s) have no mask with a matching filename; "
+            "refusing to fall back to positional pairing."
+        )
+    img_files = [i for i, _ in paired]
+    mask_files = [m for _, m in paired]
 
     mean_tf = tf.constant(mean, dtype=tf.float32)
     std_tf = tf.constant(std, dtype=tf.float32)
