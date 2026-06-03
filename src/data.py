@@ -46,6 +46,11 @@ def augment_pair(
       - max_rotation_deg: maximum rotation in degrees
       - brightness, contrast, saturation, hue: color jitter parameters
     """
+    # Cache the augmentation layers once on the function object. They hold no
+    # trainable weights (only RNG state), so sharing the same instances across
+    # tf.data's parallel `map` calls is safe; the alternative — rebuilding layers
+    # per element — would be far slower. NOTE: max_rotation_deg is read only on
+    # first call, so changing it between calls in one process has no effect.
     if not hasattr(augment_pair, "_flip"):
         augment_pair._flip = layers.RandomFlip("horizontal")
         augment_pair._rotate = layers.RandomRotation(factor=max_rotation_deg/360.0, fill_mode="reflect")
