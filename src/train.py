@@ -611,6 +611,65 @@ def train_with_distillation(
         raise
 
 
+def discover_processed_pairs(
+    processed: Dict[str, Any],
+) -> Tuple[List[str], List[str], List[str], List[str]]:
+    """Resolve processed train/val image and mask file lists from a config block.
+
+    Returns ``(train_img_files, train_mask_files, val_img_files, val_mask_files)``.
+    Validation lists come back empty when the val directories are absent or their
+    image/mask counts disagree (validation is treated as optional).
+
+    Raises:
+        ValueError: 'train' missing from the processed config, or the train
+            image/mask counts disagree (a malformed split — caught early rather
+            than silently truncated downstream).
+        FileNotFoundError: training directories missing, or no training images.
+
+    Note: the actual image↔mask pairing is done by basename in ``make_dataset``;
+    the count checks here are only a cheap guard against an obviously broken split.
+    """
+    if not isinstance(processed, dict) or "train" not in processed:
+        raise ValueError(
+            "'data.paths.processed.train' not found in configuration. "
+            "Processed data is required."
+        )
+
+    train_cfg = processed.get("train", {})
+    val_cfg = processed.get("val", {})
+
+    t_img_dir = Path(train_cfg.get("img", ""))
+    t_mask_dir = Path(train_cfg.get("mask", ""))
+    v_img_dir = Path(val_cfg.get("img", ""))
+    v_mask_dir = Path(val_cfg.get("mask", ""))
+
+    if not t_img_dir.exists() or not t_mask_dir.exists():
+        raise FileNotFoundError(
+            f"Training directories not found: {t_img_dir} or {t_mask_dir}"
+        )
+
+    train_img_files = [str(f) for f in t_img_dir.glob("*.png")]
+    train_mask_files = [str(f) for f in t_mask_dir.glob("*.png")]
+
+    if not train_img_files:
+        raise FileNotFoundError(f"No training images found in {t_img_dir}")
+    if len(train_img_files) != len(train_mask_files):
+        raise ValueError(
+            f"Mismatch in training images ({len(train_img_files)}) "
+            f"and masks ({len(train_mask_files)})"
+        )
+
+    val_img_files: List[str] = []
+    val_mask_files: List[str] = []
+    if v_img_dir.exists() and v_mask_dir.exists():
+        val_img_files = [str(f) for f in v_img_dir.glob("*.png")]
+        val_mask_files = [str(f) for f in v_mask_dir.glob("*.png")]
+        if not (val_img_files and len(val_img_files) == len(val_mask_files)):
+            val_img_files, val_mask_files = [], []
+
+    return train_img_files, train_mask_files, val_img_files, val_mask_files
+
+
 def train_model(config_path: str = "config/config.yaml", experiment_name: str = "default",
                 output_dir: Optional[str] = None,
                 extra_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -684,42 +743,16 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
         config["models_dir"] = str(models_dir)
 
         processed = data_paths.get("processed", {})
-        
-        if not isinstance(processed, dict) or "train" not in processed:
-            raise ValueError("'data.paths.processed.train' not found in configuration. Processed data is required.")
 
         print("Loading data from processed paths...")
-        train_cfg = processed.get("train", {})
-        val_cfg = processed.get("val", {})
-        
-        t_img_dir = Path(train_cfg.get("img", ""))
-        t_mask_dir = Path(train_cfg.get("mask", ""))
-        v_img_dir = Path(val_cfg.get("img", ""))
-        v_mask_dir = Path(val_cfg.get("mask", ""))
-        
-        if not t_img_dir.exists() or not t_mask_dir.exists():
-            raise FileNotFoundError(f"Training directories not found: {t_img_dir} or {t_mask_dir}")
+        (train_img_files, train_mask_files,
+         val_img_files, val_mask_files) = discover_processed_pairs(processed)
 
-        train_img_files = [str(f) for f in t_img_dir.glob("*.png")]
-        train_mask_files = [str(f) for f in t_mask_dir.glob("*.png")]
-        
-        if not train_img_files:
-            raise FileNotFoundError(f"No training images found in {t_img_dir}")
-        if len(train_img_files) != len(train_mask_files):
-            raise ValueError(f"Mismatch in training images ({len(train_img_files)}) and masks ({len(train_mask_files)})")
-            
         print(f"Found {len(train_img_files)} training pairs.")
-        
-        val_img_files: List[str] = []
-        val_mask_files: List[str] = []
-        if v_img_dir.exists() and v_mask_dir.exists():
-            val_img_files = [str(f) for f in v_img_dir.glob("*.png")]
-            val_mask_files = [str(f) for f in v_mask_dir.glob("*.png")]
-            if len(val_img_files) == len(val_mask_files) and val_img_files:
-                print(f"Found {len(val_img_files)} validation pairs.")
-            else:
-                print("Validation data skipped (mismatch or empty).")
-                val_img_files, val_mask_files = [], []
+        if val_img_files:
+            print(f"Found {len(val_img_files)} validation pairs.")
+        else:
+            print("Validation data skipped (mismatch, empty, or no val dirs).")
 
         norm_mean = full_config.get("data", {}).get("normalization", {}).get("mean", [0.5, 0.5, 0.5])
         norm_std = full_config.get("data", {}).get("normalization", {}).get("std", [0.5, 0.5, 0.5])
