@@ -4,6 +4,12 @@ import argparse
 import numpy as np
 import tensorflow as tf
 import tf_keras as keras
+
+for _gpu in tf.config.list_physical_devices("GPU"):
+    try:
+        tf.config.experimental.set_memory_growth(_gpu, True)
+    except RuntimeError:
+        pass
 from typing import Dict, Optional, Tuple, List, Any, Union
 from pathlib import Path
 from datetime import datetime
