@@ -215,7 +215,7 @@ def evaluate_on_files(model_path: str, img_files, mask_files,
     if len(groups) != probs.shape[0]:
         groups = None
     return compute_segmentation_metrics(probs, masks, groups=groups,
-                                        operating_threshold=threshold, n_boot=0)
+                                        operating_threshold=threshold)
 
 
 # Module-level worker jobs so they are picklable by the 'spawn' process pool.
