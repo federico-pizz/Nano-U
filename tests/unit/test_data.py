@@ -9,7 +9,77 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
-from src.data import sorted_by_frame, make_dataset, augment_pair
+from src.data import (
+    sorted_by_frame, make_dataset, augment_pair, sequence_group, grouped_kfold,
+)
+
+
+# ── grouped_kfold (leakage-safe folds) ───────────────────────────────────────
+
+def _groups_from(seqs_with_counts):
+    g = []
+    for name, cnt in seqs_with_counts:
+        g.extend([name] * cnt)
+    return g
+
+
+def test_grouped_kfold_no_group_spans_train_and_val():
+    groups = _groups_from([("s1", 5), ("s2", 3), ("s3", 4), ("s4", 2), ("s5", 6)])
+    g = np.array(groups)
+    for tr, va in grouped_kfold(groups, k=3, seed=0):
+        tr_groups, va_groups = set(g[tr]), set(g[va])
+        assert tr_groups.isdisjoint(va_groups)  # the leakage guarantee
+
+
+def test_grouped_kfold_val_sets_partition_all_indices():
+    groups = _groups_from([("a", 4), ("b", 4), ("c", 4), ("d", 4)])
+    splits = grouped_kfold(groups, k=4, seed=1)
+    seen = np.concatenate([va for _, va in splits])
+    assert sorted(seen.tolist()) == list(range(len(groups)))  # exact cover, no dups
+
+
+def test_grouped_kfold_train_is_complement_of_val():
+    groups = _groups_from([("a", 3), ("b", 3), ("c", 3)])
+    n = len(groups)
+    for tr, va in grouped_kfold(groups, k=3, seed=2):
+        assert sorted(np.concatenate([tr, va]).tolist()) == list(range(n))
+        assert set(tr).isdisjoint(set(va))
+
+
+def test_grouped_kfold_raises_when_too_few_groups():
+    with pytest.raises(ValueError):
+        grouped_kfold(_groups_from([("a", 5), ("b", 5)]), k=5)
+
+
+def test_grouped_kfold_raises_on_k_lt_2():
+    with pytest.raises(ValueError):
+        grouped_kfold(_groups_from([("a", 2), ("b", 2)]), k=1)
+
+
+# ── sequence_group (leakage-safe CV grouping) ────────────────────────────────
+
+def test_sequence_group_tinyagri():
+    assert sequence_group("d6_s1_frame100.png") == "d6_s1"
+
+
+def test_sequence_group_botanicgarden():
+    assert sequence_group(
+        "img_c54d7a_22290063136_seq_000000_000301.tif"
+    ) == "seq_000000"
+
+
+def test_sequence_group_bare_trailing_int_with_path():
+    assert sequence_group("/data/train/img/scene3_005.png") == "scene3"
+
+
+def test_sequence_group_no_number_is_whole_stem():
+    assert sequence_group("weird_name.png") == "weird_name"
+
+
+def test_sequence_group_keeps_distinct_scenes_apart():
+    a = sequence_group("d6_s1_frame10.png")
+    b = sequence_group("d6_s2_frame10.png")
+    assert a != b  # different scenes must not collapse into one CV group
 
 
 # ── sorted_by_frame ──────────────────────────────────────────────────────────

@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
-from src.evaluate import sigmoid, dice_coef, bce_loss_from_logits, focal_loss_from_logits
+from src.evaluate import (
+    sigmoid, dice_coef, bce_loss_from_logits, focal_loss_from_logits,
+    fbeta_score, compute_segmentation_metrics,
+)
+from src.utils import BinaryIoU
 
 EPS = 1e-7
 
@@ -108,3 +112,101 @@ def test_focal_loss_le_bce(logits_tensor, mask_tensor):
     # focal uses alpha weighting so direct comparison is approximate; just confirm it's finite and small
     assert np.isfinite(focal)
     assert focal >= 0.0
+
+
+# ── fbeta_score ───────────────────────────────────────────────────────────────
+
+def test_fbeta_equals_f1_at_beta_1():
+    p, r = 0.6, 0.4
+    assert abs(fbeta_score(p, r, 1.0) - (2 * p * r / (p + r))) < 1e-6
+
+
+def test_fbeta_equals_value_when_precision_equals_recall():
+    # F_beta == P == R whenever P == R, for any beta.
+    for beta in (0.5, 1.0, 2.0):
+        assert abs(fbeta_score(0.7, 0.7, beta) - 0.7) < 1e-6
+
+
+def test_fbeta_beta_lt_1_weights_precision():
+    """recall>precision: F0.5 (precision-weighted) < F1 < F2 (recall-weighted)."""
+    p, r = 0.4, 0.8
+    assert fbeta_score(p, r, 0.5) < fbeta_score(p, r, 1.0) < fbeta_score(p, r, 2.0)
+
+
+def test_fbeta_beta_lt_1_rewards_high_precision():
+    """precision>recall: the conservative F0.5 exceeds F1 (and F2)."""
+    p, r = 0.9, 0.5
+    assert fbeta_score(p, r, 0.5) > fbeta_score(p, r, 1.0) > fbeta_score(p, r, 2.0)
+
+
+# ── compute_segmentation_metrics ──────────────────────────────────────────────
+
+def _probs_masks(n=6, h=8, w=8, seed=0):
+    rng = np.random.default_rng(seed)
+    masks = (rng.random((n, h, w, 1)) > 0.5).astype(np.float32)
+    return masks
+
+
+def test_metrics_perfect_prediction():
+    masks = _probs_masks()
+    res = compute_segmentation_metrics(masks.copy(), masks)
+    for k in ("miou", "dice", "precision", "recall", "f0.5", "f1", "f2"):
+        assert abs(res[k] - 1.0) < 1e-4, (k, res[k])
+
+
+def test_metrics_in_unit_range_and_keys():
+    masks = _probs_masks(seed=1)
+    rng = np.random.default_rng(2)
+    probs = rng.random(masks.shape).astype(np.float32)
+    res = compute_segmentation_metrics(probs, masks)
+    for k in ("miou", "dice", "precision", "recall", "f0.5", "f1", "f2"):
+        assert 0.0 <= res[k] <= 1.0 + 1e-6
+    # sweep length matches the requested thresholds
+    sw = res["threshold_sweep"]
+    assert len(sw["thresholds"]) == len(sw["miou"]) == len(sw["precision"])
+
+
+def test_metrics_per_sequence_breakdown():
+    masks = _probs_masks(n=4, seed=3)
+    res = compute_segmentation_metrics(
+        masks.copy(), masks, groups=["a", "a", "b", "b"]
+    )
+    ps = res["per_sequence"]
+    assert ps["n_groups"] == 2
+    assert ps["groups"] == ["a", "b"]
+    assert "miou_mean" in ps and "miou_std" in ps
+
+
+def test_metrics_groups_length_mismatch_raises():
+    masks = _probs_masks(n=4, seed=4)
+    with pytest.raises(ValueError):
+        compute_segmentation_metrics(masks.copy(), masks, groups=["a", "b"])
+
+
+def test_metrics_custom_operating_threshold():
+    # All probs = 0.6: at threshold 0.5 everything is 'road', at 0.7 nothing is.
+    masks = np.ones((3, 4, 4, 1), dtype=np.float32)
+    probs = np.full_like(masks, 0.6)
+    hi = compute_segmentation_metrics(probs, masks, operating_threshold=0.5)
+    lo = compute_segmentation_metrics(probs, masks, operating_threshold=0.7)
+    assert hi["recall"] > lo["recall"]  # stricter threshold → fewer positives
+
+
+def test_numpy_miou_matches_binary_iou():
+    """The numpy mIoU must equal the streaming BinaryIoU the models train against.
+
+    compute_segmentation_metrics reimplements mIoU in numpy (for the sweep and
+    per-sequence breakdown); this pins it to src.utils.BinaryIoU so the two can
+    never silently diverge. Random probs/masks at the default 0.5 threshold.
+    """
+    rng = np.random.default_rng(7)
+    masks = (rng.random((5, 8, 8, 1)) > 0.5).astype(np.float32)
+    probs = rng.random(masks.shape).astype(np.float32)
+
+    np_miou = compute_segmentation_metrics(probs, masks, operating_threshold=0.5)["miou"]
+
+    iou = BinaryIoU(threshold=0.5)
+    iou.update_state(masks, probs)
+    keras_miou = float(iou.result().numpy())
+
+    assert abs(np_miou - keras_miou) < 1e-4, (np_miou, keras_miou)

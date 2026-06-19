@@ -57,7 +57,7 @@ microflow = { git = "https://github.com/federico-pizz/microflow-rs", branch = "m
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [profile.dev]
-opt-level = 3   # else will not run
+opt-level = 3           # else will not run
 overflow-checks = true
 debug-assertions = true
 panic = 'abort'

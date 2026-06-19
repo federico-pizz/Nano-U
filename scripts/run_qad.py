@@ -102,13 +102,26 @@ def main():
             out_path=str(teacher_eval_out),
         )
 
-        # Evaluate Student — picks nano_u.tflite (INT8) via candidate resolution
-        student_eval_out = Path(student_res["pipeline_dir"]) / "eval_predictions.png"
+        # Evaluate Student in BOTH formats so the quantization gap is real:
+        #   - FP32 Keras (.h5)  → prefer="float"
+        #   - INT8 TFLite       → prefer="tflite" (the on-device format)
+        # Without forcing prefer="float" the resolver picks .tflite for both,
+        # making the "float" row silently identical to INT8.
+        student_dir = Path(student_res["pipeline_dir"])
+        print(f"\nEvaluating Student FP32 Keras ({student_src.stem})...")
+        eval_results_all['student_fp32'] = evaluate_and_plot(
+            model_name=student_src.stem,
+            config_path=config_path,
+            out_path=str(student_dir / "eval_predictions_fp32.png"),
+            prefer="float",
+        )
+
         print(f"\nEvaluating Student INT8 TFLite ({student_src.stem})...")
         eval_results_all['student_int8'] = evaluate_and_plot(
             model_name=student_src.stem,
             config_path=config_path,
-            out_path=str(student_eval_out),
+            out_path=str(student_dir / "eval_predictions_int8.png"),
+            prefer="tflite",
         )
 
     except Exception as e:
@@ -128,6 +141,7 @@ def main():
             "tflite_path": quant_res.get("tflite_path"),
             "tflite_size_kb": quant_res.get("size_kb"),
             "quant_params_path": quant_res.get("quant_params_path"),
+            "eval_fp32": eval_results_all.get("student_fp32", {}),
             "eval_int8": eval_results_all.get("student_int8", {}),
         },
     }
@@ -137,6 +151,7 @@ def main():
     print(f"\nSummary saved to {summary_path}")
 
     teacher_miou = eval_results_all.get("teacher", {}).get("miou", float("nan"))
+    student_fp32_miou = eval_results_all.get("student_fp32", {}).get("miou", float("nan"))
     student_miou = eval_results_all.get("student_int8", {}).get("miou", float("nan"))
 
     print(f"\n{'='*55}")
@@ -147,6 +162,7 @@ def main():
     print(f"   Size:             {quant_res.get('size_kb', 'N/A')} KB")
     print(f"   Quant params:     {quant_res.get('quant_params_path', 'N/A')}  ← required by firmware/build.rs")
     print(f"   Teacher mIoU:     {teacher_miou:.4f}")
+    print(f"   Student mIoU:     {student_fp32_miou:.4f}  (FP32 Keras)")
     print(f"   Student mIoU:     {student_miou:.4f}  (INT8 TFLite)")
     print(f"   Summary JSON:     {summary_path}")
     print(f"{'='*55}\n")

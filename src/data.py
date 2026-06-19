@@ -29,6 +29,80 @@ def sorted_by_frame(files: List[str]) -> List[str]:
         return 0
     return sorted(files, key=get_frame_number)
 
+
+def sequence_group(path: str) -> str:
+    """Return the capture-sequence / scene id a frame belongs to.
+
+    Leakage-safe cross-validation must keep all frames of one sequence in the
+    same fold (adjacent frames are near-duplicates → temporal+spatial leakage),
+    and evaluation reports per-sequence variance. This parses the grouping key
+    from the basename for the two dataset naming conventions in use:
+
+      TinyAgri:      ``d6_s1_frame100.png``                       → ``d6_s1``
+      BotanicGarden: ``img_c54d7a_22290063136_seq_000000_000301`` → ``seq_000000``
+
+    The key is everything up to (and excluding) the trailing frame number. If no
+    trailing ``_<int>`` is present the whole stem is returned, so each file forms
+    its own singleton group rather than being silently merged.
+    """
+    name = os.path.splitext(os.path.basename(path))[0]
+    # BotanicGarden: explicit ``seq_<id>`` token wins regardless of position.
+    m = re.search(r"(seq_\d+)", name)
+    if m:
+        return m.group(1)
+    # Otherwise strip a trailing frame index — a bare ``_<int>`` or a marked
+    # ``_frame<int>`` / ``_f<int>`` / ``_img<int>`` token — keeping the prefix.
+    m = re.match(r"(?i)^(.+)_(?:frame|f|img)?\d+$", name)
+    if m:
+        return m.group(1)
+    return name
+
+
+def grouped_kfold(groups: List[str], k: int, seed: int = 0):
+    """K-fold split that keeps every group entirely within one fold.
+
+    This is the leakage-safe partition for the CV hyperparameter search: a
+    *whole* capture sequence (see :func:`sequence_group`) goes to either the
+    train or the validation side of a fold, never both — so temporally/spatially
+    adjacent near-duplicate frames can't leak validation signal into training.
+
+    Args:
+        groups: length-N group label per item (e.g. ``sequence_group`` of each
+            image path). Order defines the returned indices.
+        k: number of folds. Must be ≥2 and ≤ the number of distinct groups.
+        seed: shuffles the *group* assignment to folds (not the items).
+
+    Returns:
+        ``[(train_idx, val_idx), ...]`` of length k, each a pair of int ndarrays
+        indexing into ``groups``. The k validation index sets are disjoint and
+        together cover every item exactly once.
+    """
+    groups = list(groups)
+    n = len(groups)
+    uniq = sorted(set(groups))
+    if k < 2:
+        raise ValueError(f"k must be >= 2, got {k}")
+    if len(uniq) < k:
+        raise ValueError(
+            f"need at least k={k} distinct groups to fold, got {len(uniq)}. "
+            "Too few sequences for this many folds."
+        )
+    rng = np.random.default_rng(seed)
+    shuffled = list(uniq)
+    rng.shuffle(shuffled)
+    # Round-robin the (shuffled) groups onto folds → balanced group counts.
+    fold_of = {g: i % k for i, g in enumerate(shuffled)}
+
+    idx = np.arange(n)
+    fold_id = np.array([fold_of[g] for g in groups])
+    splits = []
+    for f in range(k):
+        val_idx = idx[fold_id == f]
+        train_idx = idx[fold_id != f]
+        splits.append((train_idx, val_idx))
+    return splits
+
+
 def augment_pair(
     img,
     mask,
@@ -64,11 +138,19 @@ def augment_pair(
     mask = concat[..., 3:4]
     mask = tf.cast(mask > 0.5, tf.float32)
     
-    # Color jitter
-    img = tf.image.random_brightness(img, brightness)
-    img = tf.image.random_contrast(img, 1.0 - contrast, 1.0 + contrast)
-    img = tf.image.random_saturation(img, 1.0 - saturation, 1.0 + saturation)
-    img = tf.image.random_hue(img, hue)
+    # Color jitter. Each knob is guarded: a value of 0 means "disabled" (e.g. the
+    # geometric-only regime zeroes all of these). Calling the TF ops with a 0 knob
+    # would pass lower == upper and raise "upper must be > lower" (contrast /
+    # saturation) — these are static Python floats at trace time, so the guards
+    # fold away cleanly inside the tf.data map.
+    if brightness > 0:
+        img = tf.image.random_brightness(img, brightness)
+    if contrast > 0:
+        img = tf.image.random_contrast(img, 1.0 - contrast, 1.0 + contrast)
+    if saturation > 0:
+        img = tf.image.random_saturation(img, 1.0 - saturation, 1.0 + saturation)
+    if hue > 0:
+        img = tf.image.random_hue(img, hue)
     img = tf.clip_by_value(img, 0.0, 1.0)
     
     return img, mask

@@ -77,10 +77,38 @@ def _get_config(full_config: Dict[str, Any], experiment_name: str) -> Dict[str, 
 
 
 
+def tversky_loss(y_true: tf.Tensor, y_logits: tf.Tensor,
+                 alpha_fp: float = 0.7, beta_fn: float = 0.3,
+                 eps: float = 1e-7) -> tf.Tensor:
+    """Soft Tversky loss for the path (positive=1) class.
+
+    Tversky index T = TP / (TP + alpha_fp*FP + beta_fn*FN); loss = 1 - T. With
+    ``alpha_fp > beta_fn`` (default 0.7 vs 0.3) false *positives* are penalized
+    harder than false negatives. For path segmentation a false positive labels a
+    non-traversable pixel as path → potential collision, while a false negative
+    merely shrinks the navigable region → over-cautious but safe. So this dial
+    bakes Nano-U's *conservative* (precision-favoring) behavior into the gradient
+    rather than manufacturing it via model selection. ``alpha_fp=beta_fn=0.5``
+    recovers the symmetric Dice loss.
+
+    Computed from sigmoid probabilities (the student emits logits), pooled over
+    the whole batch (soft TP/FP/FN), so it is differentiable end-to-end.
+    """
+    p = tf.nn.sigmoid(y_logits)
+    yt = tf.cast(y_true > 0.5, tf.float32)
+    tp = tf.reduce_sum(p * yt)
+    fp = tf.reduce_sum(p * (1.0 - yt))
+    fn = tf.reduce_sum((1.0 - p) * yt)
+    tversky = (tp + eps) / (tp + alpha_fp * fp + beta_fn * fn + eps)
+    return 1.0 - tversky
+
+
 @tf.function(reduce_retracing=True)
 def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tensor, y: tf.Tensor,
                optimizer: keras.optimizers.Optimizer, alpha: float = 0.3, temperature: float = 4.0,
-               bce_loss_fn=None, mse_loss_fn=None) -> Dict[str, tf.Tensor]:
+               bce_loss_fn=None, mse_loss_fn=None,
+               tversky_weight: float = 0.0, tversky_alpha: float = 0.7,
+               tversky_beta: float = 0.3) -> Dict[str, tf.Tensor]:
     """Custom training step for knowledge distillation.
     
     Args:
@@ -93,7 +121,11 @@ def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tenso
         temperature: Distillation temperature
         bce_loss_fn: BinaryCrossentropy loss object
         mse_loss_fn: MeanSquaredError loss object
-        
+        tversky_weight: blend factor for the Tversky term in the supervised loss
+            ((1-w)*BCE + w*Tversky); 0.0 = pure BCE (unchanged legacy behavior)
+        tversky_alpha: Tversky false-positive weight (default 0.7, conservative)
+        tversky_beta: Tversky false-negative weight (default 0.3)
+
     Returns:
         Dictionary of loss components
     """
@@ -108,9 +140,18 @@ def train_step(student: keras.Model, teacher: Optional[keras.Model], x: tf.Tenso
             teacher_pred = teacher(x, training=False)
         student_pred = student(x, training=True)
         
-        # Compute losses
-        student_loss = bce_loss_fn(y, student_pred)
-        
+        # Supervised term: BCE, optionally blended with a precision-favoring
+        # Tversky term (alpha_fp>beta_fn) so Nano-U is conservative by design.
+        # tversky_weight=0.0 → pure BCE. KD weighting and the CE-off ablation
+        # (alpha=1.0) are applied downstream.
+        bce_term = bce_loss_fn(y, student_pred)
+        if tversky_weight > 0.0:
+            tv_term = tversky_loss(y, student_pred,
+                                   alpha_fp=tversky_alpha, beta_fn=tversky_beta)
+            student_loss = (1.0 - tversky_weight) * bce_term + tversky_weight * tv_term
+        else:
+            student_loss = bce_term
+
         if teacher is not None:
             # Distillation loss: MSE between temperature-scaled sigmoided outputs.
             # Multiplied by temperature^2 to correct magnitude shrinkage from logit scaling.
@@ -392,6 +433,13 @@ def train_with_distillation(
     # Setup distillation parameters and optimizer
     alpha = float(config.get("alpha", 0.3))
     temperature = float(config.get("temperature", 4.0))
+    # Conservative (precision-favoring) supervised loss for the student. Off by
+    # default (weight 0.0 → pure BCE); set ``tversky_weight`` in the config to
+    # blend in the Tversky term. Only the student reads these — BU-Net trains
+    # through the plain Keras path and never sees them.
+    tversky_weight = float(config.get("tversky_weight", 0.0))
+    tversky_alpha = float(config.get("tversky_alpha", 0.7))
+    tversky_beta = float(config.get("tversky_beta", 0.3))
     learning_rate = float(config.get("learning_rate", 0.0005))
     weight_decay = float(config.get("weight_decay", 0.0))
     optimizer_type = config.get("optimizer", "adam").lower()
@@ -414,7 +462,11 @@ def train_with_distillation(
     )
     if weight_decay > 0:
         print(f"[TRAIN-KD] weight_decay={weight_decay}")
-    
+    if tversky_weight > 0.0:
+        print(f"[TRAIN-KD] supervised loss = {(1-tversky_weight):.2f}*BCE + "
+              f"{tversky_weight:.2f}*Tversky(alpha_fp={tversky_alpha}, "
+              f"beta_fn={tversky_beta}) [conservative student]")
+
     # dummy loss since we use custom loop
     student.compile(optimizer=optimizer, loss='mse')
 
@@ -479,7 +531,9 @@ def train_with_distillation(
             for step, (x_batch, y_batch) in enumerate(train_dataset):
                 losses = train_step(
                     student, teacher, x_batch, y_batch, optimizer, alpha, temperature,
-                    bce_loss_fn, mse_loss_fn
+                    bce_loss_fn, mse_loss_fn,
+                    tversky_weight=tversky_weight, tversky_alpha=tversky_alpha,
+                    tversky_beta=tversky_beta,
                 )
 
                 for key, value in losses.items():
@@ -534,9 +588,19 @@ def train_with_distillation(
                     if teacher is not None:
                         teacher_pred = teacher(x_batch, training=False)
                     student_pred = student(x_batch, training=False)
-                    
-                    student_loss = bce_loss_fn(y_batch, student_pred).numpy()
-                    
+
+                    # Mirror train_step's supervised term so val_loss (which
+                    # drives ModelCheckpoint/EarlyStopping) matches the objective.
+                    bce_term = bce_loss_fn(y_batch, student_pred).numpy()
+                    if tversky_weight > 0.0:
+                        tv_term = tversky_loss(y_batch, student_pred,
+                                               alpha_fp=tversky_alpha,
+                                               beta_fn=tversky_beta).numpy()
+                        student_loss = ((1.0 - tversky_weight) * bce_term
+                                        + tversky_weight * tv_term)
+                    else:
+                        student_loss = bce_term
+
                     if teacher is not None:
                         # Distillation loss: MSE between sigmoided outputs
                         distill_loss = tf.reduce_mean(
@@ -765,14 +829,30 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
 
         # Data loading
         data_paths = full_config.get("data", {}).get("paths", {})
-        models_dir = Path(data_paths.get("models_dir", "models"))
+        # Honor a caller-supplied models_dir override (set via config_overrides)
+        # so concurrent runs — e.g. the CV harness training folds in parallel —
+        # each write their own temp_model.h5 / <model>.h5 instead of clobbering a
+        # shared one. Normal runs don't set it → fall back to the dataset dir.
+        models_dir = Path(config.get("models_dir") or data_paths.get("models_dir", "models"))
         config["models_dir"] = str(models_dir)
 
         processed = data_paths.get("processed", {})
 
-        print("Loading data from processed paths...")
-        (train_img_files, train_mask_files,
-         val_img_files, val_mask_files) = discover_processed_pairs(processed)
+        # Injected fold file-lists (set by the CV harness via config_overrides)
+        # bypass directory discovery so a leakage-safe grouped split can be
+        # trained through the exact same code path as a normal run. Guarded by
+        # key presence → no effect on existing callers.
+        if config.get("cv_train_img") and config.get("cv_train_mask"):
+            train_img_files = list(config["cv_train_img"])
+            train_mask_files = list(config["cv_train_mask"])
+            val_img_files = list(config.get("cv_val_img") or [])
+            val_mask_files = list(config.get("cv_val_mask") or [])
+            print(f"[CV] using injected fold file-lists: "
+                  f"{len(train_img_files)} train / {len(val_img_files)} val pairs.")
+        else:
+            print("Loading data from processed paths...")
+            (train_img_files, train_mask_files,
+             val_img_files, val_mask_files) = discover_processed_pairs(processed)
 
         print(f"Found {len(train_img_files)} training pairs.")
         if val_img_files:
@@ -788,11 +868,15 @@ def train_model(config_path: str = "config/config.yaml", experiment_name: str = 
         input_shape_cfg = config.get("input_shape")
         target_size = (input_shape_cfg[0], input_shape_cfg[1]) if input_shape_cfg else None
 
+        # augment_params lets the CV harness sweep the *kind* of augmentation
+        # (geometric / photometric / full); ignored when augment is False.
+        augment_params = config.get("augment_params", {}) or {}
         train_ds = make_dataset(
             train_img_files, train_mask_files,
             batch_size=batch_size, augment=config.get("augment", False),
             target_size=target_size,
-            mean=norm_mean, std=norm_std, seed=seed
+            mean=norm_mean, std=norm_std, seed=seed,
+            **augment_params
         )
         val_ds: Optional[tf.data.Dataset] = None
         if val_img_files:
