@@ -172,8 +172,36 @@ python scripts/train_model.py nano_u --config config/config.yaml   # Student
 ### Evaluate
 
 ```bash
-python src/evaluate.py nano_u --config config/config.yaml
+python src/evaluate.py nano_u --config config/config.yaml            # held-out test split
+python src/evaluate.py nano_u --config config/config.yaml --split val --threshold 0.6
 ```
+
+Reports mIoU, Dice, precision/recall and the F0.5/F1/F2 family, plus a precision–recall
+curve and a metric-vs-threshold sweep. When the frames carry sequence ids it also adds a
+per-sequence variance breakdown (plot + a full `*_report.json`). Outputs land in
+`results/<dataset>/<model>/` (`eval_results.json` flat metrics, plus a format-tagged
+`eval_results_{fp32,int8}.json`). INT8 TFLite and float Keras models go through the same
+forward path.
+
+### Hyperparameter search (leakage-safe CV)
+
+Grouped k-fold sweep over distillation temperature/alpha, augmentation regime, the CE-loss
+ablation, and the conservative Tversky term, with each whole capture sequence kept inside one
+fold (no temporal leakage). Selects by mIoU with F0.5 as the safety tiebreak; writes
+`results/<dataset>/cv/cv_results.{json,csv}`.
+
+```bash
+python scripts/cv_search.py --config config/config.yaml --k 4 --epochs 200 \
+    --temperatures 2 4 8 --alphas 0.3 0.5 0.7 \
+    --regimes none geometric photometric full --ce on off \
+    --tversky 0.0 0.5 --jobs 3
+```
+
+`--ce on off` toggles the CE term (off ≡ `alpha=1.0`); `--tversky` sweeps the precision-favoring
+supervised loss `(1-w)·BCE + w·Tversky` (default `0.0` = pure BCE). `--jobs N` runs N **student**
+pipelines concurrently (one process/GPU context each); set it to how many tiny Nano-U pipelines
+fit in VRAM. The heavy BU-Net teacher has its own `--teacher-jobs` (default 1, sequential) —
+three concurrent teachers OOM a ~6 GB GPU. `--k` must be ≤ the number of distinct sequences.
 
 ### On-Device Evaluation
 
@@ -202,6 +230,7 @@ Nano-U/
 │   └── train.py                # Training loops (standard + distillation)
 ├── scripts/
 │   ├── run_qad.py              # Full QAD pipeline
+│   ├── cv_search.py            # Leakage-safe grouped-CV hyperparameter search
 │   ├── train_model.py          # Single-model training
 │   ├── eval_esp32.py           # On-device inference and evaluation
 │   ├── profile_nano_u.py       # Stack painting and energy profiling
