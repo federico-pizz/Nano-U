@@ -31,7 +31,7 @@ import json
 import argparse
 import itertools
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -103,21 +103,26 @@ def make_config_overrides(temperature: float, alpha: float, regime: str,
 
 def expand_grid(temperatures: List[float], alphas: List[float],
                 regimes: List[str], ce_options: List[bool],
-                tversky_weights: List[float] = (0.0,)) -> List[Dict[str, Any]]:
+                tversky_specs: List[Tuple[float, float, float]] = ((0.0, 0.7, 0.3),)
+                ) -> List[Dict[str, Any]]:
     """Cartesian product → config_overrides, de-duplicated.
 
     When CE is off, alpha is forced to 1.0, so the alpha axis collapses; identical
     effective configs (same temperature/effective-alpha/regime/ce/tversky) are
-    emitted once. ``tversky_weights`` defaults to ``(0.0,)`` so callers that don't
-    sweep the conservative loss get exactly the previous grid.
+    emitted once. ``tversky_specs`` is a list of ``(weight, alpha_fp, beta_fn)``
+    triples and defaults to ``((0.0, 0.7, 0.3),)`` so callers that don't sweep the
+    conservative loss get exactly the previous grid. Passing explicit triples (vs a
+    full alpha×beta product) keeps the sweep on the intended simplex (e.g. α+β=1).
     """
     seen = set()
     out: List[Dict[str, Any]] = []
-    for T, a, reg, ce, tw in itertools.product(
-            temperatures, alphas, regimes, ce_options, tversky_weights):
-        cfg = make_config_overrides(T, a, reg, ce, tversky_weight=tw)
+    for T, a, reg, ce, (tw, ta, tb) in itertools.product(
+            temperatures, alphas, regimes, ce_options, tversky_specs):
+        cfg = make_config_overrides(T, a, reg, ce, tversky_weight=tw,
+                                    tversky_alpha=ta, tversky_beta=tb)
         key = (cfg["temperature"], cfg["alpha"], cfg["augment_regime"],
-               cfg["ce_enabled"], cfg["tversky_weight"])
+               cfg["ce_enabled"], cfg["tversky_weight"],
+               cfg.get("tversky_alpha"), cfg.get("tversky_beta"))
         if key in seen:
             continue
         seen.add(key)
@@ -147,6 +152,8 @@ def build_row(cfg: Dict[str, Any], agg: Dict[str, float],
         "ce_enabled": cfg["ce_enabled"],
         "augment_regime": cfg["augment_regime"],
         "tversky_weight": cfg.get("tversky_weight", 0.0),
+        "tversky_alpha": cfg.get("tversky_alpha"),
+        "tversky_beta": cfg.get("tversky_beta"),
     }
     row.update(agg)
     row["fold_f0.5"] = [round(fm["f0.5"], 5) for fm in fold_metrics]
@@ -331,6 +338,9 @@ def run_cv(config_path: str, k: int, epochs: int, grid: List[Dict[str, Any]],
                f"{cfg['augment_regime']}_ce{int(cfg['ce_enabled'])}")
         if cfg.get("tversky_weight", 0.0) > 0.0:
             tag += f"_tv{cfg['tversky_weight']}"
+            ta, tb = cfg.get("tversky_alpha"), cfg.get("tversky_beta")
+            if (ta, tb) != (0.7, 0.3):
+                tag += f"_a{ta}b{tb}"
         tags.append(tag)
         for fi in range(len(splits)):
             s_jobs.append({
@@ -403,8 +413,17 @@ def main():
                    help="CE-loss ablation: 'on' keeps CE, 'off' sets alpha=1.0")
     p.add_argument("--tversky", type=float, nargs="+", default=[0.0],
                    help="conservative-loss ablation: student supervised loss is "
-                        "(1-w)*BCE + w*Tversky(alpha_fp=0.7, beta_fn=0.3) for each "
-                        "weight w. Default [0.0] = pure BCE (no sweep).")
+                        "(1-w)*BCE + w*Tversky(alpha_fp, beta_fn) for each weight w. "
+                        "Default [0.0] = pure BCE (no sweep).")
+    p.add_argument("--tversky-alpha", type=float, nargs="+", default=[0.7],
+                   help="Tversky alpha_fp (false-positive weight) values to sweep. "
+                        "By default beta_fn is derived as 1-alpha (stay on the "
+                        "α+β=1 simplex); override with --tversky-beta. Only active "
+                        "for tversky weights > 0.")
+    p.add_argument("--tversky-beta", type=float, nargs="+", default=None,
+                   help="explicit beta_fn values, paired element-wise with "
+                        "--tversky-alpha (must match its length). Omit to couple "
+                        "beta = 1 - alpha.")
     p.add_argument("--threshold", type=float, default=0.5)
     p.add_argument("--seed", type=int, default=37)
     p.add_argument("--fixed-teacher", default=None,
@@ -435,8 +454,25 @@ def main():
     output = args.output or os.path.join(
         config.get("data", {}).get("paths", {}).get("results_dir", "results"), "cv")
     ce_options = [c == "on" for c in args.ce]
+
+    # Build the (weight, alpha_fp, beta_fn) Tversky specs. alpha/beta are paired
+    # element-wise (not a 2D product) to stay on the chosen simplex; beta defaults
+    # to 1-alpha. Weight 0.0 is pure BCE, so its alpha/beta are irrelevant.
+    if args.tversky_beta is not None:
+        if len(args.tversky_beta) != len(args.tversky_alpha):
+            p.error("--tversky-beta must have the same length as --tversky-alpha")
+        ab_pairs = list(zip(args.tversky_alpha, args.tversky_beta))
+    else:
+        ab_pairs = [(a, round(1.0 - a, 6)) for a in args.tversky_alpha]
+    tversky_specs: List[Tuple[float, float, float]] = []
+    for w in args.tversky:
+        if w == 0.0:
+            tversky_specs.append((0.0, 0.7, 0.3))  # alpha/beta unused at w=0
+        else:
+            tversky_specs.extend((w, a, b) for a, b in ab_pairs)
+
     grid = expand_grid(args.temperatures, args.alphas, args.regimes, ce_options,
-                       args.tversky)
+                       tversky_specs)
 
     run_cv(args.config, k=args.k, epochs=args.epochs, grid=grid, output_dir=output,
            threshold=args.threshold, seed=args.seed, fixed_teacher=args.fixed_teacher,
