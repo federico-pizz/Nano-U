@@ -463,17 +463,15 @@ impl OnboardCamera {
         })
     }
 
-    /// Capture one live frame and write it, downscaled + INT8-quantized, into
-    /// `out`. Reuses `out` and the DMA buffer in place — no per-frame allocation.
+    /// Run one DMA capture, leaving the completed RGB565 frame in `self.dma_buf`
+    /// with the data cache invalidated so the CPU sees fresh PSRAM. Shared by
+    /// [`capture_into`](Self::capture_into) and [`capture_raw`](Self::capture_raw).
     ///
     /// The persistent `Camera` is moved into a DMA transfer and back out: start,
     /// poll `is_done()` until the buffer fills with one full frame, `stop()`, then
-    /// read the (now complete, VSYNC-aligned) buffer. The camera is kept alive.
-    pub fn capture_into(
-        &mut self,
-        luts: &QuantLuts,
-        out: &mut Buffer2D<[i8; 3], IMG_H, IMG_W>,
-    ) -> Result<(), CamError> {
+    /// the (now complete, VSYNC-aligned) buffer is left in `self.dma_buf`. The
+    /// camera is kept alive across captures.
+    fn capture_dma(&mut self) -> Result<(), CamError> {
         let dma_buf = self.dma_buf.take().expect("dma buf moved out");
         let camera = self.camera.take().expect("camera moved out");
         let delay = Delay::new();
@@ -511,11 +509,35 @@ impl OnboardCamera {
             Cache_Invalidate_Addr(s.as_ptr() as u32, s.len() as u32);
         }
 
-        // Downscale + quantize straight from the captured frame into `out`.
-        downscale_quantize(dma_buf.as_slice(), luts, out);
-
         self.dma_buf = Some(dma_buf);
         Ok(())
+    }
+
+    /// Capture one live frame and write it, downscaled + INT8-quantized, into
+    /// `out`. Reuses `out` and the DMA buffer in place — no per-frame allocation.
+    pub fn capture_into(
+        &mut self,
+        luts: &QuantLuts,
+        out: &mut Buffer2D<[i8; 3], IMG_H, IMG_W>,
+    ) -> Result<(), CamError> {
+        self.capture_dma()?;
+        let dma_buf = self.dma_buf.as_ref().expect("dma buf present after capture");
+        downscale_quantize(dma_buf.as_slice(), luts, out);
+        Ok(())
+    }
+
+    /// Capture one live frame and return the **raw** RGB565 framebuffer
+    /// ([`FRAME_BYTES`] bytes, row-major [`CAM_H`]×[`CAM_W`], 2 bytes/pixel,
+    /// big-endian unless [`SWAP_RGB565_BYTES`]).
+    ///
+    /// This is the un-processed sensor output, exposed for pipeline validation /
+    /// previewing what the camera actually sees (see `bin/capture.rs`). The
+    /// returned slice borrows the internal DMA buffer and is valid until the next
+    /// capture. Not used by the control loop — that path goes through
+    /// [`capture_into`](Self::capture_into).
+    pub fn capture_raw(&mut self) -> Result<&[u8], CamError> {
+        self.capture_dma()?;
+        Ok(self.dma_buf.as_ref().expect("dma buf present after capture").as_slice())
     }
 }
 
@@ -552,51 +574,76 @@ fn expand6(v: u16) -> u8 {
     ((v << 2) | (v >> 4)) as u8
 }
 
+/// Mean RGB888 of the 2×2 source block of a [`CAM_H`]×[`CAM_W`] RGB565 frame that
+/// maps to output pixel `(h, w)`. Averaging is done in 8-bit channel space
+/// (expand RGB565 → RGB888, mean of the four samples) so it matches the host
+/// `preprocess_rgb` math up to the box filter. Shared by [`downscale_quantize`]
+/// and [`downscale_rgb888`] so the two never drift.
+#[inline]
+fn box_mean_rgb(frame: &[u8], h: usize, w: usize) -> (u8, u8, u8) {
+    let row_bytes = CAM_W * 2;
+    let mut r_sum: u16 = 0;
+    let mut g_sum: u16 = 0;
+    let mut b_sum: u16 = 0;
+
+    for dy in 0..2 {
+        let row = (h * 2 + dy) * row_bytes;
+        for dx in 0..2 {
+            let idx = row + (w * 2 + dx) * 2;
+            if idx + 1 >= frame.len() {
+                continue;
+            }
+            let (b0, b1) = if SWAP_RGB565_BYTES {
+                (frame[idx + 1], frame[idx])
+            } else {
+                (frame[idx], frame[idx + 1])
+            };
+            let px = ((b0 as u16) << 8) | b1 as u16;
+            r_sum += expand5(px >> 11) as u16;
+            g_sum += expand6(px >> 5) as u16;
+            b_sum += expand5(px) as u16;
+        }
+    }
+
+    ((r_sum / 4) as u8, (g_sum / 4) as u8, (b_sum / 4) as u8)
+}
+
 /// 2×2 box-downscale a [`CAM_H`]×[`CAM_W`] RGB565 frame to [`IMG_H`]×[`IMG_W`]
 /// and INT8-quantize through `luts`, writing in place into `out`.
 ///
-/// Averaging is done in 8-bit channel space (expand RGB565 → RGB888, mean of the
-/// 2×2 block, then LUT) so the result matches the host `preprocess_rgb` math up
-/// to the box filter. `out[(h, w)] = [lut_r[r], lut_g[g], lut_b[b]]`.
+/// `out[(h, w)] = [lut_r[r], lut_g[g], lut_b[b]]` where `(r, g, b)` is the 2×2
+/// box mean (see [`box_mean_rgb`]).
 fn downscale_quantize(
     frame: &[u8],
     luts: &QuantLuts,
     out: &mut Buffer2D<[i8; 3], IMG_H, IMG_W>,
 ) {
     let (lut_r, lut_g, lut_b) = luts;
-    let row_bytes = CAM_W * 2;
-
     for h in 0..IMG_H {
         for w in 0..IMG_W {
-            let mut r_sum: u16 = 0;
-            let mut g_sum: u16 = 0;
-            let mut b_sum: u16 = 0;
+            let (r, g, b) = box_mean_rgb(frame, h, w);
+            out[(h, w)] = [lut_r[r as usize], lut_g[g as usize], lut_b[b as usize]];
+        }
+    }
+}
 
-            // Accumulate the 2×2 source block.
-            for dy in 0..2 {
-                let row = (h * 2 + dy) * row_bytes;
-                for dx in 0..2 {
-                    let idx = row + (w * 2 + dx) * 2;
-                    if idx + 1 >= frame.len() {
-                        continue;
-                    }
-                    let (b0, b1) = if SWAP_RGB565_BYTES {
-                        (frame[idx + 1], frame[idx])
-                    } else {
-                        (frame[idx], frame[idx + 1])
-                    };
-                    let px = ((b0 as u16) << 8) | b1 as u16;
-                    r_sum += expand5(px >> 11) as u16;
-                    g_sum += expand6(px >> 5) as u16;
-                    b_sum += expand5(px) as u16;
-                }
-            }
-
-            // Mean of the 4 samples, then INT8 quantize via LUT.
-            let r = (r_sum / 4) as usize;
-            let g = (g_sum / 4) as usize;
-            let b = (b_sum / 4) as usize;
-            out[(h, w)] = [lut_r[r], lut_g[g], lut_b[b]];
+/// 2×2 box-downscale a raw RGB565 frame to **RGB888** (no quantization), written
+/// row-major into `out` as `[R, G, B]` triples — `out.len()` must be
+/// `IMG_H * IMG_W * 3`.
+///
+/// This is the same box filter [`downscale_quantize`] applies, stopped one step
+/// earlier (before the INT8 quantize LUT). It exists purely so the host can
+/// preview the post-downscale image the model input is derived from, validating
+/// the resize step independently of quantization. See `bin/capture.rs`.
+pub fn downscale_rgb888(frame: &[u8], out: &mut [u8]) {
+    debug_assert_eq!(out.len(), IMG_H * IMG_W * 3);
+    for h in 0..IMG_H {
+        for w in 0..IMG_W {
+            let (r, g, b) = box_mean_rgb(frame, h, w);
+            let o = (h * IMG_W + w) * 3;
+            out[o] = r;
+            out[o + 1] = g;
+            out[o + 2] = b;
         }
     }
 }

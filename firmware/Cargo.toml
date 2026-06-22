@@ -28,6 +28,10 @@ path = "./src/bin/run.rs"
 name = "online"
 path = "./src/bin/online.rs"
 
+[[bin]]
+name = "capture"
+path = "./src/bin/capture.rs"
+
 [dependencies]
 # Core ESP32-S3 HAL. `psram` maps external RAM so the live-camera framebuffer
 # (online bin) can live there; the inference path stays heap-free.

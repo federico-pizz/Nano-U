@@ -233,11 +233,13 @@ Nano-U/
 │   ├── cv_search.py            # Leakage-safe grouped-CV hyperparameter search
 │   ├── train_model.py          # Single-model training
 │   ├── eval_esp32.py           # On-device inference and evaluation
+│   ├── capture_view.py         # Decode live-camera frame dumps (capture bin) to PNG
 │   ├── profile_nano_u.py       # Stack painting and energy profiling
 │   └── profile_mobilenet.py    # MobileNet baseline profiling
 ├── firmware/                   # ESP32-S3 bare-metal Rust
 │   ├── src/bin/
 │   │   ├── online.rs                 # Live-camera control loop (OV2640 → nav decision)
+│   │   ├── capture.rs                # Live-camera frame dump for pipeline validation
 │   │   ├── run.rs                    # Continuous inference loop (default target)
 │   │   ├── inference.rs              # One-shot INT8 benchmark over all test images
 │   │   ├── single_inference.rs       # Single-image inference + serial output

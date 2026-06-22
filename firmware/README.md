@@ -16,6 +16,7 @@ source $HOME/export-esp.sh
 | Binary | Description |
 |:---|:---|
 | `online` | **Live-camera** inference: captures OV2640 frames and prints a navigation decision per frame |
+| `capture` | **Live-camera** frame dump: streams the raw + downscaled images over serial for pipeline validation (no inference) |
 | `run` | Continuous inference loop over baked-in images (default `cargo run` target); prints per-frame summary |
 | `inference` | One-shot benchmark over all packed test images; per-image timing, stats, and hex dump |
 | `single_inference` | Single-image inference; streams the output mask over serial for host-side capture |
@@ -43,6 +44,28 @@ D0..D7=11,9,8,10,12,18,17,16; PWDN/RESET unwired → software reset) and the
 OV2640 RGB565/QQVGA register table live in `src/camera.rs`; the pure decision
 policy (host-testable) lives in `src/control.rs`. Capture uses PSRAM for the
 frame buffer only — inference latency/throughput are unchanged.
+
+### Validating the pipeline (`capture`)
+
+To *see what the camera sees* and check each stage independently, the `capture`
+binary runs the same bring-up as `online` but stops before inference and streams
+the intermediate images over serial: `RAW` (160×120 RGB565 from the sensor) and
+`DOWN` (60×80 RGB888 after the 2×2 box downscale — the pixels the quantizer
+feeds the model). The host decoder saves each as a PNG:
+
+```bash
+# Terminal 1 — flash + run the streamer
+MODELS_DIR=../models/TinyAgri cargo run --release --bin capture
+
+# Terminal 2 — decode the serial stream into PNGs (or run instead of terminal 1
+# with --no-reset against an already-running device)
+python ../scripts/capture_view.py -n 5 --upscale 4 -o capture_out
+```
+
+`single_inference` covers the third stage (it streams the output mask), so the
+three together validate the whole capture → downscale → infer chain. Flip
+`SWAP_RGB565_BYTES` in `src/camera.rs` (and `--swap-rgb565` on the script) if
+colours look wrong.
 
 ## Usage
 
@@ -94,6 +117,7 @@ firmware/
 ├── src/
 │   ├── bin/
 │   │   ├── online.rs                 # Live-camera control loop (OV2640 → decision)
+│   │   ├── capture.rs                # Live-camera frame dump for pipeline validation
 │   │   ├── run.rs                    # Continuous inference loop (default target)
 │   │   ├── inference.rs              # One-shot benchmark over all test images
 │   │   ├── single_inference.rs       # Single-image + serial output
