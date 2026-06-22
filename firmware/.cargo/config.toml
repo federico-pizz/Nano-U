@@ -3,6 +3,9 @@ runner = "espflash flash --monitor"
 
 [env]
 ESP_LOG = "info"
+# N16R8 module: 8 MB octal PSRAM. Required by the `psram` feature (online bin);
+# harmless for the other binaries, which never touch PSRAM.
+ESP_HAL_CONFIG_PSRAM_MODE = "octal"
 
 [build]
 rustflags = ["-C", "link-arg=-nostartfiles", "-C", "target-cpu=esp32s3"]

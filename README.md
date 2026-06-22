@@ -237,11 +237,14 @@ Nano-U/
 │   └── profile_mobilenet.py    # MobileNet baseline profiling
 ├── firmware/                   # ESP32-S3 bare-metal Rust
 │   ├── src/bin/
+│   │   ├── online.rs                 # Live-camera control loop (OV2640 → nav decision)
 │   │   ├── run.rs                    # Continuous inference loop (default target)
 │   │   ├── inference.rs              # One-shot INT8 benchmark over all test images
 │   │   ├── single_inference.rs       # Single-image inference + serial output
 │   │   ├── analysis.rs               # Stack painting + power profiling (Nano-U)
 │   │   └── analysis_person_detect.rs # Stack painting + power profiling (person_detect)
+│   ├── src/camera.rs                 # OV2640 live-capture driver
+│   ├── src/control.rs                # Pure navigation policy
 │   └── build.rs                      # Compile-time quantization param extraction + image packing
 ├── models/
 │   ├── BotanicGarden/nano_u.tflite

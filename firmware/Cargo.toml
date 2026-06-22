@@ -24,9 +24,14 @@ path = "./src/bin/analysis_person_detect.rs"
 name = "run"
 path = "./src/bin/run.rs"
 
+[[bin]]
+name = "online"
+path = "./src/bin/online.rs"
+
 [dependencies]
-# Core ESP32-S3 HAL
-esp-hal = { version = "~1.0", features = ["esp32s3", "log-04", "unstable"] }
+# Core ESP32-S3 HAL. `psram` maps external RAM so the live-camera framebuffer
+# (online bin) can live there; the inference path stays heap-free.
+esp-hal = { version = "~1.0", features = ["esp32s3", "log-04", "unstable", "psram"] }
 
 # Logging
 log = "0.4.22"
