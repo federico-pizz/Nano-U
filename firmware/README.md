@@ -32,7 +32,7 @@ into the 60×80 model input, run through the network, and reduced to a navigatio
 decision printed over serial:
 
 ```text
-FRAME:7 infer=804ms cover L=0.62 C=0.81 R=0.40 -> GO steer=CENTER
+FRAME:7 infer=830ms cover L=0.62 C=0.81 R=0.40 -> GO steer=CENTER
 ```
 
 ```bash
