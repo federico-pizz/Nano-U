@@ -69,9 +69,9 @@ Nano-U is a strictly sequential 7-stage encoder-decoder. Skip connections are om
 | Encoder 2 | 30×40 → 15×20 | 4 → 8 | DW-Sep Conv × 2, MaxPool 2×2 |
 | Encoder 3 | 15×20 → 5×10 | 8 → 16 | DW-Sep Conv × 2, MaxPool **3×2** |
 | Bottleneck | 5×10 | 16 | DW-Sep Conv × 2 |
-| Decoder 1 | 5×10 → 15×20 | 16 → 16 | NN Upsample 3×2, DW-Sep Conv × 2 |
-| Decoder 2 | 15×20 → 30×40 | 16 → 8 | NN Upsample 2×2, DW-Sep Conv × 2 |
-| Decoder 3 | 30×40 → 60×80 | 8 → 1 | NN Upsample 2×2, DW-Sep Conv × 2 |
+| Decoder 1 | 5×10 → 15×20 | 16 → 8 | NN Upsample 3×2, DW-Sep Conv × 2 |
+| Decoder 2 | 15×20 → 30×40 | 8 → 4 | NN Upsample 2×2, DW-Sep Conv × 2 |
+| Decoder 3 | 30×40 → 60×80 | 4 → 1 | NN Upsample 2×2, DW-Sep Conv × 2 |
 
 The asymmetric 3×2 MaxPool at Stage 3 reduces 15×20 cleanly to 5×10 without spatial misalignment. The largest intermediate tensor is 60×80×4 = 19.2 KB (INT8), keeping the total arena within budget.
 

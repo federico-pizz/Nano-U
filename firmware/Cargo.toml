@@ -40,6 +40,10 @@ path = "./src/bin/smoke_dualcore.rs"
 name = "mc_dispatch_test"
 path = "./src/bin/mc_dispatch_test.rs"
 
+[[bin]]
+name = "analysis_mc"
+path = "./src/bin/analysis_mc.rs"
+
 [dependencies]
 # Core ESP32-S3 HAL. `psram` maps external RAM so the live-camera framebuffer
 # (online bin) can live there; the inference path stays heap-free.
@@ -70,7 +74,7 @@ libm = "0.2"
 # microflow = { git = "https://github.com/federico-pizz/microflow-rs", branch = "main" }
 # Local working tree (multicore branch) for dual-core experiments. Revert to the
 # git line above to go back to the published fork.
-microflow = { path = "/home/fefe/Projects/microflow-rs", features = ["multicore"] }
+microflow = { path = "/home/fefe/Projects/microflow-rs", features = ["buffer-reuse", "multicore"] }
 
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
