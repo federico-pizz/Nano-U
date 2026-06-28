@@ -4,12 +4,8 @@
 use esp_println::println;
 use microflow::buffer::Buffer2D;
 
-// Online-inference support modules.
-//
-// `control` is pure (core-only) navigation logic and is host-testable in
-// isolation. `camera` is the OV2640 live-capture driver and is hardware-only
-// (it pulls in `esp-hal`'s `lcd_cam`, `i2c`, `dma` and PSRAM); it is only used
-// by the `online` binary and does not affect the baked-image inference path.
+// Online-inference support modules: `control` is pure (host-testable) navigation
+// logic; `camera` is the hardware-only OV2640 driver used by the `online` binary.
 pub mod camera;
 pub mod control;
 

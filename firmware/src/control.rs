@@ -1,19 +1,17 @@
 //! Pure navigation-decision logic for online inference.
 //!
-//! This module is deliberately **free of any `esp-hal` / hardware dependency**:
-//! it operates only on drivable-area *fractions* already extracted from the
-//! segmentation mask. That keeps it (a) trivial to reason about and (b)
-//! host-testable in isolation — the inline `#[cfg(test)]` tests compile and run
-//! on the host with:
+//! Deliberately free of any `esp-hal` / hardware dependency: it operates only on
+//! drivable-area *fractions* already extracted from the segmentation mask, so the
+//! inline `#[cfg(test)]` tests run on the host:
 //!
 //! ```text
 //! rustc --test firmware/src/control.rs -o /tmp/control_test && /tmp/control_test
 //! ```
 //!
-//! The positive class is **drivable / road** (matches `extract_binary_road` on
-//! the Python side). The policy is intentionally *conservative* — the same
-//! "don't move unless sure" stance used to pick the F0.5 selection metric: if
-//! the centre lane is not clearly drivable we stop rather than guess.
+//! The positive class is **drivable / road** (matches `extract_binary_road` on the
+//! Python side). The policy is intentionally conservative — the same "don't move
+//! unless sure" stance behind the F0.5 selection metric: if the centre lane is not
+//! clearly drivable we stop rather than guess.
 
 #![allow(dead_code)]
 

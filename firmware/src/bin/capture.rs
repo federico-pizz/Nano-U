@@ -1,37 +1,22 @@
 #![no_std]
 #![no_main]
 
-//! Frame capture / pipeline-validation binary for the Goouuu ESP32-S3-CAM.
+//! Frame-capture / pipeline-validation binary for the Goouuu ESP32-S3-CAM.
 //!
-//! Where `online` runs the full live loop (capture → downscale → quantize →
-//! infer → decide) and only prints the *decision*, this binary stops short of
-//! inference and instead streams the **intermediate images** over serial so you
-//! can see exactly what the camera sees at each stage and validate them one at a
-//! time on the host:
+//! Runs the same bring-up as `online` but stops before inference, streaming the
+//! intermediate images over serial so each stage can be checked on the host (see
+//! `firmware/README.md`): `RAW` (160×120 RGB565 straight from DMA) then `DOWN`
+//! (60×80 RGB888 after the 2×2 box downscale — the pixels the quantizer feeds the
+//! model). `single_inference` streams the output mask, so the three together
+//! cover the whole pipeline.
 //!
-//!   1. `RAW`  — the un-processed OV2640 frame: QQVGA 160×120 RGB565 straight out
-//!               of DMA. Validates the sensor bring-up, register init, framing,
-//!               and RGB565 byte order.
-//!   2. `DOWN` — the 2×2 box-downscaled 60×80 RGB888 image (the exact pixels the
-//!               INT8 quantizer then turns into the model input). Validates the
-//!               resize step independently of quantization.
-//!
-//! Inference itself is already inspectable via `single_inference` (streams the
-//! output mask), so the three stages together cover the whole pipeline.
-//!
-//! Each frame is emitted as base64 (no heap, fixed stack line buffer) framed by
-//! markers consumed by `../scripts/capture_view.py`:
+//! Each frame is emitted as base64 framed by markers consumed by
+//! `../scripts/capture_view.py`:
 //!
 //! ```text
 //! <TAG>_BEGIN idx=<n> w=<w> h=<h> bytes=<len> fmt=<rgb565|rgb888>
-//! <base64 line>
-//! ...
+//! <base64 line>...
 //! <TAG>_END idx=<n>
-//! ```
-//!
-//! Build/flash (note the live-camera model dir, same as `online`):
-//! ```bash
-//! MODELS_DIR=../models/TinyAgri cargo run --release --bin capture
 //! ```
 
 use esp_backtrace as _;
@@ -52,9 +37,8 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 /// stream stays human-scannable. Capture itself is ~tens of ms.
 const FRAME_INTERVAL_MS: u32 = 1000;
 
-/// Stream `data` as base64 between `<tag>_BEGIN`/`<tag>_END` markers. Encodes 48
-/// input bytes (→ 64 base64 chars) per printed line using only a stack buffer —
-/// no heap, no per-frame allocation.
+/// Stream `data` as base64 between `<tag>_BEGIN`/`<tag>_END` markers, 48 input
+/// bytes (→ 64 chars) per line using only a stack buffer — no heap.
 fn dump_b64(tag: &str, fmt: &str, idx: u32, w: usize, h: usize, data: &[u8]) {
     println!(
         "{}_BEGIN idx={} w={} h={} bytes={} fmt={}",
@@ -92,7 +76,7 @@ fn main() -> ! {
     let delay = Delay::new();
 
     // Camera framebuffer in PSRAM — identical setup to `online` (see that binary
-    // for why the frame must live in PSRAM and not internal SRAM).
+    // for why the frame can't live in internal SRAM).
     let (psram_ptr, psram_len) = esp_hal::psram::psram_raw_parts(&peripherals.PSRAM);
     assert!(psram_len >= FRAME_BYTES, "PSRAM too small for framebuffer");
     let framebuffer: &'static mut [u8] =
@@ -121,17 +105,15 @@ fn main() -> ! {
 
     println!("Camera up. Streaming frames (RAW + DOWN). Ctrl-C to stop.");
 
-    // Post-downscale RGB888 preview buffer, reused in place. No inference runs in
-    // this binary, so SRAM is free for this small buffer.
+    // Post-downscale RGB888 preview buffer, reused in place. No inference here, so
+    // SRAM has room for it.
     let mut down = [0u8; IMG_H * IMG_W * 3];
 
     let mut idx: u32 = 0;
     loop {
         match camera.capture_raw() {
             Ok(frame) => {
-                // Stage 1: raw sensor frame.
                 dump_b64("RAW", "rgb565", idx, CAM_W, CAM_H, frame);
-                // Stage 2: 2×2 box-downscaled RGB888 (pre-quantization).
                 downscale_rgb888(frame, &mut down);
                 dump_b64("DOWN", "rgb888", idx, IMG_W, IMG_H, &down);
                 println!("FRAME_DONE idx={}", idx);
