@@ -59,8 +59,8 @@ nalgebra = { version = "0.32.6", default-features = false, features = [
   "libm",
 ] }
 libm = "0.2"
-# microflow = { git = "https://github.com/federico-pizz/microflow-rs" }
-microflow = { git = "https://github.com/federico-pizz/microflow-rs", branch = "main" }
+# microflow = { git = "https://github.com/federico-pizz/microflow-rs", branch = "buffer-reuse", features = ["buffer-reuse"] }
+microflow = { path = "/home/fefe/Projects/microflow-rs-buffer-reuse", features = ["buffer-reuse"] }
 
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

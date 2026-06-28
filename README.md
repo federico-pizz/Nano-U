@@ -265,7 +265,7 @@ All experiments use an **ESP32-S3-CAM** (dual-core Xtensa LX7 @ 240 MHz, 512 KB 
 
 ## Limitations
 
-- **Single-core inference**: the second Xtensa LX7 core is idle. Distributing inference across both cores is the most direct path to halving latency.
+- **Single-core inference (this branch)**: `main` runs the operator graph on one Xtensa LX7 core, leaving the second idle. The `multicore` branch distributes each heavy conv/depthwise layer across both cores for a measurable latency drop (~426 ms vs ~581 ms) with bit-identical output; `main` stays single-core for the simpler, lower-stack baseline.
 - **Fixed-domain deployment**: Nano-U is currently re-trained from scratch per domain. SVD redundancy scores suggest the encoder generalizes while the decoder is domain-specific, motivating decoder-only re-distillation for new domains.
 
 ---

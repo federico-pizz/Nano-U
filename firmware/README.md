@@ -2,6 +2,23 @@
 
 Bare-metal Rust inference for the ESP32-S3. No RTOS, no heap allocator — the full operator graph is resolved at compile time by [MicroFlow](https://github.com/federico-pizz/microflow-rs).
 
+## Pipelines (branches)
+
+The firmware ships in two parallel pipelines, one per branch, each paired with a
+matching MicroFlow branch:
+
+| Pipeline | nano-u branch | MicroFlow branch | features |
+|:---|:---|:---|:---|
+| **Single-core** (this branch) | `main` | `buffer-reuse` | `["buffer-reuse"]` |
+| Multicore | `multicore` | `multicore` | `["buffer-reuse", "multicore", "profiling"]` |
+
+This `main` branch is the single-core pipeline: every binary runs the whole
+operator graph on the PRO core (core 0). The `buffer-reuse` MicroFlow feature
+ping-pongs intermediate tensors through two reused buffers, collapsing peak
+inference stack without changing the output. For the dual-core variant — which
+brings the APP core (core 1) up to split heavy conv/depthwise layers across both
+cores for lower latency — see the `multicore` branch.
+
 ## Requirements
 
 Install the ESP Rust toolchain, then source it before every build session:
