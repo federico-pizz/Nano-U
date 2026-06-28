@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import subprocess
 import os
 import sys
@@ -34,10 +35,10 @@ def drain_pty(master, f_log):
         f_log.flush()
 
 
-def run_analysis_on_device(cmd, log_file, cwd=None):
+def run_analysis_on_device(cmd, log_file, cwd=None, preset_voltage=None, preset_current=None):
     print(f"Executing: {' '.join(cmd)}")
     master, slave = pty.openpty()
-    p = subprocess.Popen(cmd, stdout=slave, stderr=subprocess.STDOUT, close_fds=True, cwd=cwd)
+    p = subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=subprocess.STDOUT, close_fds=True, cwd=cwd)
     os.close(slave)
 
     current_ma = None
@@ -85,24 +86,34 @@ def run_analysis_on_device(cmd, log_file, cwd=None):
                     print("DEVICE IS NOW UNDER 100% CONTINUOUS NEURAL NETWORK LOAD")
                     print("=" * 60)
                     print("The ESP32 is running a silent infinite loop.")
-                    print("Look at your multimeter and wait for the reading to stabilize.\n")
 
-                    raw = input("Enter the measured voltage in V (or press Enter to use 5.0V): ").strip()
-                    if raw:
-                        try:
-                            voltage_v = float(raw)
-                        except ValueError:
-                            print("Invalid input, defaulting to 5.0V.")
-                            voltage_v = 5.0
+                    if preset_voltage is not None:
+                        voltage_v = preset_voltage
+                        print(f"Using preset voltage: {voltage_v} V")
                     else:
-                        voltage_v = 5.0
+                        print("Look at your multimeter and wait for the reading to stabilize.\n")
+                        raw = input("Enter the measured voltage in V (or press Enter to use 5.0V): ").strip()
+                        if raw:
+                            try:
+                                voltage_v = float(raw)
+                            except ValueError:
+                                print("Invalid input, defaulting to 5.0V.")
+                                voltage_v = 5.0
+                        else:
+                            voltage_v = 5.0
 
-                    raw = input(f"Enter the stable current draw in mA (or press Enter to skip energy calc): ").strip()
-                    if raw:
-                        try:
-                            current_ma = float(raw)
-                        except ValueError:
-                            print("Invalid input. Skipping energy calculation.")
+                    if preset_current is not None:
+                        current_ma = preset_current
+                        print(f"Using preset current: {current_ma} mA")
+                    elif preset_voltage is None:
+                        raw = input(f"Enter the stable current draw in mA (or press Enter to skip energy calc): ").strip()
+                        if raw:
+                            try:
+                                current_ma = float(raw)
+                            except ValueError:
+                                print("Invalid input. Skipping energy calculation.")
+                    else:
+                        print("No current provided — skipping energy calculation.")
 
                     success = True
                     break
@@ -200,6 +211,11 @@ def plot_stack_usage(peaks, total_stack, output_file='stack_usage.png'):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Profile Nano-U on ESP32 hardware")
+    parser.add_argument("--voltage", type=float, default=None, help="Supply voltage in V (skips interactive prompt)")
+    parser.add_argument("--current", type=float, default=None, help="Current draw in mA (skips interactive prompt)")
+    args = parser.parse_args()
+
     script_dir = Path(__file__).parent.resolve()
     repo_root = script_dir.parent
     out_dir = repo_root / 'results' / 'hardware' / 'nano_u'
@@ -214,14 +230,15 @@ def main():
     )
 
     print("\n[2/3] Flashing and running analysis...")
-    cmd = ["espflash", "flash", "--monitor", "target/xtensa-esp32s3-none-elf/release/analysis"]
+    cmd = ["cargo", "run", "--release", "--bin", "analysis"]
 
     success = False
     current_ma = None
     voltage_v = None
     for attempt in range(3):
         success, current_ma, voltage_v = run_analysis_on_device(
-            cmd, str(log_file), cwd=repo_root / 'firmware'
+            cmd, str(log_file), cwd=repo_root / 'firmware',
+            preset_voltage=args.voltage, preset_current=args.current,
         )
         if success:
             break

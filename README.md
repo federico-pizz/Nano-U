@@ -1,7 +1,7 @@
 # Nano-U
 
 > **3,357-parameter binary terrain segmentation for bare-metal microcontrollers.**  
-> Trained via Quantization-Aware Distillation · Deployed in Rust · Runs at 1.2 FPS on a $10 SoC.
+> Trained via Quantization-Aware Distillation · Deployed in Rust · Runs at 2.35 FPS on a $10 SoC.
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 [![TensorFlow](https://img.shields.io/badge/TensorFlow-2.x-orange.svg)](https://www.tensorflow.org/)
@@ -24,14 +24,14 @@ The model is trained with **Quantization-Aware Distillation (QAD)** — a single
 
 | Model | Dataset | mIoU | F1 | Precision | Recall |
 |:---|:---|:---:|:---:|:---:|:---:|
-| BU-Net (Teacher, Float32) | Botanic Garden | 95.2% | 95.8% | 96.9% | 94.7% |
-| Nano-U (Float32) | Botanic Garden | 87.6% | 88.3% | 94.0% | 83.3% |
-| **Nano-U (INT8, on ESP32)** | **Botanic Garden** | **87.6%** | **88.4%** | **94.1%** | **83.3%** |
-| BU-Net (Teacher, Float32) | TinyAgri | 90.9% | 95.2% | 93.9% | 96.5% |
-| Nano-U (Float32) | TinyAgri | 88.4% | 93.7% | 93.5% | 94.0% |
+| BU-Net (Teacher, Float32) | Botanic Garden | 95.4% | 95.9% | 96.2% | 95.7% |
+| Nano-U (Float32) | Botanic Garden | 89.4% | 90.2% | 93.8% | 86.9% |
+| **Nano-U (INT8, on ESP32)** | **Botanic Garden** | **87.7%** | **88.5%** | **94.1%** | **83.5%** |
+| BU-Net (Teacher, Float32) | TinyAgri | 91.0% | 95.3% | 93.8% | 96.8% |
+| Nano-U (Float32) | TinyAgri | 89.2% | 94.2% | 93.5% | 94.9% |
 | **Nano-U (INT8, on ESP32)** | **TinyAgri** | **88.4%** | **93.7%** | **93.5%** | **93.9%** |
 
-The negligible Float32→INT8 gap on both domains (≈0 pp mIoU) confirms the QAD pipeline preserves accuracy through quantization — the on-device INT8 model matches its Float32 source within measurement noise.
+The small Float32→INT8 gap (−1.7 pp mIoU on Botanic Garden, −0.8 pp on TinyAgri) confirms the QAD pipeline preserves most accuracy through quantization, with the on-device INT8 model remaining within 2 pp of its Float32 source.
 
 ### Qualitative Results
 
@@ -51,11 +51,12 @@ The diagram below shows the QAD training loop: fake-quantization nodes are injec
 |:---|:---:|
 | Parameters | 3,357 (INT8) |
 | Model size | 33 KB |
-| Peak internal RAM | 281 KB |
-| Inference latency | 830 ms (~1.2 FPS) |
+| Peak internal RAM | 147.5 KB |
+| Stack headroom | 130.7 KB |
+| Inference latency | 425 ms (~2.35 FPS) |
 | Power consumption | 470 mW |
 
-Peak RAM measured via stack painting (hardware high-water mark). Power measured at the 5V USB rail, inclusive of LDO, OV2640 camera, and USB-UART bridge.
+Peak RAM measured via stack painting (hardware high-water mark) over 50 iterations. Latency measured with dual-core inference (both Xtensa LX7 cores active). Power measured at the 5V USB rail, inclusive of LDO, OV2640 camera, and USB-UART bridge.
 
 ---
 
@@ -265,7 +266,6 @@ All experiments use an **ESP32-S3-CAM** (dual-core Xtensa LX7 @ 240 MHz, 512 KB 
 
 ## Limitations
 
-- **Single-core inference**: the second Xtensa LX7 core is idle. Distributing inference across both cores is the most direct path to halving latency.
 - **Fixed-domain deployment**: Nano-U is currently re-trained from scratch per domain. SVD redundancy scores suggest the encoder generalizes while the decoder is domain-specific, motivating decoder-only re-distillation for new domains.
 
 ---
