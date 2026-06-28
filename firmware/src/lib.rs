@@ -167,3 +167,50 @@ pub unsafe fn stack_total() -> usize {
     let stack_start = core::ptr::addr_of!(_stack_start) as usize;
     stack_start - stack_end
 }
+
+/// Starts the ESP32-S3 APP core (core 1) into microflow's dual-core
+/// `worker_loop` and blocks until it is polling, so the **very first** inference
+/// layer already runs split across both cores. Emits the `WORKER_READY:1` serial
+/// marker once core 1 is up.
+///
+/// This is the one piece of multicore plumbing every dual-core binary needs;
+/// it lives here so the bins don't each copy the `CpuControl` + static-stack
+/// boilerplate. The microflow side (`worker_loop` / `parallel_for_rows`) only
+/// exists when microflow's `multicore` feature is on — which the firmware's
+/// `Cargo.toml` enables on the multicore branch.
+///
+/// Expands to statements in the **caller's** scope: the `CpuControl` and the
+/// returned `AppCoreGuard` are bound with hygienic names and kept alive until
+/// the end of the enclosing block. Dropping the guard parks core 1, so it must
+/// outlive every `predict_quantized` call — invoke this once near the top of a
+/// `-> !` `main`, after `esp_hal::init`.
+///
+/// # Example
+/// ```ignore
+/// let peripherals = esp_hal::init(config);
+/// // ... watchdogs disabled ...
+/// nano_u_esp::start_dual_core!(peripherals.CPU_CTRL);
+/// // core 1 now serves microflow row-split jobs for the rest of main.
+/// ```
+#[macro_export]
+macro_rules! start_dual_core {
+    ($cpu_ctrl:expr) => {
+        // APP-core stack (core 1). Sized for one op's row-fill call depth, not the
+        // whole layer chain, so it stays far smaller than core 0's predict() stack.
+        // See microflow docs/ESP32_S3_MULTICORE.md §6.1.
+        static mut APP_CORE_STACK: ::esp_hal::system::Stack<32768> =
+            ::esp_hal::system::Stack::new();
+        let mut __mc_cpu_control = ::esp_hal::system::CpuControl::new($cpu_ctrl);
+        // Guard must stay alive for the whole run; dropping it parks core 1.
+        let __mc_app_guard = __mc_cpu_control
+            .start_app_core(
+                unsafe { &mut *::core::ptr::addr_of_mut!(APP_CORE_STACK) },
+                || ::microflow::multicore::worker_loop(),
+            )
+            .unwrap();
+        while !::microflow::multicore::worker_ready() {
+            ::core::hint::spin_loop();
+        }
+        ::esp_println::println!("WORKER_READY:1");
+    };
+}

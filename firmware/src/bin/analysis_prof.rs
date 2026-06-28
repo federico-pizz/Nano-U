@@ -1,10 +1,11 @@
-//! Per-layer latency profile of nano_u (single core).
+//! Per-layer latency profile of nano_u (dual core).
 //!
-//! Builds with `microflow` features `["buffer-reuse", "profiling"]`. Installs a
-//! microsecond timestamp hook into `microflow::profile`, runs one inference, and
-//! prints each layer's op-type and duration. Timing is data-independent, so a
-//! zero input is fine. Use the output to see which layers dominate the 581 ms
-//! single-core run (fusion / selective-parallelization targets).
+//! Builds with `microflow` features `["buffer-reuse", "multicore", "profiling"]`.
+//! Starts core 1 into the worker via [`start_dual_core!`], installs a microsecond
+//! timestamp hook into `microflow::profile`, runs one inference, and prints each
+//! layer's op-type and duration. Timing is data-independent, so a zero input is
+//! fine. Use the output to see which layers dominate the dual-core run, and to
+//! compare against the single-core profile on the `main` branch.
 //!
 //! Op tags: 1=conv 2=depthwise 3=maxpool 4=resize.
 
@@ -45,7 +46,9 @@ fn main() -> ! {
     let mut timg1 = TimerGroup::new(peripherals.TIMG1);
     timg1.wdt.disable();
 
-    println!("System Init. Per-layer profile (single core).");
+    nano_u_esp::start_dual_core!(peripherals.CPU_CTRL);
+
+    println!("System Init. Per-layer profile (dual core).");
     microflow::profile::set_now(now_us);
 
     let input: Buffer4D<i8, 1, IMG_H, IMG_W, 3> =

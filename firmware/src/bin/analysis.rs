@@ -36,7 +36,11 @@ fn main() -> ! {
     let mut timg1 = TimerGroup::new(peripherals.TIMG1);
     timg1.wdt.disable();
 
-    println!("System Init. Clock: Max. WDT Disabled. Starting Inference...");
+    // Dual-core: start core 1 so the timed inferences and the power loop both run
+    // split across both cores (compare against the single-core analysis on main).
+    nano_u_esp::start_dual_core!(peripherals.CPU_CTRL);
+
+    println!("System Init. Clock: Max. WDT Disabled. Dual-core inference.");
     println!("Allocating Input in STATIC memory (.bss)...");
 
     unsafe {

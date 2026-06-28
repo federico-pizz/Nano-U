@@ -1,14 +1,17 @@
 #![no_std]
 #![no_main]
-#![deny(unsafe_code)]
 
 //! Continuous ("regular") inference binary — the default `cargo run` target.
 //!
 //! Its only job is to *run*: it executes the segmentation model in an endless
 //! loop, one inference every [`INFERENCE_INTERVAL_MS`] milliseconds, and prints
-//! a short per-frame summary. It contains **no `unsafe` code** (enforced by
-//! `#![deny(unsafe_code)]`) and no profiling — stack/power measurement lives in
+//! a short per-frame summary. No profiling — stack/power measurement lives in
 //! the `analysis` binaries.
+//!
+//! On the multicore branch it first brings core 1 up via [`start_dual_core!`] so
+//! the demo loop runs dual-core; that single-line of app-core plumbing is the
+//! only `unsafe` here (it was `#![deny(unsafe_code)]` on the single-core `main`
+//! branch).
 //!
 //! The single input buffer is allocated once before the loop and overwritten in
 //! place each iteration, so the loop does no per-iteration allocation.
@@ -54,7 +57,10 @@ fn main() -> ! {
     let mut timg1 = TimerGroup::new(peripherals.TIMG1);
     timg1.wdt.disable();
 
-    println!("System Init. Clock: Max. WDT Disabled. Starting continuous inference...");
+    // Bring core 1 up so each inference in the loop runs split across both cores.
+    nano_u_esp::start_dual_core!(peripherals.CPU_CTRL);
+
+    println!("System Init. Clock: Max. WDT Disabled. Dual-core worker up. Starting continuous inference...");
 
     let luts = build_quant_luts();
 

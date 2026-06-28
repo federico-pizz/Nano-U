@@ -3,22 +3,12 @@
 
 use esp_backtrace as _;
 use esp_hal::{
-    clock::CpuClock,
-    delay::Delay,
-    main,
-    rtc_cntl::Rtc,
-    system::{software_reset, CpuControl, Stack},
+    clock::CpuClock, delay::Delay, main, rtc_cntl::Rtc, system::software_reset,
     timer::timg::TimerGroup,
 };
 use esp_println::println;
 
 esp_bootloader_esp_idf::esp_app_desc!();
-
-/// Stack for the APP core (core 1) running microflow's dual-core worker. Sized
-/// for one op's row-fill call depth (not the whole layer chain), so it stays far
-/// smaller than core 0's predict() stack. Competes with the S3 stack budget —
-/// see microflow docs/ESP32_S3_MULTICORE.md §6.1.
-static mut APP_CORE_STACK: Stack<32768> = Stack::new();
 
 use microflow::buffer::{Buffer2D, Buffer4D};
 use microflow::model;
@@ -47,19 +37,9 @@ fn main() -> ! {
     let mut timg1 = TimerGroup::new(peripherals.TIMG1);
     timg1.wdt.disable();
 
-    // Start the APP core (core 1) into microflow's dual-core worker, then wait
-    // until it is polling so the very first layer runs in parallel. The guard
-    // must stay alive for the whole run (dropping it parks core 1).
-    let mut cpu_control = CpuControl::new(peripherals.CPU_CTRL);
-    let _app_guard = cpu_control
-        .start_app_core(
-            unsafe { &mut *core::ptr::addr_of_mut!(APP_CORE_STACK) },
-            || microflow::multicore::worker_loop(),
-        )
-        .unwrap();
-    while !microflow::multicore::worker_ready() {
-        core::hint::spin_loop();
-    }
+    // Start the APP core (core 1) into microflow's dual-core worker and wait
+    // until it is polling, so the very first layer runs in parallel.
+    nano_u_esp::start_dual_core!(peripherals.CPU_CTRL);
 
     println!("System Init. Clock: Max. WDT Disabled. Dual-core worker up. Starting Single Inference...");
     println!("Target Image Index: {}", TARGET_IDX);

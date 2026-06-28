@@ -32,7 +32,11 @@ fn main() -> ! {
     let mut timg1 = TimerGroup::new(peripherals.TIMG1);
     timg1.wdt.disable();
 
-    println!("System Init. Clock: Max. WDT Disabled. Starting Inference...");
+    // Bring core 1 up into microflow's worker so the heavy conv/depthwise layers
+    // split their output rows across both cores for the whole benchmark.
+    nano_u_esp::start_dual_core!(peripherals.CPU_CTRL);
+
+    println!("System Init. Clock: Max. WDT Disabled. Dual-core worker up. Starting Inference...");
     println!(
         "Quant params: input(scale={}, zp={}) img={}x{}",
         INPUT_SCALE, INPUT_ZERO_POINT, IMG_W, IMG_H

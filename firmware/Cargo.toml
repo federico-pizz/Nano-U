@@ -33,24 +33,8 @@ name = "capture"
 path = "./src/bin/capture.rs"
 
 [[bin]]
-name = "smoke_dualcore"
-path = "./src/bin/smoke_dualcore.rs"
-
-[[bin]]
-name = "mc_dispatch_test"
-path = "./src/bin/mc_dispatch_test.rs"
-
-[[bin]]
-name = "analysis_mc"
-path = "./src/bin/analysis_mc.rs"
-
-[[bin]]
 name = "analysis_prof"
 path = "./src/bin/analysis_prof.rs"
-
-[[bin]]
-name = "analysis_prof_mc"
-path = "./src/bin/analysis_prof_mc.rs"
 
 [dependencies]
 # Core ESP32-S3 HAL. `psram` maps external RAM so the live-camera framebuffer
@@ -79,9 +63,8 @@ nalgebra = { version = "0.32.6", default-features = false, features = [
   "libm",
 ] }
 libm = "0.2"
-# microflow = { git = "https://github.com/federico-pizz/microflow-rs", branch = "main" }
-# Local working tree (multicore branch) for dual-core experiments. Revert to the
-# git line above to go back to the published fork.
+
+# microflow = { git = "https://github.com/federico-pizz/microflow-rs", branch = "multicore", features = ["buffer-reuse", "multicore", "profiling"] }
 microflow = { path = "/home/fefe/Projects/microflow-rs", features = ["buffer-reuse", "multicore", "profiling"] }
 
 [build-dependencies]
