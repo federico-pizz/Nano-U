@@ -64,8 +64,8 @@ nalgebra = { version = "0.32.6", default-features = false, features = [
 ] }
 libm = "0.2"
 
-# microflow = { git = "https://github.com/federico-pizz/microflow-rs", branch = "multicore", features = ["buffer-reuse", "multicore", "profiling"] }
-microflow = { path = "/home/fefe/Projects/microflow-rs", features = ["buffer-reuse", "multicore", "profiling"] }
+microflow = { git = "https://github.com/federico-pizz/microflow-rs", branch = "multicore", features = ["buffer-reuse", "multicore", "profiling"] }
+# microflow = { path = "/home/fefe/Projects/microflow-rs", features = ["buffer-reuse", "multicore", "profiling"] }
 
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

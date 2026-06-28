@@ -1,32 +1,23 @@
 //! OV2640 live-capture driver for the Goouuu ESP32-S3-CAM (`no_std`, esp-hal).
 //!
-//! This is the only *new hardware* path in the project. It captures a live
-//! QQVGA (160×120) RGB565 frame over the ESP32-S3 `LCD_CAM` (DVP) peripheral via
-//! DMA, then box-downscales 2×2 and INT8-quantizes it straight into the existing
-//! `IMG_H`×`IMG_W` (60×80) input buffer that [`crate::preprocess_rgb`] would
-//! otherwise fill from a baked image. The model and its activations are
-//! untouched — only the *frame source* changes.
+//! The only *new hardware* path in the project: captures a live QQVGA (160×120)
+//! RGB565 frame over the ESP32-S3 `LCD_CAM` (DVP) peripheral via DMA, then
+//! box-downscales 2×2 and INT8-quantizes it straight into the existing 60×80 input
+//! buffer that [`crate::preprocess_rgb`] would otherwise fill from a baked image.
+//! The model and its activations are untouched — only the *frame source* changes.
+//! The frame lives in PSRAM (see `bin/online.rs`); it is written once by DMA and
+//! read once during downscale, so the loop stays inference-bound.
 //!
-//! ## Memory
-//! The 38 400-byte RGB565 frame lives in **PSRAM** (allocated once at startup via
-//! the global PSRAM allocator set up in `bin/online.rs`), not internal SRAM, so
-//! the ~30–40 KB SRAM headroom and the model activations are left alone. The
-//! frame is written once by DMA (background) and read once during downscale
-//! (~1 ms), so PSRAM costs a sliver of latency but **does not reduce throughput**
-//! — the loop stays inference-bound (~800 ms/frame).
-//!
-//! ## Hardware-only / validation notes
-//! This module is **not exercised in CI** (it needs the esp toolchain and a
-//! physical camera). Three things must be confirmed on-device when first
-//! bringing it up; each is flagged inline below:
+//! ## Hardware-only validation notes
+//! Not exercised in CI (needs the esp toolchain + a physical camera). Three things
+//! to confirm on-device when first bringing it up, each flagged inline below:
 //!   1. **Register table** — [`OV2640_RGB565_QQVGA`] is ported from Espressif's
-//!      `esp32-camera` `ov2640_settings.h`. If capture is blank/garbled, diff it
+//!      `esp32-camera` `ov2640_settings.h`; if capture is blank/garbled, diff it
 //!      against upstream for your sensor revision.
-//!   2. **RGB565 byte order** — DMA may deliver the two bytes hi/lo or lo/hi.
-//!      Flip [`SWAP_RGB565_BYTES`] if colours look wrong.
+//!   2. **RGB565 byte order** — flip [`SWAP_RGB565_BYTES`] if colours look wrong.
 //!   3. **PSRAM↔DMA cache coherency** — the DMA buffer must be cache-invalidated
-//!      before the CPU reads it; esp-hal's `DmaRxBuf` is expected to handle this
-//!      for external memory, but verify the frame isn't stale.
+//!      before the CPU reads it (esp-hal's `DmaRxBuf` should handle external
+//!      memory, but verify the frame isn't stale).
 
 use esp_hal::{
     delay::Delay,
@@ -358,17 +349,12 @@ pub struct OnboardCamera {
     dma_buf: Option<DmaRxBuf>,
 }
 
-/// Build a fully-configured LCD_CAM DVP receiver for the Goouuu ESP32-S3-CAM,
-/// stealing the peripheral + pin singletons.
-///
-/// Pins (verified ESP32-S3-EYE map, which the Goouuu board follows):
-/// XCLK=15, PCLK=13, VSYNC=6, HREF=7, D0..D7 = 11,9,8,10,12,18,17,16.
-///
-/// Called once from [`OnboardCamera::new`]; the receiver is then kept alive for
-/// the whole program and reused across `receive`/`stop` cycles. `with_master_clock`
-/// enables the XCLK output permanently (not gated by `cam_start`), so the sensor
-/// stays clocked and streaming between captures. `steal()` is sound here because
-/// exactly one `Camera` (and thus one set of these singletons) is ever live.
+/// Build a fully-configured LCD_CAM DVP receiver, stealing the peripheral + pin
+/// singletons (pin map below; verified ESP32-S3-EYE map, which the Goouuu board
+/// follows). Called once from [`OnboardCamera::new`] and kept alive for the whole
+/// program: `with_master_clock` enables XCLK permanently (not gated by
+/// `cam_start`), so the sensor stays clocked between captures. `steal()` is sound
+/// because exactly one `Camera` is ever live.
 fn build_camera() -> Result<Camera<'static>, CamError> {
     use esp_hal::peripherals;
     let lcd_cam = LcdCam::new(unsafe { peripherals::LCD_CAM::steal() });
@@ -397,10 +383,8 @@ impl OnboardCamera {
     /// Bring up XCLK, push the OV2640 RGB565/QQVGA register table over SCCB, and
     /// prepare the persistent PSRAM DMA buffer.
     ///
-    /// `framebuffer` must be a `'static`, DMA-capable, cache-line (64-byte)
-    /// aligned slice of **exactly [`FRAME_BYTES`]** bytes — the caller carves it
-    /// out of the PSRAM region via `esp_hal::psram::psram_raw_parts`. No heap is
-    /// used, so the rest of the firmware stays allocation-free.
+    /// `framebuffer` must be a `'static`, DMA-capable, 64-byte-aligned slice of
+    /// **exactly [`FRAME_BYTES`]** bytes — carved from PSRAM by the caller. No heap.
     pub fn new(framebuffer: &'static mut [u8]) -> Result<Self, CamError> {
         let delay = Delay::new();
 
@@ -464,13 +448,10 @@ impl OnboardCamera {
     }
 
     /// Run one DMA capture, leaving the completed RGB565 frame in `self.dma_buf`
-    /// with the data cache invalidated so the CPU sees fresh PSRAM. Shared by
-    /// [`capture_into`](Self::capture_into) and [`capture_raw`](Self::capture_raw).
-    ///
-    /// The persistent `Camera` is moved into a DMA transfer and back out: start,
-    /// poll `is_done()` until the buffer fills with one full frame, `stop()`, then
-    /// the (now complete, VSYNC-aligned) buffer is left in `self.dma_buf`. The
-    /// camera is kept alive across captures.
+    /// with the data cache invalidated so the CPU sees fresh PSRAM. The persistent
+    /// `Camera` is moved into the DMA transfer and back out, staying alive across
+    /// captures. Shared by [`capture_into`](Self::capture_into) and
+    /// [`capture_raw`](Self::capture_raw).
     fn capture_dma(&mut self) -> Result<(), CamError> {
         let dma_buf = self.dma_buf.take().expect("dma buf moved out");
         let camera = self.camera.take().expect("camera moved out");
@@ -485,11 +466,10 @@ impl OnboardCamera {
             }
         };
 
-        // Wait for the frame to land: `cam_stop_en` clears `cam_start` (i.e.
-        // `is_done()`) once the DMA buffer fills with one full frame. We start
-        // mid-frame, so completion takes up to ~2 frame times; poll in small steps
-        // up to a cap rather than blocking on a fixed delay. The loop is
-        // inference-bound (~830 ms/frame) so this wait never gates throughput.
+        // Wait for the frame to land: `is_done()` goes true once the DMA buffer
+        // fills with one full frame. We start mid-frame, so completion takes up to
+        // ~2 frame times; poll in small steps up to a cap. The loop is
+        // inference-bound (~830 ms/frame), so this wait never gates throughput.
         const CAPTURE_POLL_STEP_MS: u32 = 5;
         const CAPTURE_TIMEOUT_MS: u32 = 250;
         let mut waited = 0;
@@ -501,9 +481,8 @@ impl OnboardCamera {
         let (camera, dma_buf) = transfer.stop();
         self.camera = Some(camera); // keep alive for the next capture
 
-        // Invalidate the data cache for the framebuffer *after* the DMA write so
-        // the CPU reads the freshly-captured PSRAM data, not a stale cached copy.
-        // (ESP32-S3 ROM routine, already linked by esp-hal.)
+        // Invalidate the data cache *after* the DMA write so the CPU reads the
+        // freshly-captured PSRAM data, not a stale cached copy.
         unsafe {
             let s = dma_buf.as_slice();
             Cache_Invalidate_Addr(s.as_ptr() as u32, s.len() as u32);
@@ -530,20 +509,18 @@ impl OnboardCamera {
     /// ([`FRAME_BYTES`] bytes, row-major [`CAM_H`]×[`CAM_W`], 2 bytes/pixel,
     /// big-endian unless [`SWAP_RGB565_BYTES`]).
     ///
-    /// This is the un-processed sensor output, exposed for pipeline validation /
-    /// previewing what the camera actually sees (see `bin/capture.rs`). The
-    /// returned slice borrows the internal DMA buffer and is valid until the next
-    /// capture. Not used by the control loop — that path goes through
-    /// [`capture_into`](Self::capture_into).
+    /// Un-processed sensor output for pipeline validation (see `bin/capture.rs`);
+    /// not used by the control loop, which goes through
+    /// [`capture_into`](Self::capture_into). The returned slice borrows the internal
+    /// DMA buffer and is valid until the next capture.
     pub fn capture_raw(&mut self) -> Result<&[u8], CamError> {
         self.capture_dma()?;
         Ok(self.dma_buf.as_ref().expect("dma buf present after capture").as_slice())
     }
 }
 
-// ESP32-S3 ROM data-cache invalidate by address range. Linked from ROM (also
-// used internally by esp-hal). Used to drop stale cached lines for the PSRAM
-// framebuffer after a DMA capture, before the CPU reads it.
+// ESP32-S3 ROM data-cache invalidate by address range (linked from ROM). Drops
+// stale cached lines for the PSRAM framebuffer after a DMA capture.
 unsafe extern "C" {
     fn Cache_Invalidate_Addr(addr: u32, size: u32);
 }
@@ -631,10 +608,9 @@ fn downscale_quantize(
 /// row-major into `out` as `[R, G, B]` triples — `out.len()` must be
 /// `IMG_H * IMG_W * 3`.
 ///
-/// This is the same box filter [`downscale_quantize`] applies, stopped one step
-/// earlier (before the INT8 quantize LUT). It exists purely so the host can
-/// preview the post-downscale image the model input is derived from, validating
-/// the resize step independently of quantization. See `bin/capture.rs`.
+/// The same box filter [`downscale_quantize`] applies, stopped before the INT8
+/// quantize LUT, so the host can preview the post-downscale image and validate the
+/// resize step independently of quantization. See `bin/capture.rs`.
 pub fn downscale_rgb888(frame: &[u8], out: &mut [u8]) {
     debug_assert_eq!(out.len(), IMG_H * IMG_W * 3);
     for h in 0..IMG_H {
