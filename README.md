@@ -1,7 +1,7 @@
 # Nano-U
 
-> **3,357-parameter binary terrain segmentation for bare-metal microcontrollers.**  
-> Trained via Quantization-Aware Distillation · Deployed in Rust · Runs at 1.2 FPS on a $10 SoC.
+> **Binary terrain segmentation in 3,357 parameters — small enough to run bare-metal on a $10 microcontroller.**
+> Distilled with quantization awareness · Deployed in pure Rust · 1.2 FPS on an ESP32-S3, no ML accelerator.
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 [![TensorFlow](https://img.shields.io/badge/TensorFlow-2.x-orange.svg)](https://www.tensorflow.org/)
@@ -12,9 +12,14 @@
 
 ---
 
-Nano-U is a minimal encoder-decoder segmentation network designed from the ground up for autonomous navigation on commodity embedded hardware. Its architecture, training regime, and deployment stack are co-designed around a single hard constraint: **320 KB of Data RAM, no ML accelerator**.
+Nano-U is a tiny encoder-decoder segmentation network built for autonomous navigation on commodity embedded hardware. Architecture, training, and deployment are co-designed around one hard constraint: **320 KB of Data RAM, no ML accelerator.**
 
-The model is trained with **Quantization-Aware Distillation (QAD)** — a single-pass regime that fuses knowledge distillation from a full-precision BU-Net teacher with INT8 fake-quantization from epoch one — and deployed through a [fork of MicroFlow](https://github.com/federico-pizz/microflow-rs), a compile-time Rust inference engine that resolves the entire operator graph at build time with no heap allocator, no dynamic dispatch, and no interpreter overhead.
+Two ideas make it fit:
+
+- **Quantization-Aware Distillation (QAD)** — a single-pass regime that fuses knowledge distillation from a full-precision BU-Net teacher with INT8 fake-quantization from epoch one.
+- **A compile-time Rust engine** — a [fork of MicroFlow](https://github.com/federico-pizz/microflow-rs) that resolves the whole operator graph at build time: no heap allocator, no dynamic dispatch, no interpreter.
+
+> **⚡ Want more speed?** The [`multicore`](../../tree/multicore) branch splits inference across both Xtensa cores for **~2× lower latency** (2.35 FPS) with bit-identical output. See [Branches](#branches).
 
 ---
 
@@ -31,17 +36,17 @@ The model is trained with **Quantization-Aware Distillation (QAD)** — a single
 | Nano-U (Float32) | TinyAgri | 88.4% | 93.7% | 93.5% | 94.0% |
 | **Nano-U (INT8, on ESP32)** | **TinyAgri** | **88.4%** | **93.7%** | **93.5%** | **93.9%** |
 
-The negligible Float32→INT8 gap on both domains (≈0 pp mIoU) confirms the QAD pipeline preserves accuracy through quantization — the on-device INT8 model matches its Float32 source within measurement noise.
+The near-zero Float32→INT8 gap (≈0 pp mIoU on both domains) shows QAD carries accuracy through quantization — the on-device INT8 model matches its Float32 source within measurement noise.
 
 ### Qualitative Results
 
-Side-by-side comparison of raw input, ground-truth mask, and Nano-U INT8 prediction across both domains:
+Raw input, ground-truth mask, and Nano-U INT8 prediction across both domains:
 
 <img src="tools/predictions_comparison.png" alt="Input, ground truth, and Nano-U INT8 prediction on Botanic Garden and TinyAgri" width="800"/>
 
 ### Training Pipeline
 
-The diagram below shows the QAD training loop: fake-quantization nodes are injected from epoch one so the optimizer simultaneously minimizes distillation loss (teacher soft targets) and quantization error (INT8 rounding).
+The QAD loop: fake-quantization nodes are injected from epoch one, so the optimizer minimizes distillation loss (teacher soft targets) and quantization error (INT8 rounding) at the same time.
 
 <img src="tools/figure_2.png" alt="Quantization-Aware Distillation training pipeline" width="800"/>
 
@@ -61,7 +66,7 @@ Peak RAM measured via stack painting (hardware high-water mark). Power measured 
 
 ## Architecture
 
-Nano-U is a strictly sequential 7-stage encoder-decoder. Skip connections are omitted — retaining encoder feature maps in SRAM until the decoder consumes them would exceed the 320 KB budget. Depthwise separable convolutions (K=3) are used throughout.
+Nano-U is a strictly sequential 7-stage encoder-decoder. Skip connections are omitted on purpose — holding encoder feature maps in SRAM until the decoder consumes them would blow the 320 KB budget. Depthwise separable convolutions (K=3) are used throughout.
 
 | Stage | Spatial | Channels | Operation |
 |:---|:---:|:---:|:---|
@@ -73,17 +78,30 @@ Nano-U is a strictly sequential 7-stage encoder-decoder. Skip connections are om
 | Decoder 2 | 15×20 → 30×40 | 16 → 8 | NN Upsample 2×2, DW-Sep Conv × 2 |
 | Decoder 3 | 30×40 → 60×80 | 8 → 1 | NN Upsample 2×2, DW-Sep Conv × 2 |
 
-The asymmetric 3×2 MaxPool at Stage 3 reduces 15×20 cleanly to 5×10 without spatial misalignment. The largest intermediate tensor is 60×80×4 = 19.2 KB (INT8), keeping the total arena within budget.
+The asymmetric 3×2 MaxPool at Stage 3 reduces 15×20 cleanly to 5×10 with no spatial misalignment. The largest intermediate tensor is 60×80×4 = 19.2 KB (INT8), keeping the arena within budget.
 
-The parameter count is reported at three stages: the plain Float32 architecture has **4,212** weights; quantization-aware training wraps these in fake-quant nodes for a saved-checkpoint count of **4,688**; and at TFLite export the batch-normalization statistics are folded into the preceding convolutions, leaving **3,357** stored INT8 parameters with no accuracy loss.
+Parameter count is reported at three stages: the plain Float32 architecture has **4,212** weights; QAT wraps these in fake-quant nodes for a saved-checkpoint count of **4,688**; and at TFLite export the batch-norm statistics fold into the preceding convolutions, leaving **3,357** stored INT8 parameters with no accuracy loss.
 
-SVD-based redundancy scores (`src/nas.py`) are tracked during training to monitor layer utilization. These scores empirically confirm that encoder layers generalize across domains while decoder layers are domain-specific — motivating the decoder-only re-distillation strategy described in [Limitations](#limitations).
+SVD-based redundancy scores (`src/nas.py`) track layer utilization during training. They empirically confirm that encoder layers generalize across domains while decoder layers are domain-specific — motivating the decoder-only re-distillation strategy in [Limitations](#limitations).
 
 ### Quantization-Aware Distillation
 
 $$\mathcal{L} = \alpha \cdot T^2 \cdot \mathcal{L}_\text{KD} + (1 - \alpha) \cdot \mathcal{L}_\text{CE}$$
 
-where $\mathcal{L}_\text{KD}$ is MSE between temperature-scaled sigmoid outputs of teacher and student, $\mathcal{L}_\text{CE}$ is binary cross-entropy against hard labels, and $T^2$ compensates for gradient magnitude reduction from temperature scaling. Fake-quantization nodes are injected from epoch one so the optimizer minimizes distillation loss and quantization error simultaneously.
+where $\mathcal{L}_\text{KD}$ is MSE between temperature-scaled sigmoid outputs of teacher and student, $\mathcal{L}_\text{CE}$ is binary cross-entropy against hard labels, and $T^2$ compensates for the gradient magnitude reduction from temperature scaling.
+
+---
+
+## Branches
+
+Two deployment pipelines live in parallel branches, each paired with a matching MicroFlow branch:
+
+| Branch | Cores | Latency | Notes |
+|:---|:---:|:---:|:---|
+| [`main`](../../tree/main) (this one) | 1 | 830 ms (~1.2 FPS) | Simpler, lower-stack single-core baseline |
+| [`multicore`](../../tree/multicore) | 2 | 425 ms (~2.35 FPS) | Splits each heavy layer across both Xtensa LX7 cores; bit-identical output |
+
+The training/evaluation stack is identical on both — only the firmware inference path differs. See [`firmware/README.md`](firmware/README.md) for the build details.
 
 ---
 
@@ -91,8 +109,7 @@ where $\mathcal{L}_\text{KD}$ is MSE between temperature-scaled sigmoid outputs 
 
 Nano-U is dataset-agnostic: any binary terrain-segmentation dataset laid out as
 `data/<name>/{train,val,test}/{img,mask}` works by pointing `config/config.yaml` at it.
-The two datasets below are the ones used for the results in this repository and its
-accompanying publication.
+The two below are the ones behind the results in this repo and its accompanying publication.
 
 ### Botanic Garden
 An outdoor robot navigation benchmark collected in a 48,000 m² unstructured environment. We use 1,181 images from all 5 annotated sequences, split by contiguous sequence (70/20/10) to prevent temporal leakage. Binary traversability masks are derived from the original *path* class annotations.
@@ -100,7 +117,7 @@ An outdoor robot navigation benchmark collected in a 48,000 m² unstructured env
 **Original Source:** [robot-pesg/BotanicGarden](https://github.com/robot-pesg/BotanicGarden)
 
 ### TinyAgri
-A custom terrain segmentation dataset collected via the onboard OV2640 camera of an ESP32-CAM mounted on a SunFounder Galaxy RVR rover. It contains 2,659 images across two agricultural environments (tomato and corn fields), annotated with SAM 2. TinyAgri is released alongside this project to support future research in edge robotics.
+A custom terrain segmentation dataset captured with the onboard OV2640 camera of an ESP32-CAM mounted on a SunFounder Galaxy RVR rover. 2,659 images across two agricultural environments (tomato and corn fields), annotated with SAM 2. Released alongside this project to support future edge-robotics research.
 
 <img src="tools/tinyagri_grid.png" alt="Sample images from the TinyAgri dataset — tomato and corn field terrain" width="800"/>
 
@@ -119,16 +136,13 @@ pip install -r requirements.txt
 
 ### GPU (optional)
 
-The pinned install is CPU-only so it works everywhere; the test suite runs on CPU and
-GPU-marked tests skip automatically. For an NVIDIA GPU, install a CUDA-capable build:
+The pinned install is CPU-only so it works everywhere; the test suite runs on CPU and GPU-marked tests skip automatically. For an NVIDIA GPU, install a CUDA-capable build:
 
 ```bash
 pip install "tensorflow[and-cuda]==2.20.0"
 ```
 
-> Very new GPUs (RTX 50-series / Blackwell, sm_120) aren't covered by stock TensorFlow
-> builds yet — they need a CUDA 12.8+ toolkit and a TensorFlow nightly, typically in a
-> separate conda environment. See NVIDIA's Blackwell compatibility guide.
+> Very new GPUs (RTX 50-series / Blackwell, sm_120) aren't covered by stock TensorFlow builds yet — they need a CUDA 12.8+ toolkit and a TensorFlow nightly, typically in a separate conda environment. See NVIDIA's Blackwell compatibility guide.
 
 For Rust firmware build and deployment, see [`firmware/README.md`](firmware/README.md).
 
@@ -138,7 +152,7 @@ For Rust firmware build and deployment, see [`firmware/README.md`](firmware/READ
 
 ### Pre-trained Models
 
-Pre-trained INT8 TFLite models for both domains are included in the repository under `models/`:
+INT8 TFLite models for both domains ship in the repo under `models/`:
 
 ```
 models/
@@ -146,23 +160,19 @@ models/
 └── TinyAgri/nano_u.tflite
 ```
 
-You can run evaluation directly against these without training from scratch (see [Evaluate](#evaluate) below).
+You can evaluate these directly without training from scratch (see [Evaluate](#evaluate)).
 
 ### Training
 
-Copy and fill in `config/config.yaml` with your dataset paths, then choose one of the two options below — they are mutually exclusive.
+Fill in `config/config.yaml` with your dataset paths, then pick one of the two (mutually exclusive) options.
 
-**Option A — QAD Pipeline (recommended)**
-
-Runs all four phases in one shot: teacher training → student training with distillation → INT8 TFLite export → evaluation.
+**Option A — QAD Pipeline (recommended).** All four phases in one shot: teacher training → student training with distillation → INT8 TFLite export → evaluation.
 
 ```bash
 python scripts/run_qad.py --config config/config.yaml
 ```
 
-**Option B — Standard training (no distillation)**
-
-Trains teacher and student independently without knowledge distillation.
+**Option B — Standard training (no distillation).** Trains teacher and student independently.
 
 ```bash
 python scripts/train_model.py bu_net --config config/config.yaml   # Teacher
@@ -176,19 +186,11 @@ python src/evaluate.py nano_u --config config/config.yaml            # held-out 
 python src/evaluate.py nano_u --config config/config.yaml --split val --threshold 0.6
 ```
 
-Reports mIoU, Dice, precision/recall and the F0.5/F1/F2 family, plus a precision–recall
-curve and a metric-vs-threshold sweep. When the frames carry sequence ids it also adds a
-per-sequence variance breakdown (plot + a full `*_report.json`). Outputs land in
-`results/<dataset>/<model>/` (`eval_results.json` flat metrics, plus a format-tagged
-`eval_results_{fp32,int8}.json`). INT8 TFLite and float Keras models go through the same
-forward path.
+Reports mIoU, Dice, precision/recall and the F0.5/F1/F2 family, plus a precision–recall curve and a metric-vs-threshold sweep. When frames carry sequence ids it adds a per-sequence variance breakdown (plot + `*_report.json`). Outputs land in `results/<dataset>/<model>/`. INT8 TFLite and float Keras models go through the same forward path.
 
 ### Hyperparameter search (leakage-safe CV)
 
-Grouped k-fold sweep over distillation temperature/alpha, augmentation regime, the CE-loss
-ablation, and the conservative Tversky term, with each whole capture sequence kept inside one
-fold (no temporal leakage). Selects by mIoU with F0.5 as the safety tiebreak; writes
-`results/<dataset>/cv/cv_results.{json,csv}`.
+Grouped k-fold sweep over distillation temperature/alpha, augmentation regime, the CE-loss ablation, and the conservative Tversky term, with each whole capture sequence kept inside one fold. Selects by mIoU with F0.5 as the safety tiebreak.
 
 ```bash
 python scripts/cv_search.py --config config/config.yaml --k 4 --epochs 200 \
@@ -197,11 +199,7 @@ python scripts/cv_search.py --config config/config.yaml --k 4 --epochs 200 \
     --tversky 0.0 0.5 --jobs 3
 ```
 
-`--ce on off` toggles the CE term (off ≡ `alpha=1.0`); `--tversky` sweeps the precision-favoring
-supervised loss `(1-w)·BCE + w·Tversky` (default `0.0` = pure BCE). `--jobs N` runs N **student**
-pipelines concurrently (one process/GPU context each); set it to how many tiny Nano-U pipelines
-fit in VRAM. The heavy BU-Net teacher has its own `--teacher-jobs` (default 1, sequential) —
-three concurrent teachers OOM a ~6 GB GPU. `--k` must be ≤ the number of distinct sequences.
+`--ce on off` toggles the CE term (off ≡ `alpha=1.0`); `--tversky` sweeps the precision-favoring loss `(1-w)·BCE + w·Tversky` (default `0.0` = pure BCE). `--jobs N` runs N **student** pipelines concurrently; the heavy BU-Net teacher has its own `--teacher-jobs` (default 1). `--k` must be ≤ the number of distinct sequences.
 
 ### On-Device Evaluation
 
@@ -265,8 +263,8 @@ All experiments use an **ESP32-S3-CAM** (dual-core Xtensa LX7 @ 240 MHz, 512 KB 
 
 ## Limitations
 
-- **Single-core inference (this branch)**: `main` runs the operator graph on one Xtensa LX7 core, leaving the second idle. The `multicore` branch distributes each heavy conv/depthwise layer across both cores for a measurable latency drop (~426 ms vs ~581 ms) with bit-identical output; `main` stays single-core for the simpler, lower-stack baseline.
-- **Fixed-domain deployment**: Nano-U is currently re-trained from scratch per domain. SVD redundancy scores suggest the encoder generalizes while the decoder is domain-specific, motivating decoder-only re-distillation for new domains.
+- **Single-core inference (this branch).** `main` runs the operator graph on one Xtensa LX7 core, leaving the second idle. The [`multicore`](../../tree/multicore) branch spreads each heavy conv/depthwise layer across both cores for ~2× lower latency with bit-identical output; `main` stays single-core as the simpler, lower-stack baseline.
+- **Fixed-domain deployment.** Nano-U is re-trained from scratch per domain. SVD redundancy scores suggest the encoder generalizes while the decoder is domain-specific, motivating decoder-only re-distillation for new domains.
 
 ---
 
@@ -290,7 +288,4 @@ If you use Nano-U or the TinyAgri dataset, please cite:
 
 ## License
 
-This project is dual-licensed under the **MIT License** and the **Apache License 2.0**.  
-You may use it under the terms of either license, at your option.
-
-See [LICENSE](LICENSE) for the full text of both licenses.
+Dual-licensed under the **MIT License** and the **Apache License 2.0** — use it under either, at your option. See [LICENSE](LICENSE) for the full text.
