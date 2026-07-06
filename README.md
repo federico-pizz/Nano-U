@@ -26,7 +26,7 @@ This branch pairs with the `multicore` branch of the [MicroFlow fork](https://gi
 | Inference latency | 830 ms (~1.2 FPS) | **425 ms (~2.35 FPS)** |
 | Peak internal RAM | 281 KB | **147.5 KB** |
 | Stack headroom | — | 130.7 KB |
-| Power consumption | 470 mW | 470 mW |
+| Power consumption | 470 mW | — |
 
 Peak RAM measured via stack painting (hardware high-water mark) over 50 iterations. Latency measured with both Xtensa LX7 cores active.
 
