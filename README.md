@@ -273,14 +273,11 @@ All experiments use an **ESP32-S3-CAM** (dual-core Xtensa LX7 @ 240 MHz, 512 KB 
 If you use Nano-U or the TinyAgri dataset, please cite:
 
 ```bibtex
-@misc{pizzolato2026nanou,
+@article{pizzolato2026nanou,
       title={Nano-U: Efficient Terrain Segmentation for Tiny Robot Navigation}, 
       author={Federico Pizzolato and Francesco Pasti and Nicola Bellotto},
       year={2026},
-      eprint={2605.10210},
-      archivePrefix={arXiv},
-      primaryClass={cs.RO},
-      url={https://arxiv.org/abs/2605.10210}, 
+      booktitle={Towards Autonomous Robotic Systems}
 }
 ```
 
