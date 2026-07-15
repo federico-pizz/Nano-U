@@ -469,7 +469,7 @@ impl OnboardCamera {
         // Wait for the frame to land: `is_done()` goes true once the DMA buffer
         // fills with one full frame. We start mid-frame, so completion takes up to
         // ~2 frame times; poll in small steps up to a cap. The loop is
-        // inference-bound (~830 ms/frame), so this wait never gates throughput.
+        // inference-bound (~426 ms/frame), so this wait never gates throughput.
         const CAPTURE_POLL_STEP_MS: u32 = 5;
         const CAPTURE_TIMEOUT_MS: u32 = 250;
         let mut waited = 0;

@@ -1,7 +1,7 @@
 # Nano-U · Multicore
 
 > **The dual-core inference variant of [Nano-U](../../tree/main).**
-> Same 3,357-parameter model, same accuracy — but each heavy layer is split across both Xtensa LX7 cores for **~2× lower latency: 2.35 FPS on an ESP32-S3.**
+> Same 3,357-parameter model, same accuracy — but each heavy layer is split across both Xtensa LX7 cores for **~27% lower latency: ~2.35 FPS on an ESP32-S3** (426 ms vs 581 ms single-core).
 
 [![Rust](https://img.shields.io/badge/rust-esp--rs-red.svg)](https://esp-rs.github.io/book/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -23,7 +23,7 @@ This branch pairs with the `multicore` branch of the [MicroFlow fork](https://gi
 
 | Metric | Single-core (`main`) | **Multicore (this branch)** |
 |:---|:---:|:---:|
-| Inference latency | 830 ms (~1.2 FPS) | **425 ms (~2.35 FPS)** |
+| Inference latency | 581 ms (~1.7 FPS) | **426 ms (~2.35 FPS)** |
 | Peak internal RAM | 281 KB | **147.5 KB** |
 | Stack headroom | — | 130.7 KB |
 | Power consumption | 470 mW | — |
