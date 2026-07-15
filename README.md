@@ -1,7 +1,7 @@
 # Nano-U
 
 > **Binary terrain segmentation in 3,357 parameters — small enough to run bare-metal on a $10 microcontroller.**
-> Distilled with quantization awareness · Deployed in pure Rust · 1.2 FPS on an ESP32-S3, no ML accelerator.
+> Distilled with quantization awareness · Deployed in pure Rust · 1.7 FPS on an ESP32-S3, no ML accelerator.
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 [![TensorFlow](https://img.shields.io/badge/TensorFlow-2.x-orange.svg)](https://www.tensorflow.org/)
@@ -19,7 +19,7 @@ Two ideas make it fit:
 - **Quantization-Aware Distillation (QAD)** — a single-pass regime that fuses knowledge distillation from a full-precision BU-Net teacher with INT8 fake-quantization from epoch one.
 - **A compile-time Rust engine** — a [fork of MicroFlow](https://github.com/federico-pizz/microflow-rs) that resolves the whole operator graph at build time: no heap allocator, no dynamic dispatch, no interpreter.
 
-> **⚡ Want more speed?** The [`multicore`](../../tree/multicore) branch splits inference across both Xtensa cores for **~2× lower latency** (2.35 FPS) with bit-identical output. See [Branches](#branches).
+> **⚡ Want more speed?** The [`multicore`](../../tree/multicore) branch splits inference across both Xtensa cores for **~27% lower latency** (~2.35 FPS vs ~1.7 FPS) with bit-identical output. See [Branches](#branches).
 
 ---
 
@@ -57,7 +57,7 @@ The QAD loop: fake-quantization nodes are injected from epoch one, so the optimi
 | Parameters | 3,357 (INT8) |
 | Model size | 33 KB |
 | Peak internal RAM | 281 KB |
-| Inference latency | 830 ms (~1.2 FPS) |
+| Inference latency | 581 ms (~1.7 FPS) |
 | Power consumption | 470 mW |
 
 Peak RAM measured via stack painting (hardware high-water mark). Power measured at the 5V USB rail, inclusive of LDO, OV2640 camera, and USB-UART bridge.
@@ -98,8 +98,8 @@ Two deployment pipelines live in parallel branches, each paired with a matching 
 
 | Branch | Cores | Latency | Notes |
 |:---|:---:|:---:|:---|
-| [`main`](../../tree/main) (this one) | 1 | 830 ms (~1.2 FPS) | Simpler, lower-stack single-core baseline |
-| [`multicore`](../../tree/multicore) | 2 | 425 ms (~2.35 FPS) | Splits each heavy layer across both Xtensa LX7 cores; bit-identical output |
+| [`main`](../../tree/main) (this one) | 1 | 581 ms (~1.7 FPS) | Simpler, lower-stack single-core baseline |
+| [`multicore`](../../tree/multicore) | 2 | 426 ms (~2.35 FPS) | Splits each heavy layer across both Xtensa LX7 cores; bit-identical output |
 
 The training/evaluation stack is identical on both — only the firmware inference path differs. See [`firmware/README.md`](firmware/README.md) for the build details.
 
@@ -263,7 +263,7 @@ All experiments use an **ESP32-S3-CAM** (dual-core Xtensa LX7 @ 240 MHz, 512 KB 
 
 ## Limitations
 
-- **Single-core inference (this branch).** `main` runs the operator graph on one Xtensa LX7 core, leaving the second idle. The [`multicore`](../../tree/multicore) branch spreads each heavy conv/depthwise layer across both cores for ~2× lower latency with bit-identical output; `main` stays single-core as the simpler, lower-stack baseline.
+- **Single-core inference (this branch).** `main` runs the operator graph on one Xtensa LX7 core, leaving the second idle. The [`multicore`](../../tree/multicore) branch spreads each heavy conv/depthwise layer across both cores for ~27% lower latency with bit-identical output; `main` stays single-core as the simpler, lower-stack baseline.
 - **Fixed-domain deployment.** Nano-U is re-trained from scratch per domain. SVD redundancy scores suggest the encoder generalizes while the decoder is domain-specific, motivating decoder-only re-distillation for new domains.
 
 ---
