@@ -4,7 +4,7 @@ Two paths, one program:
 
   default          Quantization-Aware Distillation (QAD).
                    Phase 1 - train the teacher (bu_net).
-                   Phase 2 - train the student (nano_u) by knowledge distillation
+                   Phase 2 - train the student (nanou) by knowledge distillation
                              with QAT applied from epoch 1.
                    Phase 3 - export the student to INT8 TFLite + quant_params.json.
                    Phase 4 - evaluate teacher (float), student (FP32) and
@@ -18,7 +18,7 @@ Usage:
     python scripts/train.py
     python scripts/train.py --preset tinyagri
     python scripts/train.py --no-distill --model bu_net
-    python scripts/train.py --no-distill --model nano_u --preset tinyagri
+    python scripts/train.py --no-distill --model nanou --preset tinyagri
 """
 
 import argparse
@@ -59,7 +59,7 @@ def run_qad(config_path, output_dir):
     # Inject the teacher path resolved at runtime so the student always distils
     # from the model trained in Phase 1, regardless of what is in the YAML.
     student_res = run_training(
-        "nano_u", config_path, output_dir,
+        "nanou", config_path, output_dir,
         config_overrides={"teacher_weights": teacher_res["model_path"]},
     )
 
@@ -268,7 +268,7 @@ def main():
                         help="Train one model without knowledge distillation")
     # Free-form rather than a choice list: this is the config section name that
     # run_training passes through as the experiment name, so a config may define
-    # sections beyond bu_net/nano_u.
+    # sections beyond bu_net/nanou.
     parser.add_argument("--model", default=None,
                         help="With --no-distill: the model/experiment section to train")
     args = parser.parse_args()

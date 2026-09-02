@@ -218,7 +218,7 @@ def main():
 
     script_dir = Path(__file__).parent.resolve()
     repo_root = script_dir.parent
-    out_dir = repo_root / 'results' / 'hardware' / 'nano_u'
+    out_dir = repo_root / 'results' / 'hardware' / 'nanou'
     out_dir.mkdir(parents=True, exist_ok=True)
     log_file = out_dir / 'stack_log.txt'
 

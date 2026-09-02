@@ -10,7 +10,7 @@ calibration image directory, the input shape and the normalization constants.
 
 Usage:
     python scripts/export.py
-    python scripts/export.py models/TinyAgri/nano_u.h5 models/TinyAgri/nano_u.tflite \
+    python scripts/export.py models/TinyAgri/nanou.h5 models/TinyAgri/nanou.tflite \
         --preset tinyagri
 """
 
@@ -23,8 +23,8 @@ from nanou.config import preset_path
 
 def main():
     parser = argparse.ArgumentParser(description="Export a Keras model to INT8 TFLite")
-    parser.add_argument("model_path", nargs="?", default="models/nano_u.h5")
-    parser.add_argument("output_path", nargs="?", default="models/nano_u.tflite")
+    parser.add_argument("model_path", nargs="?", default="models/nanou.h5")
+    parser.add_argument("output_path", nargs="?", default="models/nanou.tflite")
     parser.add_argument("--preset", default="tinyagri",
                         help="config preset from config/presets/ (default: tinyagri)")
     parser.add_argument("--config", default=None,

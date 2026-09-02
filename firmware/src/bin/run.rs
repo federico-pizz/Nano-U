@@ -22,11 +22,11 @@ esp_bootloader_esp_idf::esp_app_desc!();
 use microflow::buffer::{Buffer2D, Buffer4D};
 use microflow::model;
 
-use nano_u_esp::{build_quant_luts, preprocess_rgb, IMG_H, IMG_SIZE, IMG_W, NUM_IMAGES};
+use nanou_esp::{build_quant_luts, preprocess_rgb, IMG_H, IMG_SIZE, IMG_W, NUM_IMAGES};
 
 // Model is copied from ../models/<MODEL_NAME>.tflite by build.rs (Python pipeline output).
 // Input: 60x80x3, Output: 60x80x1
-#[model("models/nano_u.tflite")]
+#[model("models/nanou.tflite")]
 struct UNet;
 
 /// Delay between successive inferences. Change this to set the run cadence.

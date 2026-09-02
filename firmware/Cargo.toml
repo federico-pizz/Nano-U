@@ -1,6 +1,6 @@
 [package]
 edition = "2024"
-name = "nano_u_esp"
+name = "nanou_esp"
 rust-version = "1.88"
 version = "0.1.0"
 

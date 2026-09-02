@@ -20,7 +20,7 @@ augment: true
 epochs: 200
 
 # Student - the model that ships to the MCU.
-nano_u:
+nanou:
   filters: [4, 8, 16]
   bottleneck: 16
   decoder_filters: [16, 8, 4]

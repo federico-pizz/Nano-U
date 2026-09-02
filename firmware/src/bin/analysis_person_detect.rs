@@ -10,7 +10,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 use microflow::buffer::{Buffer2D, Buffer4D};
 use microflow::model;
 
-use nano_u_esp::{measure_stack, paint_stack, stack_total};
+use nanou_esp::{measure_stack, paint_stack, stack_total};
 
 // Model: person_detect.tflite
 // Input: 96x96x1 (grayscale), Output: 1x1x2 (person / no person logits)

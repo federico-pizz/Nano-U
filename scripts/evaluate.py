@@ -12,10 +12,10 @@ Two modes:
             exists.
 
 Usage:
-    python scripts/evaluate.py                                     # nano_u, test split
+    python scripts/evaluate.py                                     # nanou, test split
     python scripts/evaluate.py bu_net --preset botanicgarden
-    python scripts/evaluate.py nano_u --split val --threshold 0.6
-    python scripts/evaluate.py nano_u --info
+    python scripts/evaluate.py nanou --split val --threshold 0.6
+    python scripts/evaluate.py nanou --info
 """
 
 import argparse
@@ -84,7 +84,7 @@ def show_info(model_name, config_path):
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluate a model, or report its structure')
-    parser.add_argument('model', nargs='?', default='nano_u',
+    parser.add_argument('model', nargs='?', default='nanou',
                         help='Model to evaluate (.h5 or .tflite basename without extension)')
     parser.add_argument("--preset", default="tinyagri",
                         help="config preset from config/presets/ (default: tinyagri)")

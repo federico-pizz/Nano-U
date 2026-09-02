@@ -179,8 +179,8 @@ INT8 TFLite models for both domains ship in the repo under `models/`:
 
 ```
 models/
-|-- BotanicGarden/nano_u.tflite
-+-- TinyAgri/nano_u.tflite
+|-- BotanicGarden/nanou.tflite
++-- TinyAgri/nanou.tflite
 ```
 
 You can evaluate these directly without training from scratch (see [Evaluate](#evaluate)).
@@ -212,15 +212,15 @@ python scripts/train.py --preset tinyagri
 
 ```bash
 python scripts/train.py --no-distill --model bu_net --preset tinyagri   # Teacher
-python scripts/train.py --no-distill --model nano_u --preset tinyagri   # Student
+python scripts/train.py --no-distill --model nanou --preset tinyagri   # Student
 ```
 
 ### Evaluate
 
 ```bash
-python scripts/evaluate.py nano_u --preset tinyagri            # held-out test split
-python scripts/evaluate.py nano_u --preset tinyagri --split val --threshold 0.6
-python scripts/evaluate.py nano_u --preset tinyagri --info     # parameter counts, layers, summary
+python scripts/evaluate.py nanou --preset tinyagri            # held-out test split
+python scripts/evaluate.py nanou --preset tinyagri --split val --threshold 0.6
+python scripts/evaluate.py nanou --preset tinyagri --info     # parameter counts, layers, summary
 ```
 
 Reports mIoU, Dice, precision/recall and the F0.5/F1/F2 family, plus a precision-recall curve and a metric-vs-threshold sweep. When frames carry sequence ids it adds a per-sequence variance breakdown (plot + `*_report.json`). Outputs land in `results/<dataset>/<model>/`. INT8 TFLite and float Keras models go through the same forward path.
@@ -241,7 +241,7 @@ python scripts/sweep.py --preset tinyagri --k 4 --epochs 200 \
 ### On-Device Evaluation
 
 ```bash
-python scripts/device_eval.py nano_u --preset tinyagri
+python scripts/device_eval.py nanou --preset tinyagri
 ```
 
 ### MCU Deployment
@@ -287,8 +287,8 @@ Nano-U/
 |   |-- src/control.rs                # Pure navigation policy
 |   +-- build.rs                      # Compile-time quantization param extraction + image packing
 |-- models/
-|   |-- BotanicGarden/nano_u.tflite
-|   +-- TinyAgri/nano_u.tflite
+|   |-- BotanicGarden/nanou.tflite
+|   +-- TinyAgri/nanou.tflite
 +-- data/
     |-- BotanicGarden/
     +-- TinyAgri/

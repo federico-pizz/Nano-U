@@ -245,7 +245,7 @@ def _train_teacher_job(job: Dict[str, Any]):
 
 def _train_student_job(job: Dict[str, Any]):
     """Train + evaluate one (config, fold) Nano-U student. Returns (ci, fi, metrics)."""
-    res = run_training("nano_u", job["config_path"], job["run_dir"],
+    res = run_training("nanou", job["config_path"], job["run_dir"],
                        config_overrides={**job["fold_lists"], **job["cfg"],
                                          "models_dir": job["models_dir"],
                                          "epochs": job["epochs"],

@@ -22,7 +22,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=TEST_IMG_DIR");
 
     // -- Model Selection ----------------------------------------------------------
-    let model_name = env::var("MODEL_NAME").unwrap_or_else(|_| "nano_u".to_string());
+    let model_name = env::var("MODEL_NAME").unwrap_or_else(|_| "nanou".to_string());
     println!("cargo:rerun-if-env-changed=MODEL_NAME");
     println!("cargo:warning=Building for model: {}", model_name);
 
@@ -47,20 +47,20 @@ fn main() {
         let std  = extract_json_array_f64(&raw, "normalization", "std");
 
         // Use bitwise float representations to avoid parser errors with scientific notation
-        println!("cargo:rustc-env=NANO_U_INPUT_SCALE_BITS={}", (input_scale as f32).to_bits());
-        println!("cargo:rustc-env=NANO_U_INPUT_ZERO_POINT={}", input_zero_point);
-        println!("cargo:rustc-env=NANO_U_OUTPUT_SCALE_BITS={}", (output_scale as f32).to_bits());
-        println!("cargo:rustc-env=NANO_U_OUTPUT_ZERO_POINT={}", output_zero_point);
+        println!("cargo:rustc-env=NANOU_INPUT_SCALE_BITS={}", (input_scale as f32).to_bits());
+        println!("cargo:rustc-env=NANOU_INPUT_ZERO_POINT={}", input_zero_point);
+        println!("cargo:rustc-env=NANOU_OUTPUT_SCALE_BITS={}", (output_scale as f32).to_bits());
+        println!("cargo:rustc-env=NANOU_OUTPUT_ZERO_POINT={}", output_zero_point);
 
-        println!("cargo:rustc-env=NANO_U_IMG_H={img_h}");
-        println!("cargo:rustc-env=NANO_U_IMG_W={img_w}");
+        println!("cargo:rustc-env=NANOU_IMG_H={img_h}");
+        println!("cargo:rustc-env=NANOU_IMG_W={img_w}");
 
-        println!("cargo:rustc-env=NANO_U_MEAN_R_BITS={}", (mean[0] as f32).to_bits());
-        println!("cargo:rustc-env=NANO_U_MEAN_G_BITS={}", (mean[1] as f32).to_bits());
-        println!("cargo:rustc-env=NANO_U_MEAN_B_BITS={}", (mean[2] as f32).to_bits());
-        println!("cargo:rustc-env=NANO_U_STD_R_BITS={}",  (std[0] as f32).to_bits());
-        println!("cargo:rustc-env=NANO_U_STD_G_BITS={}",  (std[1] as f32).to_bits());
-        println!("cargo:rustc-env=NANO_U_STD_B_BITS={}",  (std[2] as f32).to_bits());
+        println!("cargo:rustc-env=NANOU_MEAN_R_BITS={}", (mean[0] as f32).to_bits());
+        println!("cargo:rustc-env=NANOU_MEAN_G_BITS={}", (mean[1] as f32).to_bits());
+        println!("cargo:rustc-env=NANOU_MEAN_B_BITS={}", (mean[2] as f32).to_bits());
+        println!("cargo:rustc-env=NANOU_STD_R_BITS={}",  (std[0] as f32).to_bits());
+        println!("cargo:rustc-env=NANOU_STD_G_BITS={}",  (std[1] as f32).to_bits());
+        println!("cargo:rustc-env=NANOU_STD_B_BITS={}",  (std[2] as f32).to_bits());
         
         println!(
             "cargo:warning=Quant params loaded: input(scale={}, zp={}, {}x{}) output(scale={}, zp={})",
@@ -74,7 +74,7 @@ fn main() {
     }
 
     let src_model = models_dir.join(format!("{}.tflite", model_name));
-    let dst_model = manifest_dir.join("models").join("nano_u.tflite"); // Keep same destination name for simplicity in code
+    let dst_model = manifest_dir.join("models").join("nanou.tflite"); // Fixed destination name, so the #[model] paths below never vary
     fs::create_dir_all(dst_model.parent().unwrap()).expect("Cannot create models/ dir");
     if src_model.exists() {
         fs::copy(&src_model, &dst_model).unwrap_or_else(|e| {
@@ -96,11 +96,11 @@ fn main() {
     let mut bin_file = fs::File::create(&bin_path).expect("Cannot create input_images.bin");
     
     let target_idx = env::var("TARGET_IMG_IDX").unwrap_or("1".to_string());
-    println!("cargo:rustc-env=NANO_U_TARGET_IMG_IDX={}", target_idx);
+    println!("cargo:rustc-env=NANOU_TARGET_IMG_IDX={}", target_idx);
     println!("cargo:rerun-if-env-changed=TARGET_IMG_IDX");
 
-    let img_h: u32 = env::var("NANO_U_IMG_H").unwrap_or("60".to_string()).parse().unwrap();
-    let img_w: u32 = env::var("NANO_U_IMG_W").unwrap_or("80".to_string()).parse().unwrap();
+    let img_h: u32 = env::var("NANOU_IMG_H").unwrap_or("60".to_string()).parse().unwrap();
+    let img_w: u32 = env::var("NANOU_IMG_W").unwrap_or("80".to_string()).parse().unwrap();
 
     let mut count = 0usize;
     if test_img_dir.exists() {
@@ -139,7 +139,7 @@ fn main() {
     }
 
     println!("cargo:warning=Packed {} images into input_images.bin", count);
-    println!("cargo:rustc-env=NANO_U_NUM_IMAGES={}", count);
+    println!("cargo:rustc-env=NANOU_NUM_IMAGES={}", count);
 }
 
 // -- Lightweight JSON helpers -----

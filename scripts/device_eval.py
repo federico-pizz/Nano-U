@@ -48,7 +48,7 @@ def decode_hex_row(hex_str: str) -> np.ndarray:
     return np.frombuffer(bytes.fromhex(hex_str), dtype="<f4")
 
 
-def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/presets/tinyagri.yaml"):
+def run_inference_on_device(repo_root, model_name="nanou", config_path="config/presets/tinyagri.yaml"):
     print(f"[1/3] Building inference binary for {model_name}...")
     
     config = load_config(str(repo_root / config_path))
@@ -153,7 +153,7 @@ def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/
         
     return {"img_data": img_data, "latency_us": latency_us, "stats": stats}
 
-def evaluate_esp_outputs(device_result, repo_root, model_name="nano_u", config_path="config/presets/tinyagri.yaml", threshold=0.5, samples_to_plot=6):
+def evaluate_esp_outputs(device_result, repo_root, model_name="nanou", config_path="config/presets/tinyagri.yaml", threshold=0.5, samples_to_plot=6):
     img_data_dict = device_result["img_data"]
     latency_us = device_result.get("latency_us", {})
     config = load_config(str(repo_root / config_path))
@@ -300,7 +300,7 @@ def evaluate_esp_outputs(device_result, repo_root, model_name="nano_u", config_p
 
 def main():
     parser = argparse.ArgumentParser(description='Benchmark Nano-U model on ESP32 hardware')
-    parser.add_argument('model', default='nano_u', nargs='?', help='Model to benchmark')
+    parser.add_argument('model', default='nanou', nargs='?', help='Model to benchmark')
     parser.add_argument("--preset", default="tinyagri",
                         help="config preset from config/presets/ (default: tinyagri)")
     parser.add_argument("--config", default=None,

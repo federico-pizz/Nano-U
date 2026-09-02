@@ -19,7 +19,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 use microflow::buffer::{Buffer2D, Buffer4D};
 use microflow::model;
 
-use nano_u_esp::{
+use nanou_esp::{
     build_quant_luts,
     camera::{OnboardCamera, FRAME_BYTES},
     control::{decide, Policy, Steer},
@@ -28,7 +28,7 @@ use nano_u_esp::{
 
 // Model copied from ../models/<MODEL_NAME>.tflite by build.rs.
 // Input: 60x80x3, Output: 60x80x1.
-#[model("models/nano_u.tflite")]
+#[model("models/nanou.tflite")]
 struct UNet;
 
 /// Drivable probability threshold (matches the firmware/host convention).

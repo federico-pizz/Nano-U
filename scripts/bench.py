@@ -4,7 +4,7 @@ This is the number that contextualises the on-device figure: the same model,
 measured on the host, so the MCU latency has something to be compared against.
 
 Usage:
-    python scripts/bench.py nano_u
+    python scripts/bench.py nanou
     python scripts/bench.py bu_net --preset botanicgarden
 """
 
@@ -18,7 +18,7 @@ from nanou.config import preset_path
 def main():
     parser = argparse.ArgumentParser(
         description='Benchmark Nano-U or BU-Net model inference speed')
-    parser.add_argument('model', choices=['bu_net', 'nano_u'], help='Model to benchmark')
+    parser.add_argument('model', choices=['bu_net', 'nanou'], help='Model to benchmark')
     parser.add_argument("--preset", default="tinyagri",
                         help="config preset from config/presets/ (default: tinyagri)")
     parser.add_argument("--config", default=None,

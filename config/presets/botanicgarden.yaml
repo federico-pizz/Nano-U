@@ -18,7 +18,7 @@ learning_rate: 1.0e-3
 augment: true
 epochs: 200
 
-nano_u:
+nanou:
   filters: [4, 8, 16]
   bottleneck: 16
   decoder_filters: [16, 8, 4]

@@ -25,7 +25,7 @@ use esp_println::println;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-use nano_u_esp::{
+use nanou_esp::{
     camera::{downscale_rgb888, OnboardCamera, CAM_H, CAM_W, FRAME_BYTES},
     IMG_H, IMG_W,
 };
