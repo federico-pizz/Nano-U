@@ -29,6 +29,7 @@ from pathlib import Path
 from src.pipeline import run_training, export_int8
 from src.utils.config import load_config
 from nanou.config import preset_path
+from nanou.preflight import PreflightError, require_dataset
 
 
 def _warn_firmware_dependency(quant_res):
@@ -281,6 +282,12 @@ def main():
     config_path = args.config or str(preset_path(args.preset))
     config = load_config(config_path)
     output_dir = config.get("data", {}).get("paths", {}).get("results_dir", "results/")
+
+    try:
+        require_dataset(config["data"]["paths"]["processed"]["root"], preset=args.preset)
+    except PreflightError as e:
+        print(f"\n{e}", file=sys.stderr)
+        sys.exit(1)
 
     if args.no_distill:
         run_single(args.model, config_path, output_dir)

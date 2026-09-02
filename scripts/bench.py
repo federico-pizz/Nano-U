@@ -12,7 +12,9 @@ import argparse
 import sys
 
 from src.benchmarks import run_benchmarks
+from src.utils.config import load_config
 from nanou.config import preset_path
+from nanou.preflight import PreflightError, require_keras_model
 
 
 def main():
@@ -29,6 +31,12 @@ def main():
     print(f"{'='*55}")
     print(f"BENCHMARKING MODEL: {args.model}")
     print(f"{'='*55}")
+
+    try:
+        require_keras_model(load_config(config_path)['data']['paths']['models_dir'],
+                            args.model, preset=args.preset)
+    except PreflightError as e:
+        raise SystemExit(f'\n{e}')
 
     results = run_benchmarks(args.model, config_path=config_path)
     if "error" in results:

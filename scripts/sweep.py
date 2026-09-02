@@ -38,6 +38,7 @@ from src.data import make_dataset, sorted_by_frame, sequence_group, grouped_kfol
 from src.pipeline import run_training
 from src.utils.config import load_config
 from nanou.config import preset_path
+from nanou.preflight import PreflightError, require_dataset
 from src.utils import get_project_root
 from src.evaluate import run_inference, compute_segmentation_metrics
 
@@ -458,6 +459,10 @@ def main():
 
     config_path = args.config or str(preset_path(args.preset))
     config = load_config(config_path)
+    try:
+        require_dataset(config["data"]["paths"]["processed"]["root"], preset=args.preset)
+    except PreflightError as e:
+        raise SystemExit(f"\n{e}")
     output = args.output or os.path.join(
         config.get("data", {}).get("paths", {}).get("results_dir", "results"), "cv")
     ce_options = [c == "on" for c in args.ce]

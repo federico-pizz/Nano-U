@@ -25,6 +25,7 @@ from src.evaluate import evaluate_and_plot
 from src.utils import get_project_root
 from src.utils.config import load_config
 from nanou.config import preset_path
+from nanou.preflight import PreflightError, require_keras_model, require_model
 
 
 def show_info(model_name, config_path):
@@ -47,13 +48,7 @@ def show_info(model_name, config_path):
     if not os.path.isabs(models_dir):
         models_dir = os.path.join(root_dir, models_dir)
 
-    candidates = [os.path.join(models_dir, f"{model_name}{ext}") for ext in (".h5", ".keras")]
-    model_path = next((c for c in candidates if os.path.exists(c)), None)
-    if model_path is None:
-        raise FileNotFoundError(
-            f"No Keras model for {model_name!r} in {models_dir}. "
-            f"Train one with: python scripts/train.py --config {config_path}"
-        )
+    model_path = str(require_keras_model(models_dir, model_name))
 
     # quantize_scope + PadToMatch are both required: a QAT-wrapped checkpoint
     # carries tfmot wrapper layers, and every architecture here carries PadToMatch.
@@ -98,6 +93,12 @@ def main():
                         help='Report model structure and parameter counts instead of evaluating')
     args = parser.parse_args()
     config_path = args.config or str(preset_path(args.preset))
+
+    try:
+        require_model(load_config(config_path)['data']['paths']['models_dir'],
+                      args.model, preset=args.preset)
+    except PreflightError as e:
+        raise SystemExit(f"\n{e}")
 
     if args.info:
         show_info(args.model, config_path)

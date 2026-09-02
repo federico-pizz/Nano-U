@@ -17,6 +17,11 @@ from src.data import make_dataset, sorted_by_frame
 from src.utils.config import load_config
 from src.evaluate import dice_coef, bce_loss_from_logits, focal_loss_from_logits, sigmoid
 from nanou.config import preset_path
+from nanou.preflight import (
+    PreflightError,
+    require_esp_toolchain,
+    require_tflite_model,
+)
 
 import matplotlib
 matplotlib.use('Agg')
@@ -307,6 +312,12 @@ def main():
                         help="explicit config file, used instead of --preset")
     args = parser.parse_args()
     config_path = args.config or str(preset_path(args.preset))
+    try:
+        require_esp_toolchain()
+        require_tflite_model(load_config(config_path)['data']['paths']['models_dir'],
+                             args.model, preset=args.preset)
+    except PreflightError as e:
+        raise SystemExit(f'\n{e}')
 
     repo_root = Path(__file__).parent.parent.resolve()
     print("==========================================")

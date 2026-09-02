@@ -16,9 +16,11 @@ Usage:
 
 import argparse
 import sys
+from pathlib import Path
 
 from src.quantize_model import quantize_model
 from nanou.config import preset_path
+from nanou.preflight import PreflightError
 
 
 def main():
@@ -32,6 +34,13 @@ def main():
     args = parser.parse_args()
 
     config_path = args.config or str(preset_path(args.preset))
+
+    if not Path(args.model_path).exists():
+        raise SystemExit(
+            f"\nNo trained model at {args.model_path}\n\n"
+            f"  Fix it with:  python scripts/train.py --preset {args.preset}\n"
+        )
+
     ok = quantize_model(args.model_path, args.output_path, config_path=config_path)
     if not ok:
         sys.exit(1)
