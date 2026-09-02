@@ -1,9 +1,9 @@
 """Ablation-toggle mechanics (#7 CE-loss on/off, #8 augmentation on/off).
 
 These pin the behavior the CV sweep relies on:
-  * CE off is exactly ``alpha=1.0`` in the KD loss ``(1-alpha)·CE + alpha·distill``;
+  * CE off is exactly ``alpha=1.0`` in the KD loss ``(1-alpha)*CE + alpha*distill``;
   * augmentation off is deterministic, augmentation on changes pixels.
-No production code changes are needed — these lock the existing mechanics.
+No production code changes are needed - these lock the existing mechanics.
 """
 
 import numpy as np
@@ -24,10 +24,10 @@ def _student_teacher():
     return s, t
 
 
-# ── #7: CE-loss on/off via alpha ──────────────────────────────────────────────
+# -- #7: CE-loss on/off via alpha ----------------------------------------------
 
 def test_ce_off_alpha_one_total_equals_distillation(img_tensor, mask_tensor):
-    """alpha=1.0 → CE coefficient (1-alpha)=0, so total loss == distillation loss."""
+    """alpha=1.0 -> CE coefficient (1-alpha)=0, so total loss == distillation loss."""
     student, teacher = _student_teacher()
     opt = keras.optimizers.Adam(1e-3)
     student(img_tensor)  # materialize variables
@@ -39,7 +39,7 @@ def test_ce_off_alpha_one_total_equals_distillation(img_tensor, mask_tensor):
 
 
 def test_ce_on_contributes_to_total(img_tensor, mask_tensor):
-    """alpha=0.5 → total == 0.5·CE + 0.5·distill, distinct from distill alone."""
+    """alpha=0.5 -> total == 0.5*CE + 0.5*distill, distinct from distill alone."""
     student, teacher = _student_teacher()
     opt = keras.optimizers.Adam(1e-3)
     student(img_tensor)  # materialize variables
@@ -51,18 +51,18 @@ def test_ce_on_contributes_to_total(img_tensor, mask_tensor):
     assert abs(float(out["loss"]) - float(out["distillation_loss"])) > 1e-6
 
 
-# ── conservative Tversky supervised loss ──────────────────────────────────────
+# -- conservative Tversky supervised loss --------------------------------------
 
 def test_tversky_penalizes_false_positive_more_than_false_negative():
-    """alpha_fp>beta_fn ⇒ a false 'path' pixel costs more than a missed one.
+    """alpha_fp>beta_fn => a false 'path' pixel costs more than a missed one.
 
     This is the safety property: for path=1, a false positive is a potential
     collision, a false negative is just over-caution. Construct a single-FP case
     and a single-FN case with everything else correct and assert FP loss > FN.
     """
-    # logits → high positive ≈ predict path, high negative ≈ predict non-path.
+    # logits -> high positive ~ predict path, high negative ~ predict non-path.
     # Both cases hold TP=1 fixed with exactly one error, so the only difference
-    # is FP vs FN — an apples-to-apples comparison of the two penalties.
+    # is FP vs FN - an apples-to-apples comparison of the two penalties.
     HI, LO = 10.0, -10.0
     # Case A: TP=1, one false positive (truth 0, predicted path).
     y_fp = tf.constant([[1.0, 0.0]])
@@ -76,7 +76,7 @@ def test_tversky_penalizes_false_positive_more_than_false_negative():
 
 
 def test_tversky_symmetric_at_half_treats_fp_and_fn_equally():
-    """alpha_fp=beta_fn=0.5 (Dice-equivalent) ⇒ FP and FN cost the same."""
+    """alpha_fp=beta_fn=0.5 (Dice-equivalent) => FP and FN cost the same."""
     HI, LO = 10.0, -10.0
     y_fp = tf.constant([[1.0, 0.0]])
     p_fp = tf.constant([[HI, HI]])
@@ -87,7 +87,7 @@ def test_tversky_symmetric_at_half_treats_fp_and_fn_equally():
     assert abs(fp_loss - fn_loss) < 1e-4
 
 
-# ── #8: augmentation on/off ───────────────────────────────────────────────────
+# -- #8: augmentation on/off ---------------------------------------------------
 
 def _first_batch_imgs(ds):
     for imgs, _ in ds.take(1):
@@ -99,7 +99,7 @@ def test_augment_false_is_deterministic(tmp_png_dataset):
     kw = dict(batch_size=4, shuffle=False, augment=False, target_size=(H, W))
     a = _first_batch_imgs(make_dataset(imgs, masks, **kw))
     b = _first_batch_imgs(make_dataset(imgs, masks, **kw))
-    assert np.allclose(a, b)  # no randomness → identical across builds
+    assert np.allclose(a, b)  # no randomness -> identical across builds
 
 
 def test_augment_true_changes_pixels(tmp_png_dataset):

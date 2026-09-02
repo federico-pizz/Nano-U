@@ -1,4 +1,4 @@
-"""Unit tests for src/nas.py — compute_layer_redundancy."""
+"""Unit tests for src/nas.py - compute_layer_redundancy."""
 
 import tensorflow as tf
 

@@ -14,7 +14,7 @@ from src.data import (
 )
 
 
-# ── grouped_kfold (leakage-safe folds) ───────────────────────────────────────
+# -- grouped_kfold (leakage-safe folds) ---------------------------------------
 
 def _groups_from(seqs_with_counts):
     g = []
@@ -56,7 +56,7 @@ def test_grouped_kfold_raises_on_k_lt_2():
         grouped_kfold(_groups_from([("a", 2), ("b", 2)]), k=1)
 
 
-# ── sequence_group (leakage-safe CV grouping) ────────────────────────────────
+# -- sequence_group (leakage-safe CV grouping) --------------------------------
 
 def test_sequence_group_tinyagri():
     assert sequence_group("d6_s1_frame100.png") == "d6_s1"
@@ -82,7 +82,7 @@ def test_sequence_group_keeps_distinct_scenes_apart():
     assert a != b  # different scenes must not collapse into one CV group
 
 
-# ── sorted_by_frame ──────────────────────────────────────────────────────────
+# -- sorted_by_frame ----------------------------------------------------------
 
 def test_sorted_by_frame_numeric_not_lexicographic():
     files = ["frame_10.png", "frame_2.png", "frame_9.png"]
@@ -102,7 +102,7 @@ def test_sorted_by_frame_with_path_prefix():
     assert result[1].endswith("020.png")
 
 
-# ── make_dataset ─────────────────────────────────────────────────────────────
+# -- make_dataset -------------------------------------------------------------
 
 def test_make_dataset_output_shape(tmp_png_dataset):
     imgs, masks = tmp_png_dataset["imgs"], tmp_png_dataset["masks"]
@@ -151,7 +151,7 @@ def test_make_dataset_unknown_augment_kwarg_raises(tmp_png_dataset):
                      target_size=(60, 80), nonexistent_param=0.5)
 
 
-# ── image ↔ mask alignment ───────────────────────────────────────────────────
+# -- image <-> mask alignment ---------------------------------------------------
 #
 # make_dataset must pair each image with the mask sharing its basename, NOT by
 # position. Independent sorting + positional zipping is fragile because
@@ -187,7 +187,7 @@ def _build_pair_dir(tmp_path, names, ids):
 def _recover_pairs(ds):
     """Recover per-item (img_id, mask_id) from the solid pixel values.
 
-    Built with mean=0, std=1 so a value v survives as v/255; ×255 recovers v.
+    Built with mean=0, std=1 so a value v survives as v/255; x255 recovers v.
     """
     pairs = []
     for img_b, mask_b in ds:
@@ -199,10 +199,10 @@ def _recover_pairs(ds):
 
 
 def test_make_dataset_pairs_by_basename_not_position(tmp_path):
-    """Right image ↔ right mask even when the two lists are enumerated in
+    """Right image <-> right mask even when the two lists are enumerated in
     different orders and frame numbers collide across 'scenes'."""
     # sceneA_frameK and sceneB_frameK both reduce to frame number K under
-    # sorted_by_frame — the exact collision present in the real datasets.
+    # sorted_by_frame - the exact collision present in the real datasets.
     names = [f"sceneA_frame{k}" for k in range(4)] + [f"sceneB_frame{k}" for k in range(4)]
     ids = list(range(4)) + [10 + k for k in range(4)]
     imgs, masks = _build_pair_dir(tmp_path, names, ids)
@@ -241,7 +241,7 @@ def test_make_dataset_no_shared_basename_raises(tmp_path):
 
 
 def test_make_dataset_extra_masks_ignored(tmp_path):
-    """More masks than images is fine — pairing is driven by the images."""
+    """More masks than images is fine - pairing is driven by the images."""
     names = [f"frame_{k:03d}" for k in range(5)]
     imgs, masks = _build_pair_dir(tmp_path, names, list(range(5)))
     ds = make_dataset(imgs[:3], masks, batch_size=2, shuffle=False,
@@ -252,7 +252,7 @@ def test_make_dataset_extra_masks_ignored(tmp_path):
         assert img_id == mask_id
 
 
-# ── augment_pair ─────────────────────────────────────────────────────────────
+# -- augment_pair -------------------------------------------------------------
 
 def test_augment_pair_same_spatial_transform():
     """Image and mask must receive identical spatial transforms.
@@ -273,7 +273,7 @@ def test_augment_pair_same_spatial_transform():
 
     for seed in range(10):
         tf.random.set_seed(seed)
-        # No rotation — only flip and mild color jitter (bimodal 0/1 image survives)
+        # No rotation - only flip and mild color jitter (bimodal 0/1 image survives)
         aug_img, aug_mask = augment_pair(img, mask, flip_prob=0.5, max_rotation_deg=0.0)
         # Binarize image (channel 0) and mask the same way
         img_fg = (aug_img.numpy()[..., 0] > 0.5)
@@ -293,10 +293,10 @@ def test_augment_pair_mask_stays_binary():
     assert unique <= {0.0, 1.0}
 
 
-# ── seeded shuffle / reproducibility ─────────────────────────────────────────
+# -- seeded shuffle / reproducibility -----------------------------------------
 
 def test_make_dataset_seeded_shuffle_is_reproducible(tmp_path):
-    """Same seed → identical epoch order, and pairing survives the shuffle."""
+    """Same seed -> identical epoch order, and pairing survives the shuffle."""
     names = [f"frame_{k:03d}" for k in range(12)]
     ids = list(range(12))
     imgs, masks = _build_pair_dir(tmp_path, names, ids)
@@ -328,7 +328,7 @@ def test_make_dataset_different_seed_changes_order(tmp_path):
     assert order(1) != order(2), "different seeds should shuffle differently"
 
 
-# ── Python ↔ Rust frame-ordering parity ──────────────────────────────────────
+# -- Python <-> Rust frame-ordering parity --------------------------------------
 
 def _rust_frame_key(filename):
     """Faithful transcription of the sort key in firmware/build.rs:118-125:

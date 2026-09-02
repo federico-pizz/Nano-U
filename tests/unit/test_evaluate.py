@@ -13,10 +13,10 @@ from src.utils import BinaryIoU
 EPS = 1e-7
 
 
-# ── sigmoid ───────────────────────────────────────────────────────────────────
+# -- sigmoid -------------------------------------------------------------------
 
 def test_sigmoid_range():
-    # Use ±10 — sigmoid(±50) also saturates to exact 0/1 in float32
+    # Use +/-10 - sigmoid(+/-50) also saturates to exact 0/1 in float32
     x = tf.constant([-10.0, -1.0, 0.0, 1.0, 10.0])
     y = sigmoid(x).numpy()
     assert y.min() > 0.0
@@ -35,10 +35,10 @@ def test_sigmoid_large_negative_saturates():
     assert sigmoid(tf.constant(-100.0)).numpy() < 0.001
 
 
-# ── dice_coef ─────────────────────────────────────────────────────────────────
+# -- dice_coef -----------------------------------------------------------------
 
 def test_dice_coef_perfect_soft():
-    """Identical soft prediction and label → 1.0."""
+    """Identical soft prediction and label -> 1.0."""
     t = tf.ones((1, 4, 4, 1), dtype=tf.float32)
     assert abs(dice_coef(t, t).numpy() - 1.0) < 1e-5
 
@@ -71,7 +71,7 @@ def test_dice_coef_in_01():
     assert 0.0 <= d <= 1.0 + EPS
 
 
-# ── bce_loss_from_logits ──────────────────────────────────────────────────────
+# -- bce_loss_from_logits ------------------------------------------------------
 
 def test_bce_loss_from_logits_positive(logits_tensor, mask_tensor):
     loss = bce_loss_from_logits(mask_tensor, logits_tensor).numpy()
@@ -93,7 +93,7 @@ def test_bce_loss_from_logits_agrees_with_tf(logits_tensor, mask_tensor):
     assert abs(ours - ref) < 1e-4
 
 
-# ── focal_loss_from_logits ────────────────────────────────────────────────────
+# -- focal_loss_from_logits ----------------------------------------------------
 
 def test_focal_loss_positive(logits_tensor, mask_tensor):
     loss = focal_loss_from_logits(mask_tensor, logits_tensor).numpy()
@@ -114,7 +114,7 @@ def test_focal_loss_le_bce(logits_tensor, mask_tensor):
     assert focal >= 0.0
 
 
-# ── fbeta_score ───────────────────────────────────────────────────────────────
+# -- fbeta_score ---------------------------------------------------------------
 
 def test_fbeta_equals_f1_at_beta_1():
     p, r = 0.6, 0.4
@@ -139,7 +139,7 @@ def test_fbeta_beta_lt_1_rewards_high_precision():
     assert fbeta_score(p, r, 0.5) > fbeta_score(p, r, 1.0) > fbeta_score(p, r, 2.0)
 
 
-# ── compute_segmentation_metrics ──────────────────────────────────────────────
+# -- compute_segmentation_metrics ----------------------------------------------
 
 def _probs_masks(n=6, h=8, w=8, seed=0):
     rng = np.random.default_rng(seed)
@@ -189,7 +189,7 @@ def test_metrics_custom_operating_threshold():
     probs = np.full_like(masks, 0.6)
     hi = compute_segmentation_metrics(probs, masks, operating_threshold=0.5)
     lo = compute_segmentation_metrics(probs, masks, operating_threshold=0.7)
-    assert hi["recall"] > lo["recall"]  # stricter threshold → fewer positives
+    assert hi["recall"] > lo["recall"]  # stricter threshold -> fewer positives
 
 
 def test_numpy_miou_matches_binary_iou():

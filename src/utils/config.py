@@ -1,6 +1,9 @@
-import yaml
 import os
 from pathlib import Path
+
+import yaml
+
+from nanou.config import is_preset_file, preset_path, resolve
 
 def _resolve_path(p, project_root):
     if not isinstance(p, str):
@@ -17,18 +20,32 @@ def _resolve_path(p, project_root):
     return str(resolved)
 
 
-def load_config(config_path="config/config.yaml"):
-    """
-    Loads the YAML configuration file and normalizes common paths to absolute strings
-    relative to the repository root (src/.. -> project root).
+def load_config(config_path="config/presets/tinyagri.yaml"):
+    """Load a config and normalize its paths to absolute strings.
 
-    Returned config keeps the same structure but replaces path strings under
-    `data.paths` and `data.paths.processed` and `data.paths.raw_datasets` with
-    absolute paths to simplify callers.
+    Accepts three things:
+
+      * a preset name, e.g. "tinyagri";
+      * a path to a preset under `config/presets/`;
+      * a path to a pre-v2 flat config file.
+
+    A preset is resolved through `nanou.config.resolve` - which merges
+    `config/base.yaml` under it and rejects unknown keys - and then flattened
+    back into the nested dictionary the rest of `src/` still reads. That
+    flattening is a bridge: it disappears once those modules take a
+    `TrainConfig` directly.
+
+    For a flat config file the behaviour is unchanged: the structure is kept as
+    written and only the path strings under `data.paths` become absolute.
     """
     # Get project root (assuming this file is in src/utils/)
     current_dir = Path(__file__).resolve().parent
     project_root = current_dir.parent.parent
+
+    # A bare name (no separator, no suffix) is a preset name.
+    if isinstance(config_path, str) and not os.path.splitext(config_path)[1] \
+            and os.sep not in config_path:
+        config_path = str(preset_path(config_path))
 
     # Allow absolute paths or paths relative to project root
     if os.path.isabs(config_path):
@@ -38,6 +55,9 @@ def load_config(config_path="config/config.yaml"):
 
     if not target_path.exists():
         raise FileNotFoundError(f"Config file not found: {target_path}")
+
+    if is_preset_file(target_path):
+        return resolve(path=target_path).to_legacy_dict()
 
     with open(target_path, 'r') as f:
         config = yaml.safe_load(f)

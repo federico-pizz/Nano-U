@@ -26,13 +26,13 @@ def _representative_gen():
 
 def test_int8_export_roundtrip(tmp_path):
     model = create_nano_u(input_shape=(H, W, 3), filters=[4, 8, 16], bottleneck=16)
-    out_path = str(tmp_path / "nano_u.tflite")
+    out_path = str(tmp_path / "nanou.tflite")
 
     ok = convert_to_tflite_quantized(model, out_path, _representative_gen)
     assert ok, "INT8 conversion failed"
     assert os.path.getsize(out_path) > 0
 
-    params = extract_quant_params(out_path, config_path="config/config.yaml")
+    params = extract_quant_params(out_path, config_path="config/presets/tinyagri.yaml")
 
     assert params["input"]["dtype"] == "int8"
     assert params["output"]["dtype"] == "int8"
@@ -67,15 +67,15 @@ def test_missing_calibration_images_raise(tmp_path, monkeypatch):
     monkeypatch.setattr(qm, "load_config", lambda *_a, **_k: cfg)
 
     model = create_nano_u(input_shape=(H, W, 3), filters=[4, 8, 16], bottleneck=16)
-    keras_path = str(tmp_path / "nano_u.h5")
+    keras_path = str(tmp_path / "nanou.h5")
     model.save(keras_path)
 
     with pytest.raises(FileNotFoundError, match="No calibration images"):
-        qm.quantize_model(keras_path, str(tmp_path / "nano_u.tflite"))
+        qm.quantize_model(keras_path, str(tmp_path / "nanou.tflite"))
 
 
 def test_calibration_split_is_validated(tmp_path, monkeypatch):
-    """Only 'val' and 'train' are accepted — never the held-out test split."""
+    """Only 'val' and 'train' are accepted - never the held-out test split."""
     from src import quantize_model as qm
 
     cfg = {
@@ -85,8 +85,8 @@ def test_calibration_split_is_validated(tmp_path, monkeypatch):
     monkeypatch.setattr(qm, "load_config", lambda *_a, **_k: cfg)
 
     model = create_nano_u(input_shape=(H, W, 3), filters=[4, 8, 16], bottleneck=16)
-    keras_path = str(tmp_path / "nano_u.h5")
+    keras_path = str(tmp_path / "nanou.h5")
     model.save(keras_path)
 
     with pytest.raises(ValueError, match="calibration_split"):
-        qm.quantize_model(keras_path, str(tmp_path / "nano_u.tflite"))
+        qm.quantize_model(keras_path, str(tmp_path / "nanou.tflite"))

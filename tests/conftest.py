@@ -37,7 +37,7 @@ def mask_tensor():
 
 @pytest.fixture(scope="session")
 def logits_tensor():
-    """Raw logit batch (1, H, W, 1) — values outside [0, 1]."""
+    """Raw logit batch (1, H, W, 1) - values outside [0, 1]."""
     rng = np.random.default_rng(2)
     return tf.constant(rng.standard_normal((1, H, W, 1)).astype(np.float32) * 3.0)
 

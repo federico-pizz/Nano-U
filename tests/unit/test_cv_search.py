@@ -1,4 +1,4 @@
-"""Unit tests for scripts/cv_search.py — the leakage-safe CV search logic.
+"""Unit tests for scripts/sweep.py - the leakage-safe CV search logic.
 
 These cover the pure search/aggregation/selection helpers and a fully stubbed
 ``run_cv`` (``run_training`` monkeypatched), so no real training runs in CI.
@@ -9,10 +9,10 @@ import importlib
 import numpy as np
 import pytest
 
-cv = importlib.import_module("scripts.cv_search")
+cv = importlib.import_module("scripts.sweep")
 
 
-# ── make_config_overrides / CE→alpha mapping (#7) ─────────────────────────────
+# -- make_config_overrides / CE->alpha mapping (#7) -----------------------------
 
 def test_ce_off_forces_alpha_one():
     cfg = cv.make_config_overrides(temperature=4.0, alpha=0.3, regime="none", ce_enabled=False)
@@ -40,11 +40,11 @@ def test_unknown_regime_raises():
         cv.make_config_overrides(2, 0.5, "rotate-only", True)
 
 
-# ── expand_grid (cartesian product + dedup) ───────────────────────────────────
+# -- expand_grid (cartesian product + dedup) -----------------------------------
 
 def test_expand_grid_size_ce_on_only():
     grid = cv.expand_grid([2, 4], [0.3, 0.7], ["none", "full"], [True])
-    assert len(grid) == 2 * 2 * 2  # T × alpha × regime
+    assert len(grid) == 2 * 2 * 2  # T x alpha x regime
 
 
 def test_expand_grid_dedups_ce_off_alpha_collapse():
@@ -77,7 +77,7 @@ def test_make_config_overrides_default_tversky_is_pure_bce():
     assert "tversky_alpha" not in cfg  # legacy config reproduced byte-for-byte
 
 
-# ── aggregate_folds / select_best ─────────────────────────────────────────────
+# -- aggregate_folds / select_best ---------------------------------------------
 
 def test_aggregate_folds_mean_std():
     folds = [
@@ -127,12 +127,12 @@ def test_select_best_falls_back_when_floor_infeasible():
         {"f0.5_mean": 0.90, "miou_mean": 0.55, "tag": "a"},
         {"f0.5_mean": 0.60, "miou_mean": 0.68, "tag": "b"},
     ]
-    # No config clears 0.70 → fall back to full set; best by F0.5 (tiebreak miou).
+    # No config clears 0.70 -> fall back to full set; best by F0.5 (tiebreak miou).
     assert cv.select_best(rows, primary="f0.5_mean", secondary="miou_mean",
                           min_miou=0.70)["tag"] == "a"
 
 
-# ── run_cv end-to-end with stubbed training (no TF training) ───────────────────
+# -- run_cv end-to-end with stubbed training (no TF training) -------------------
 
 def test_run_cv_stubbed(monkeypatch, tmp_path):
     """run_cv assembles a table + winner without any real training."""
@@ -164,21 +164,21 @@ def test_run_cv_stubbed(monkeypatch, tmp_path):
     monkeypatch.setattr(cv, "evaluate_on_files", fake_eval)
 
     grid = cv.expand_grid([2.0, 8.0], [0.5], ["none"], [True])
-    res = cv.run_cv("config/config.yaml", k=2, epochs=1, grid=grid,
+    res = cv.run_cv("config/presets/tinyagri.yaml", k=2, epochs=1, grid=grid,
                     output_dir=str(tmp_path), fixed_teacher="/fake/teacher.h5")
 
     assert len(res["rows"]) == 2
     assert res["best"]["temperature"] == 8.0          # higher-scoring config wins
     assert (tmp_path / "cv_results.json").exists()
     assert (tmp_path / "cv_results.csv").exists()
-    # 2 configs × 2 folds × 1 student run each (teacher fixed) = 4 training calls
+    # 2 configs x 2 folds x 1 student run each (teacher fixed) = 4 training calls
     assert calls["n"] == 4
 
 
 def test_run_cv_caches_one_teacher_per_fold(monkeypatch, tmp_path):
-    """Without a fixed teacher: teachers trained == k, not k × n_configs.
+    """Without a fixed teacher: teachers trained == k, not k x n_configs.
 
-    Locks the caching optimization — the per-fold teacher depends only on the
+    Locks the caching optimization - the per-fold teacher depends only on the
     leakage-safe split, so it is trained once and reused across every config.
     """
     files = [f"/d/img/s{s}_frame{f}.png" for s in range(4) for f in range(3)]
@@ -188,7 +188,7 @@ def test_run_cv_caches_one_teacher_per_fold(monkeypatch, tmp_path):
                  "input_shape": [60, 80, 3]}})
     monkeypatch.setattr(cv, "pool_train_val", lambda _c: (files, masks))
 
-    counts = {"bu_net": 0, "nano_u": 0}
+    counts = {"bu_net": 0, "nanou": 0}
 
     def fake_run_training(name, cfg_path, out_dir, config_overrides=None):
         counts[name] += 1
@@ -202,8 +202,8 @@ def test_run_cv_caches_one_teacher_per_fold(monkeypatch, tmp_path):
                                           "recall", "miou", "dice")})
 
     grid = cv.expand_grid([2.0, 8.0], [0.5], ["none"], [True])  # 2 configs
-    cv.run_cv("config/config.yaml", k=2, epochs=1, grid=grid,
+    cv.run_cv("config/presets/tinyagri.yaml", k=2, epochs=1, grid=grid,
               output_dir=str(tmp_path))                          # no fixed teacher
 
-    assert counts["bu_net"] == 2          # k folds — NOT 2 configs × 2 folds == 4
-    assert counts["nano_u"] == 4          # 2 configs × 2 folds
+    assert counts["bu_net"] == 2          # k folds - NOT 2 configs x 2 folds == 4
+    assert counts["nanou"] == 4          # 2 configs x 2 folds

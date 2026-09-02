@@ -1,5 +1,5 @@
-"""Tests for train.py processed-data discovery and the end-to-end img↔mask
-alignment of the real discovery → make_dataset path.
+"""Tests for train.py processed-data discovery and the end-to-end img<->mask
+alignment of the real discovery -> make_dataset path.
 
 These guard the file-listing logic that feeds make_dataset: the glob, the
 optional-validation handling, and the count-mismatch guard that must error
@@ -15,7 +15,7 @@ from src.data import make_dataset
 from src.train import discover_processed_pairs
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# -- helpers ------------------------------------------------------------------
 
 def _write_solid_png(path, value, channels=3):
     shape = (60, 80, 3) if channels == 3 else (60, 80)
@@ -43,7 +43,7 @@ def _processed_cfg(root, with_val=True):
     return cfg
 
 
-# ── discover_processed_pairs: happy paths ────────────────────────────────────
+# -- discover_processed_pairs: happy paths ------------------------------------
 
 def test_discover_happy_path(tmp_path):
     _make_split(tmp_path, "train", [f"f{k}" for k in range(5)], list(range(5)))
@@ -63,13 +63,13 @@ def test_discover_no_val_dirs_returns_empty_val(tmp_path):
 def test_discover_val_count_mismatch_skips_val(tmp_path):
     _make_split(tmp_path, "train", [f"f{k}" for k in range(3)], list(range(3)))
     _, mask_dir = _make_split(tmp_path, "val", [f"f{k}" for k in range(3)], list(range(3)))
-    (mask_dir / "f0.png").unlink()  # val now 3 imgs / 2 masks → skipped, not fatal
+    (mask_dir / "f0.png").unlink()  # val now 3 imgs / 2 masks -> skipped, not fatal
     ti, _, vi, vm = discover_processed_pairs(_processed_cfg(tmp_path))
     assert len(ti) == 3
     assert vi == [] and vm == []
 
 
-# ── discover_processed_pairs: error paths ────────────────────────────────────
+# -- discover_processed_pairs: error paths ------------------------------------
 
 def test_discover_missing_train_key_raises():
     with pytest.raises(ValueError, match="processed.train"):
@@ -98,10 +98,10 @@ def test_discover_train_count_mismatch_raises(tmp_path):
         discover_processed_pairs(_processed_cfg(tmp_path, with_val=False))
 
 
-# ── end-to-end: discovery → make_dataset alignment ───────────────────────────
+# -- end-to-end: discovery -> make_dataset alignment ---------------------------
 
 def test_discovery_to_make_dataset_alignment(tmp_path):
-    """The real path — train.py discovery feeding make_dataset — must pair the
+    """The real path - train.py discovery feeding make_dataset - must pair the
     right image with the right mask even when frame numbers collide across
     'scenes' (the exact condition present in BotanicGarden / TinyAgri)."""
     names = [f"sceneA_frame{k}" for k in range(4)] + [f"sceneB_frame{k}" for k in range(4)]

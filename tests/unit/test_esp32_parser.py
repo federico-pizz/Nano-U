@@ -1,4 +1,4 @@
-"""Unit tests for the serial protocol parsing logic in scripts/eval_esp32.py.
+"""Unit tests for the serial protocol parsing logic in scripts/device_eval.py.
 
 These import the real parser functions used by run_inference_on_device, so the
 tests track the production wire format instead of a private copy of the logic.
@@ -8,10 +8,10 @@ import struct
 import numpy as np
 import pytest
 
-from scripts.eval_esp32 import parse_idx_us_line, parse_stats_line, decode_hex_row
+from scripts.device_eval import parse_idx_us_line, parse_stats_line, decode_hex_row
 
 
-# ── IMG_PREPROCESS parsing ────────────────────────────────────────────────────
+# -- IMG_PREPROCESS parsing ----------------------------------------------------
 
 def test_parse_preprocess_basic():
     idx, us = parse_idx_us_line("IMG_PREPROCESS:3:1234us")
@@ -30,7 +30,7 @@ def test_parse_preprocess_large_value():
     assert us == 999999
 
 
-# ── IMG_INFERENCE parsing (same wire format as IMG_PREPROCESS) ─────────────────
+# -- IMG_INFERENCE parsing (same wire format as IMG_PREPROCESS) -----------------
 
 def test_parse_inference_basic():
     idx, us = parse_idx_us_line("IMG_INFERENCE:0:54321us")
@@ -38,7 +38,7 @@ def test_parse_inference_basic():
     assert us == 54321
 
 
-# ── IMG_STATS parsing ─────────────────────────────────────────────────────────
+# -- IMG_STATS parsing ---------------------------------------------------------
 
 def test_parse_stats_positive():
     idx, min_v, max_v = parse_stats_line("IMG_STATS:0:1.23,4.56")
@@ -59,7 +59,7 @@ def test_parse_stats_index_preserved():
         assert idx == i
 
 
-# ── f32 hex row encoding round-trip ──────────────────────────────────────────
+# -- f32 hex row encoding round-trip ------------------------------------------
 
 def _f32_to_firmware_hex(value: float) -> str:
     """Encode a float32 as 8 hex chars using the firmware's byte order.
@@ -73,7 +73,7 @@ def _f32_to_firmware_hex(value: float) -> str:
 
 
 def test_hex_row_roundtrip_single_pixel():
-    """One pixel: encode f32 → 8 hex chars (firmware byte order) → decode back."""
+    """One pixel: encode f32 -> 8 hex chars (firmware byte order) -> decode back."""
     value = np.float32(-1.234567)
     hex_str = _f32_to_firmware_hex(float(value))
     decoded = decode_hex_row(hex_str)
@@ -106,7 +106,7 @@ def test_hex_row_special_values():
             assert not np.isfinite(decoded[0])
 
 
-# ── latency stats calculation (mirrors evaluate_esp_outputs logic) ────────────
+# -- latency stats calculation (mirrors evaluate_esp_outputs logic) ------------
 
 def test_latency_stats_mean_min_max():
     latency_us = {

@@ -1,7 +1,7 @@
 """End-to-end pipeline integration tests.
 
-Covers the full path: synthetic on-disk dataset → make_dataset → Nano-U
-forward pass → loss computation → gradient update → BinaryIoU evaluation.
+Covers the full path: synthetic on-disk dataset -> make_dataset -> Nano-U
+forward pass -> loss computation -> gradient update -> BinaryIoU evaluation.
 No GPU required; runs on CPU in a few seconds.
 """
 
@@ -23,7 +23,7 @@ def tiny_model():
     return create_nano_u(input_shape=(H, W, 3), filters=[4, 8, 16], bottleneck=16)
 
 
-# ── data → model forward pass ─────────────────────────────────────────────────
+# -- data -> model forward pass -------------------------------------------------
 
 def test_pipeline_output_shape(tmp_png_dataset, tiny_model):
     """make_dataset batches must flow through the model to the correct output shape."""
@@ -57,7 +57,7 @@ def test_pipeline_output_finite(tmp_png_dataset, tiny_model):
     assert not np.any(np.isinf(logits.numpy()))
 
 
-# ── loss computation ──────────────────────────────────────────────────────────
+# -- loss computation ----------------------------------------------------------
 
 def test_pipeline_bce_loss_finite(tmp_png_dataset, tiny_model):
     ds = make_dataset(
@@ -83,7 +83,7 @@ def test_pipeline_dice_coef_in_range(tmp_png_dataset, tiny_model):
     assert 0.0 <= dice <= 1.0
 
 
-# ── gradient update ───────────────────────────────────────────────────────────
+# -- gradient update -----------------------------------------------------------
 
 def test_pipeline_training_step_reduces_loss(tmp_png_dataset):
     """Overfitting a single batch for several steps must reduce the loss."""
@@ -138,10 +138,10 @@ def test_pipeline_gradients_not_none(tmp_png_dataset):
     assert len(none_vars) == 0, f"None gradients for: {none_vars}"
 
 
-# ── metric evaluation ─────────────────────────────────────────────────────────
+# -- metric evaluation ---------------------------------------------------------
 
 def test_pipeline_iou_stateful_over_full_dataset(tmp_png_dataset, tiny_model):
-    """Accumulate BinaryIoU over all batches then call result() — must be in [0, 1]."""
+    """Accumulate BinaryIoU over all batches then call result() - must be in [0, 1]."""
     ds = make_dataset(
         tmp_png_dataset["imgs"], tmp_png_dataset["masks"],
         batch_size=2, shuffle=False, augment=False, target_size=(H, W),
