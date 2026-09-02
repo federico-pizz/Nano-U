@@ -9,7 +9,7 @@
 //! ```
 //!
 //! The positive class is **drivable / road** (matches `extract_binary_road` on the
-//! Python side). The policy is intentionally conservative — the same "don't move
+//! Python side). The policy is intentionally conservative - the same "don't move
 //! unless sure" stance behind the F0.5 selection metric: if the centre lane is not
 //! clearly drivable we stop rather than guess.
 
@@ -57,7 +57,7 @@ impl Default for Policy {
 /// (typically the lower band of the mask, where the near ground lies).
 ///
 /// Policy:
-/// * If the centre lane is below `go_threshold` → **stop** (`go = false`). We
+/// * If the centre lane is below `go_threshold` -> **stop** (`go = false`). We
 ///   still report the steering hint so a caller can creep/turn if it chooses.
 /// * Otherwise **go**, steering toward whichever side is more open, but only if
 ///   it beats the other side by `steer_margin`; else hold centre.

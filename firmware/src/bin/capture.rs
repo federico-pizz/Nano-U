@@ -5,8 +5,8 @@
 //!
 //! Runs the same bring-up as `online` but stops before inference, streaming the
 //! intermediate images over serial so each stage can be checked on the host (see
-//! `firmware/README.md`): `RAW` (160×120 RGB565 straight from DMA) then `DOWN`
-//! (60×80 RGB888 after the 2×2 box downscale — the pixels the quantizer feeds the
+//! `firmware/README.md`): `RAW` (160x120 RGB565 straight from DMA) then `DOWN`
+//! (60x80 RGB888 after the 2x2 box downscale - the pixels the quantizer feeds the
 //! model). `single_inference` streams the output mask, so the three together
 //! cover the whole pipeline.
 //!
@@ -38,7 +38,7 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 const FRAME_INTERVAL_MS: u32 = 1000;
 
 /// Stream `data` as base64 between `<tag>_BEGIN`/`<tag>_END` markers, 48 input
-/// bytes (→ 64 chars) per line using only a stack buffer — no heap.
+/// bytes (-> 64 chars) per line using only a stack buffer - no heap.
 fn dump_b64(tag: &str, fmt: &str, idx: u32, w: usize, h: usize, data: &[u8]) {
     println!(
         "{}_BEGIN idx={} w={} h={} bytes={} fmt={}",
@@ -75,7 +75,7 @@ fn main() -> ! {
     let peripherals = esp_hal::init(config);
     let delay = Delay::new();
 
-    // Camera framebuffer in PSRAM — identical setup to `online` (see that binary
+    // Camera framebuffer in PSRAM - identical setup to `online` (see that binary
     // for why the frame can't live in internal SRAM).
     let (psram_ptr, psram_len) = esp_hal::psram::psram_raw_parts(&peripherals.PSRAM);
     assert!(psram_len >= FRAME_BYTES, "PSRAM too small for framebuffer");

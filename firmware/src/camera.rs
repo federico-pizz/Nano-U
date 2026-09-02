@@ -1,21 +1,21 @@
 //! OV2640 live-capture driver for the Goouuu ESP32-S3-CAM (`no_std`, esp-hal).
 //!
-//! The only *new hardware* path in the project: captures a live QQVGA (160×120)
+//! The only *new hardware* path in the project: captures a live QQVGA (160x120)
 //! RGB565 frame over the ESP32-S3 `LCD_CAM` (DVP) peripheral via DMA, then
-//! box-downscales 2×2 and INT8-quantizes it straight into the existing 60×80 input
+//! box-downscales 2x2 and INT8-quantizes it straight into the existing 60x80 input
 //! buffer that [`crate::preprocess_rgb`] would otherwise fill from a baked image.
-//! The model and its activations are untouched — only the *frame source* changes.
+//! The model and its activations are untouched - only the *frame source* changes.
 //! The frame lives in PSRAM (see `bin/online.rs`); it is written once by DMA and
 //! read once during downscale, so the loop stays inference-bound.
 //!
 //! ## Hardware-only validation notes
 //! Not exercised in CI (needs the esp toolchain + a physical camera). Three things
 //! to confirm on-device when first bringing it up, each flagged inline below:
-//!   1. **Register table** — [`OV2640_RGB565_QQVGA`] is ported from Espressif's
+//!   1. **Register table** - [`OV2640_RGB565_QQVGA`] is ported from Espressif's
 //!      `esp32-camera` `ov2640_settings.h`; if capture is blank/garbled, diff it
 //!      against upstream for your sensor revision.
-//!   2. **RGB565 byte order** — flip [`SWAP_RGB565_BYTES`] if colours look wrong.
-//!   3. **PSRAM↔DMA cache coherency** — the DMA buffer must be cache-invalidated
+//!   2. **RGB565 byte order** - flip [`SWAP_RGB565_BYTES`] if colours look wrong.
+//!   3. **PSRAM<->DMA cache coherency** - the DMA buffer must be cache-invalidated
 //!      before the CPU reads it (esp-hal's `DmaRxBuf` should handle external
 //!      memory, but verify the frame isn't stale).
 
@@ -36,19 +36,19 @@ use microflow::buffer::Buffer2D;
 
 use crate::{IMG_H, IMG_W};
 
-/// Per-channel [0..255] → i8 LUTs produced by [`crate::build_quant_luts`].
+/// Per-channel [0..255] -> i8 LUTs produced by [`crate::build_quant_luts`].
 pub type QuantLuts = ([i8; 256], [i8; 256], [i8; 256]);
 
-// ── Capture geometry ─────────────────────────────────────────────────────────
-// OV2640's smallest reliable RGB565 frame is QQVGA (160×120); direct 80×60
-// windowing trips NO-EOI/FB-OVF on the sensor DSP. QQVGA is exactly 2× the model
-// input in each axis, so a clean 2×2 box filter lands on 60×80.
+// -- Capture geometry ---------------------------------------------------------
+// OV2640's smallest reliable RGB565 frame is QQVGA (160x120); direct 80x60
+// windowing trips NO-EOI/FB-OVF on the sensor DSP. QQVGA is exactly 2x the model
+// input in each axis, so a clean 2x2 box filter lands on 60x80.
 pub const CAM_W: usize = IMG_W * 2; // 160
 pub const CAM_H: usize = IMG_H * 2; // 120
 /// RGB565 = 2 bytes/pixel.
 pub const FRAME_BYTES: usize = CAM_W * CAM_H * 2;
 
-/// OV2640 SCCB (I²C) 7-bit address.
+/// OV2640 SCCB (I2C) 7-bit address.
 const OV2640_ADDR: u8 = 0x30;
 /// Bank-select register: `0x00` = DSP bank, `0x01` = sensor bank.
 const REG_BANK_SEL: u8 = 0xFF;
@@ -59,33 +59,33 @@ const SWAP_RGB565_BYTES: bool = false;
 /// SCCB master-clock fed to the OV2640 XCLK. 20 MHz is the standard DVP rate.
 const XCLK_HZ: u32 = 20_000_000;
 
-// ── OV2640 register init (faithful port of Espressif esp32-camera) ───────────
+// -- OV2640 register init (faithful port of Espressif esp32-camera) -----------
 //
 // Entries are `[reg, val]`. `[REG_BANK_SEL, 0x00|0x01]` switches banks
 // (0x00 = DSP, 0x01 = sensor). This reproduces, *in order*, the exact register
-// writes the esp32-camera runtime emits for **RGB565 @ QQVGA (160×120)**:
+// writes the esp32-camera runtime emits for **RGB565 @ QQVGA (160x120)**:
 //
-//   reset()            → COM7 soft-reset (done in `new()` before this table)
+//   reset()            -> COM7 soft-reset (done in `new()` before this table)
 //                        + `ov2640_settings_cif`  (the bulk below, ending with
 //                          the DSP-enable tail: CTRL1=0xfd, RESET=0x00, R_BYPASS=0x00)
-//   set_pixformat()    → `ov2640_settings_rgb565`
-//   set_framesize()    → set_window(): R_BYPASS bypass, `ov2640_settings_to_cif`,
+//   set_pixformat()    -> `ov2640_settings_rgb565`
+//   set_framesize()    -> set_window(): R_BYPASS bypass, `ov2640_settings_to_cif`,
 //                        computed window/zoom regs, CLKRC + R_DVP_SP clock, R_BYPASS enable
-//   set_pixformat()    → `ov2640_settings_rgb565` again  (its final RESET=0x00
-//                        releases the DVP — this is what actually starts streaming)
+//   set_pixformat()    -> `ov2640_settings_rgb565` again  (its final RESET=0x00
+//                        releases the DVP - this is what actually starts streaming)
 //
 // The two halves are split by a 10 ms settle (see [`OnboardCamera::new`]) exactly
 // as the C driver does between set_window and its trailing set_pixformat.
 //
-// Window math for QQVGA (4:3 → full window 1600×1200, offset 0,0):
-//   set_framesize: /4 → max 400×300 (clamped 296), offset 0,0
-//   set_window:    /4 → HSIZE=0x64 VSIZE=0x4a; w,h /4 → ZMOW=0x28 ZMOH=0x1e
-// Clock (CIF, non-JPEG, ESP32-S3): clk_2x=1 clk_div=3 → CLKRC=0x83;
-//   pclk_auto=1 pclk_div=8 → R_DVP_SP=0x88.
+// Window math for QQVGA (4:3 -> full window 1600x1200, offset 0,0):
+//   set_framesize: /4 -> max 400x300 (clamped 296), offset 0,0
+//   set_window:    /4 -> HSIZE=0x64 VSIZE=0x4a; w,h /4 -> ZMOW=0x28 ZMOH=0x1e
+// Clock (CIF, non-JPEG, ESP32-S3): clk_2x=1 clk_div=3 -> CLKRC=0x83;
+//   pclk_auto=1 pclk_div=8 -> R_DVP_SP=0x88.
 // Source: espressif/esp32-camera `ov2640_settings.h` + `ov2640.c`. See note #1.
 #[rustfmt::skip]
 const OV2640_RGB565_QQVGA: &[[u8; 2]] = &[
-    // ── reset(): ov2640_settings_cif ─────────────────────────────────────────
+    // -- reset(): ov2640_settings_cif -----------------------------------------
     [REG_BANK_SEL, 0x00],   // BANK_DSP
     [0x2c, 0xff],
     [0x2e, 0xdf],
@@ -244,7 +244,7 @@ const OV2640_RGB565_QQVGA: &[[u8; 2]] = &[
     [0xe0, 0x00],           // RESET: release
     [0x05, 0x00],           // R_BYPASS: DSP enable
 
-    // ── set_pixformat(RGB565): ov2640_settings_rgb565 ────────────────────────
+    // -- set_pixformat(RGB565): ov2640_settings_rgb565 ------------------------
     [REG_BANK_SEL, 0x00],   // BANK_DSP
     [0xe0, 0x04],           // RESET: DVP
     [0xda, 0x08],           // IMAGE_MODE: RGB565
@@ -252,7 +252,7 @@ const OV2640_RGB565_QQVGA: &[[u8; 2]] = &[
     [0xe1, 0x77],
     [0xe0, 0x00],           // RESET: release
 
-    // ── set_framesize(QQVGA): set_window() ───────────────────────────────────
+    // -- set_framesize(QQVGA): set_window() -----------------------------------
     [REG_BANK_SEL, 0x00],   // BANK_DSP
     [0x05, 0x01],           // R_BYPASS: DSP bypass (during reconfig)
     // ov2640_settings_to_cif
@@ -312,7 +312,7 @@ const OV2640_RGB565_QQVGA: &[[u8; 2]] = &[
     [0x05, 0x00],           // R_BYPASS: DSP enable
 ];
 
-// Trailing `set_pixformat(RGB565)` from set_window — applied after a 10 ms settle.
+// Trailing `set_pixformat(RGB565)` from set_window - applied after a 10 ms settle.
 // Its final RESET=0x00 releases the DVP and starts the pixel stream.
 #[rustfmt::skip]
 const OV2640_RGB565_FINALIZE: &[[u8; 2]] = &[
@@ -321,7 +321,7 @@ const OV2640_RGB565_FINALIZE: &[[u8; 2]] = &[
     [0xda, 0x08],           // IMAGE_MODE: RGB565
     [0xd7, 0x03],
     [0xe1, 0x77],
-    [0xe0, 0x00],           // RESET: release → DVP starts streaming
+    [0xe0, 0x00],           // RESET: release -> DVP starts streaming
 ];
 
 /// Errors surfaced while bringing the camera up or capturing a frame.
@@ -329,7 +329,7 @@ const OV2640_RGB565_FINALIZE: &[[u8; 2]] = &[
 pub enum CamError {
     /// SCCB probe read back an unexpected chip id (sensor not responding).
     BadChipId(u8, u8),
-    /// An I²C/SCCB transaction failed.
+    /// An I2C/SCCB transaction failed.
     Sccb,
     /// Camera peripheral configuration failed.
     Config,
@@ -384,7 +384,7 @@ impl OnboardCamera {
     /// prepare the persistent PSRAM DMA buffer.
     ///
     /// `framebuffer` must be a `'static`, DMA-capable, 64-byte-aligned slice of
-    /// **exactly [`FRAME_BYTES`]** bytes — carved from PSRAM by the caller. No heap.
+    /// **exactly [`FRAME_BYTES`]** bytes - carved from PSRAM by the caller. No heap.
     pub fn new(framebuffer: &'static mut [u8]) -> Result<Self, CamError> {
         let delay = Delay::new();
 
@@ -393,7 +393,7 @@ impl OnboardCamera {
         let camera = build_camera()?;
         delay.delay_millis(10);
 
-        // ── SCCB: configure the sensor over I²C (SDA=4, SCL=5) ───────────────
+        // -- SCCB: configure the sensor over I2C (SDA=4, SCL=5) ---------------
         let mut sccb = I2c::new(
             unsafe { esp_hal::peripherals::I2C0::steal() },
             I2cConfig::default(),
@@ -436,7 +436,7 @@ impl OnboardCamera {
         // Only the SCCB handle is dropped (GPIO4/5 aren't reused).
         drop(sccb);
 
-        // ── Persistent DMA receive buffer ───────────────────────────────────
+        // -- Persistent DMA receive buffer -----------------------------------
         assert_eq!(framebuffer.len(), FRAME_BYTES, "framebuffer must be FRAME_BYTES");
         let (rx_descriptors, _tx_descriptors) = dma_descriptors!(FRAME_BYTES, 0);
         let dma_buf = DmaRxBuf::new(rx_descriptors, framebuffer).map_err(CamError::DmaBuf)?;
@@ -493,7 +493,7 @@ impl OnboardCamera {
     }
 
     /// Capture one live frame and write it, downscaled + INT8-quantized, into
-    /// `out`. Reuses `out` and the DMA buffer in place — no per-frame allocation.
+    /// `out`. Reuses `out` and the DMA buffer in place - no per-frame allocation.
     pub fn capture_into(
         &mut self,
         luts: &QuantLuts,
@@ -506,7 +506,7 @@ impl OnboardCamera {
     }
 
     /// Capture one live frame and return the **raw** RGB565 framebuffer
-    /// ([`FRAME_BYTES`] bytes, row-major [`CAM_H`]×[`CAM_W`], 2 bytes/pixel,
+    /// ([`FRAME_BYTES`] bytes, row-major [`CAM_H`]x[`CAM_W`], 2 bytes/pixel,
     /// big-endian unless [`SWAP_RGB565_BYTES`]).
     ///
     /// Un-processed sensor output for pipeline validation (see `bin/capture.rs`);
@@ -551,9 +551,9 @@ fn expand6(v: u16) -> u8 {
     ((v << 2) | (v >> 4)) as u8
 }
 
-/// Mean RGB888 of the 2×2 source block of a [`CAM_H`]×[`CAM_W`] RGB565 frame that
+/// Mean RGB888 of the 2x2 source block of a [`CAM_H`]x[`CAM_W`] RGB565 frame that
 /// maps to output pixel `(h, w)`. Averaging is done in 8-bit channel space
-/// (expand RGB565 → RGB888, mean of the four samples) so it matches the host
+/// (expand RGB565 -> RGB888, mean of the four samples) so it matches the host
 /// `preprocess_rgb` math up to the box filter. Shared by [`downscale_quantize`]
 /// and [`downscale_rgb888`] so the two never drift.
 #[inline]
@@ -585,10 +585,10 @@ fn box_mean_rgb(frame: &[u8], h: usize, w: usize) -> (u8, u8, u8) {
     ((r_sum / 4) as u8, (g_sum / 4) as u8, (b_sum / 4) as u8)
 }
 
-/// 2×2 box-downscale a [`CAM_H`]×[`CAM_W`] RGB565 frame to [`IMG_H`]×[`IMG_W`]
+/// 2x2 box-downscale a [`CAM_H`]x[`CAM_W`] RGB565 frame to [`IMG_H`]x[`IMG_W`]
 /// and INT8-quantize through `luts`, writing in place into `out`.
 ///
-/// `out[(h, w)] = [lut_r[r], lut_g[g], lut_b[b]]` where `(r, g, b)` is the 2×2
+/// `out[(h, w)] = [lut_r[r], lut_g[g], lut_b[b]]` where `(r, g, b)` is the 2x2
 /// box mean (see [`box_mean_rgb`]).
 fn downscale_quantize(
     frame: &[u8],
@@ -604,8 +604,8 @@ fn downscale_quantize(
     }
 }
 
-/// 2×2 box-downscale a raw RGB565 frame to **RGB888** (no quantization), written
-/// row-major into `out` as `[R, G, B]` triples — `out.len()` must be
+/// 2x2 box-downscale a raw RGB565 frame to **RGB888** (no quantization), written
+/// row-major into `out` as `[R, G, B]` triples - `out.len()` must be
 /// `IMG_H * IMG_W * 3`.
 ///
 /// The same box filter [`downscale_quantize`] applies, stopped before the INT8

@@ -1,2 +1,7 @@
-# Large weight files — train locally or download separately
+# Large weight files - train locally or download separately.
 *.h5
+
+# Derived from the tracked .tflite by scripts/export.py, so a committed copy could
+# only ever be redundant or stale. scripts/flash.py regenerates it before invoking
+# cargo, which is what lets a fresh clone build the firmware without one.
+*_quant_params.json

@@ -1,18 +1,8 @@
-# Versions below are pinned to the known-good, reproducible CPU/standard-GPU set.
-tensorflow==2.20.0
-tf_keras==2.20.1
-tensorflow-model-optimization==0.8.0
-numpy==1.26.4
-pandas==2.3.3
-matplotlib==3.10.8
-opencv-python==4.11.0.86
-PyYAML==6.0.3
-pyserial==3.5          # host-side serial reads for capture_view.py (live-camera frame dump)
-
-# Tests
-pytest==9.0.2
+# Dependency pins live in pyproject.toml; this file only forwards to it, so the
+# two can no longer drift.
+-e .
 
 # NVIDIA GPU (optional, not pinned)
-# tensorflow[and-cuda]==2.20.0
-# Very new cards (RTX 50-series / Blackwell, sm_120) need CUDA 12.8+ and a TF
-# nightly — see "GPU (optional)" in README.md.
+# pip install "tensorflow[and-cuda]==2.20.0"
+# Very new cards (RTX 50-series / Blackwell, sm_120) need CUDA 12.8+ and a matching
+# cuDNN - see "GPU (optional)" in README.md.

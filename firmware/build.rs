@@ -21,12 +21,12 @@ fn main() {
         .unwrap_or(test_img_dir_default);
     println!("cargo:rerun-if-env-changed=TEST_IMG_DIR");
 
-    // ── Model Selection ──────────────────────────────────────────────────────────
+    // -- Model Selection ----------------------------------------------------------
     let model_name = env::var("MODEL_NAME").unwrap_or_else(|_| "nano_u".to_string());
     println!("cargo:rerun-if-env-changed=MODEL_NAME");
     println!("cargo:warning=Building for model: {}", model_name);
 
-    // ── Quantization parameters ──────────────────────────────────────────────────
+    // -- Quantization parameters --------------------------------------------------
     let quant_params_path = models_dir.join(format!("{}_quant_params.json", model_name));
     println!("cargo:rerun-if-changed={}", quant_params_path.display());
 
@@ -79,13 +79,13 @@ fn main() {
     if src_model.exists() {
         fs::copy(&src_model, &dst_model).unwrap_or_else(|e| {
             panic!(
-                "Failed to copy {} → {}: {}",
+                "Failed to copy {} -> {}: {}",
                 src_model.display(),
                 dst_model.display(),
                 e
             )
         });
-        println!("cargo:warning=Copied model: {} → {}", src_model.display(), dst_model.display());
+        println!("cargo:warning=Copied model: {} -> {}", src_model.display(), dst_model.display());
     }
     println!("cargo:rerun-if-changed={}", src_model.display());
 
@@ -142,7 +142,7 @@ fn main() {
     println!("cargo:rustc-env=NANO_U_NUM_IMAGES={}", count);
 }
 
-// ── Lightweight JSON helpers ─────
+// -- Lightweight JSON helpers -----
 fn extract_json_f64(json: &str, section: &str, field: &str) -> f64 {
     let section_marker = format!("\"{}\"", section);
     let field_marker   = format!("\"{}\"", field);

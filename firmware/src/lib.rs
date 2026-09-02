@@ -66,7 +66,7 @@ pub const STD_R: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_R_BITS")
 pub const STD_G: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_G_BITS")));
 pub const STD_B: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_B_BITS")));
 
-/// Builds per-channel [0..255] → i8 lookup tables for INT8 image preprocessing.
+/// Builds per-channel [0..255] -> i8 lookup tables for INT8 image preprocessing.
 pub fn build_quant_luts() -> ([i8; 256], [i8; 256], [i8; 256]) {
     let mut lut_r = [0i8; 256];
     let mut lut_g = [0i8; 256];

@@ -19,7 +19,7 @@ struct PersonDetect;
 
 static mut INPUT_BUFFER: Option<Buffer4D<i8, 1, 96, 96, 1>> = None;
 
-/// Decodes a 96×96 BMP into an INT8 buffer.
+/// Decodes a 96x96 BMP into an INT8 buffer.
 // BMP stores pixels bottom-up natively, but for this benchmark we only need
 // valid data flowing through the model, so row ordering is intentionally ignored.
 fn decode_bmp_into(raw: &[u8], out: &mut Buffer2D<[i8; 1], 96, 96>) {

@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanou"
+version = "2.0.0"
+description = "Nano-U - quantization-aware distillation for on-device semantic segmentation"
+readme = "README.md"
+license = { file = "LICENSE" }
+# TensorFlow publishes no wheels for 3.13+; pip enforces this at install time
+# rather than leaving it to a runtime check.
+requires-python = ">=3.12,<3.13"
+
+dependencies = [
+  "tensorflow==2.20.0",
+  "tf_keras==2.20.1",
+  # Builds its quantization wrappers against Keras 2 internals; this single pin is
+  # what holds the whole stack on tf_keras
+  "tensorflow-model-optimization==0.8.0",
+  "numpy==1.26.4",
+  "pandas==2.3.3",
+  "matplotlib==3.10.8",
+  "opencv-python==4.11.0.86",
+  # Direct import in scripts/capture.py; matplotlib pulls it in too, but a
+  # direct import earns a direct pin.
+  "pillow==12.3.0",
+  "PyYAML==6.0.3",
+  # Host-side serial reads for the device scripts.
+  "pyserial==3.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.0.2", "ruff==0.14.5"]
+
+# No [project.scripts]: the scripts are run with `python scripts/<name>.py`, so the
+# command a reader sees in the README is the file they can open.
+
+[tool.setuptools.packages.find]
+# Two roots during the transition. `src/nanou` is the real package. The legacy
+# `src`, `src.models` and `src.utils` are installed alongside it only so that
+# `import src.train` resolves from any working directory, which is what removes the
+# need for a `sys.path.insert` in every script. Once the modules have moved into
+# `nanou`, drop the three `src*` entries and the second `where` root with them.
+where = ["src", "."]
+include = ["nanou*", "src", "src.models", "src.utils"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "scripts", "tests", "experiments"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",   # pycodestyle + pyflakes
+  "I",             # import order
+  "UP",            # pyupgrade
+  "B",             # bugbear
+  "D",             # pydocstyle - every public symbol carries a docstring
+]
+ignore = [
+  "D105",          # magic methods
+  "D107",          # __init__ - the class docstring covers it
+  "D203", "D213",  # mutually exclusive with D211/D212
+  "E501",          # the formatter owns line length
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*"       = ["D"]     # test names are the documentation
+"experiments/*" = ["D103"]
+"scripts/*"     = ["D103"]  # a script's --help is its docstring

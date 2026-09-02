@@ -1,13 +1,13 @@
 #![no_std]
 #![no_main]
 
-//! Online (live-camera) inference — the real-time control loop on the Goouuu
+//! Online (live-camera) inference - the real-time control loop on the Goouuu
 //! ESP32-S3-CAM. Captures live OV2640 frames, runs the segmentation model, and
 //! prints one navigation decision per frame (see `firmware/README.md`).
 //!
 //! Per frame, every buffer allocated once and reused in place:
-//!   capture (DMA, PSRAM) → 2×2 downscale + INT8 quantize → predict → region
-//!   coverage → decide. The loop is inference-bound (~800 ms/frame); capture and
+//!   capture (DMA, PSRAM) -> 2x2 downscale + INT8 quantize -> predict -> region
+//!   coverage -> decide. The loop is inference-bound (~800 ms/frame); capture and
 //!   downscale add a few ms against PSRAM, leaving model latency unchanged.
 
 use esp_backtrace as _;
@@ -42,7 +42,7 @@ fn main() -> ! {
 
     // Camera framebuffer in PSRAM (auto-mapped by `esp_hal::init`): the model
     // activations fill nearly all internal SRAM, and a 38 KB SRAM frame would
-    // overflow the stack guard. No heap — take the first FRAME_BYTES of the
+    // overflow the stack guard. No heap - take the first FRAME_BYTES of the
     // page-aligned PSRAM region directly (satisfies the 64-byte DMA alignment).
     let (psram_ptr, psram_len) = esp_hal::psram::psram_raw_parts(&peripherals.PSRAM);
     assert!(psram_len >= FRAME_BYTES, "PSRAM too small for framebuffer");
@@ -82,7 +82,7 @@ fn main() -> ! {
 
     let mut frame: u32 = 0;
     loop {
-        // Live capture → downscale → quantize, in place.
+        // Live capture -> downscale -> quantize, in place.
         if let Err(e) = camera.capture_into(&luts, &mut input_image) {
             println!("FRAME:{} CAPTURE_ERROR: {:?}", frame, e);
             delay.delay_millis(100);
