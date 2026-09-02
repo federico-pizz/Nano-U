@@ -1,40 +1,36 @@
 """Leakage-safe cross-validation hyperparameter search for Nano-U.
 
-Selects distillation/augmentation hyperparameters *honestly*:
+Selects distillation/augmentation hyperparameters:
 
   * Folds are built by whole capture sequence (``sequence_group``) with
     :func:`src.data.grouped_kfold`, so no scene is split across the train and
-    validation side of a fold — adjacent near-duplicate frames cannot leak.
+    validation side of a fold - adjacent near-duplicate frames cannot leak.
   * The search runs over the **pooled train+val** frames only. The test split is
     never touched here; it is measured once, afterwards, by ``evaluate_and_plot``.
   * Each (fold, config) trains through the normal ``run_training`` code path
     (QAT + distillation), with a **per-fold teacher** so the teacher never sees
     its fold's validation frames either.
 
-Primary selection criterion is **mIoU** — a neutral, balanced overlap metric, so
+Primary selection criterion is **mIoU** - a neutral, balanced overlap metric, so
 the config choice is not circular with Nano-U's conservative (precision-favoring)
 objective: conservatism is designed into the *loss*, not manufactured by the
 selector. The precision-weighted **F0.5** is the tiebreaker and is reported as the
 safety axis; all of F0.5/F1/F2/precision/recall/mIoU/Dice are logged per fold and
-aggregated (mean ± std) into ``results/<dataset>/cv_results.{csv,json}``.
+aggregated (mean +/- std) into ``results/<dataset>/cv_results.{csv,json}``.
 
 This is built to run unattended for hours. Example:
 
-    python scripts/cv_search.py --config config/config.yaml --k 5 --epochs 50 \
+    python scripts/sweep.py --config config/config.yaml --k 5 --epochs 50 \
         --temperatures 2 4 8 --alphas 0.3 0.5 0.7 \
         --regimes none geometric photometric full --ce on off
 """
 
 import os
-import sys
 import json
 import argparse
 import itertools
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
-
-if __name__ == "__main__" and __package__ is None:
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import numpy as np
 
@@ -45,11 +41,11 @@ from src.utils import get_project_root
 from src.evaluate import run_inference, compute_segmentation_metrics
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Pure, unit-testable search logic (no training, no TF state)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
-# Named augmentation regimes → make_dataset kwargs (the #8 ablation axis).
+# Named augmentation regimes -> make_dataset kwargs (the #8 ablation axis).
 AUGMENT_REGIMES: Dict[str, Dict[str, Any]] = {
     "none": {"augment": False, "augment_params": {}},
     "geometric": {"augment": True, "augment_params": {
@@ -71,12 +67,12 @@ def make_config_overrides(temperature: float, alpha: float, regime: str,
     """Map one grid point to the config_overrides train_model understands.
 
     CE on/off (#7) is expressed through the existing KD weighting: with the loss
-    ``(1-alpha)·CE + alpha·distill``, disabling CE is exactly ``alpha = 1.0``.
+    ``(1-alpha)*CE + alpha*distill``, disabling CE is exactly ``alpha = 1.0``.
     The requested alpha is kept (as ``requested_alpha``) for traceability.
 
     ``tversky_weight`` (default 0.0 = pure BCE) blends the precision-favoring
     Tversky term into the student's supervised loss
-    (``(1-w)·BCE + w·Tversky(alpha_fp, beta_fn)``). It is always recorded on the
+    (``(1-w)*BCE + w*Tversky(alpha_fp, beta_fn)``). It is always recorded on the
     row; the loss-shaping keys are only injected when the term is active so a
     weight of 0 reproduces the legacy BCE config byte-for-byte.
     """
@@ -105,14 +101,14 @@ def expand_grid(temperatures: List[float], alphas: List[float],
                 regimes: List[str], ce_options: List[bool],
                 tversky_specs: Sequence[Union[float, Tuple[float, float, float]]] = ((0.0, 0.7, 0.3),)
                 ) -> List[Dict[str, Any]]:
-    """Cartesian product → config_overrides, de-duplicated.
+    """Cartesian product -> config_overrides, de-duplicated.
 
     When CE is off, alpha is forced to 1.0, so the alpha axis collapses; identical
     effective configs (same temperature/effective-alpha/regime/ce/tversky) are
     emitted once. ``tversky_specs`` is a list of ``(weight, alpha_fp, beta_fn)``
     triples and defaults to ``((0.0, 0.7, 0.3),)`` so callers that don't sweep the
     conservative loss get exactly the previous grid. Passing explicit triples (vs a
-    full alpha×beta product) keeps the sweep on the intended simplex (e.g. α+β=1).
+    full alphaxbeta product) keeps the sweep on the intended simplex (e.g. alpha+beta=1).
     A bare weight is also accepted and expands to ``(w, 0.7, 0.3)``, so a caller
     sweeping only the blend factor can pass ``[0.0, 0.5]``.
     """
@@ -139,7 +135,7 @@ def expand_grid(temperatures: List[float], alphas: List[float],
 def aggregate_folds(fold_metrics: List[Dict[str, float]],
                     keys=("f0.5", "f1", "f2", "precision", "recall", "miou", "dice"),
                     ) -> Dict[str, float]:
-    """Mean ± std across folds for each metric → flat ``<key>_mean/_std`` dict."""
+    """Mean +/- std across folds for each metric -> flat ``<key>_mean/_std`` dict."""
     agg: Dict[str, float] = {"n_folds": len(fold_metrics)}
     for k in keys:
         vals = np.array([fm[k] for fm in fold_metrics], dtype=np.float64)
@@ -185,9 +181,9 @@ def select_best(rows: List[Dict[str, Any]], primary: str = "miou_mean",
     return max(pool, key=lambda r: (r[primary], r[secondary]))
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Orchestration (real training; exercised manually, stubbed in tests)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def _list_split_files(config: Dict[str, Any], split: str):
     """Resolve (img_files, mask_files) for a processed split, frame-sorted."""
@@ -267,7 +263,7 @@ def _run_jobs(fn, jobs: List[Dict[str, Any]], n_workers: int):
     """Run jobs sequentially (n_workers<=1) or across a spawn process pool.
 
     ``maxtasksperchild=1`` gives each job a fresh process, so a job's TF/CUDA
-    GPU memory is fully released before the next starts — letting ``n_workers``
+    GPU memory is fully released before the next starts - letting ``n_workers``
     full QAD pipelines coexist in VRAM without leak accumulation.
     """
     if n_workers <= 1 or len(jobs) <= 1:
@@ -286,11 +282,11 @@ def run_cv(config_path: str, k: int, epochs: int, grid: List[Dict[str, Any]],
     """Drive the full grouped-CV sweep. Returns the assembled table + winner.
 
     Teachers are trained **once per fold** (phase 1) and reused across every
-    config that shares the fold — the teacher depends only on the leakage-safe
+    config that shares the fold - the teacher depends only on the leakage-safe
     fold split, not on the student hyperparameters, so this is exact, not an
     approximation. ``jobs`` runs that many student pipelines concurrently;
     ``teacher_jobs`` is separate because the 12.85M-param BU-Net teacher is far
-    heavier than the 3.3k-param student — three concurrent teachers OOM a ~6 GB
+    heavier than the 3.3k-param student - three concurrent teachers OOM a ~6 GB
     GPU, so teachers default to sequential.
     """
     config = load_config(config_path)
@@ -318,7 +314,7 @@ def run_cv(config_path: str, k: int, epochs: int, grid: List[Dict[str, Any]],
     print(f"[CV] {len(img_files)} frames, {len(set(groups))} sequences, "
           f"{len(splits)} folds, {len(grid)} configs, jobs={jobs}")
 
-    # ── Phase 1: one teacher per fold, cached & reused across all configs ──────
+    # -- Phase 1: one teacher per fold, cached & reused across all configs ------
     if fixed_teacher is not None:
         print("[CV] using a single fixed teacher for every fold (leakage caveat)")
         teacher_of = {fi: fixed_teacher for fi in range(len(splits))}
@@ -336,7 +332,7 @@ def run_cv(config_path: str, k: int, epochs: int, grid: List[Dict[str, Any]],
         teacher_of = dict(_run_jobs(_train_teacher_job, t_jobs,
                                     min(teacher_jobs, len(t_jobs))))
 
-    # ── Phase 2: one student per (config, fold), reusing the fold's teacher ────
+    # -- Phase 2: one student per (config, fold), reusing the fold's teacher ----
     s_jobs: List[Dict[str, Any]] = []
     tags: List[str] = []
     for ci, cfg in enumerate(grid):
@@ -360,7 +356,7 @@ def run_cv(config_path: str, k: int, epochs: int, grid: List[Dict[str, Any]],
     print(f"[CV] training {len(s_jobs)} student runs")
     student_results = _run_jobs(_train_student_job, s_jobs, min(jobs, len(s_jobs)))
 
-    # ── Aggregate fold metrics per config ─────────────────────────────────────
+    # -- Aggregate fold metrics per config -------------------------------------
     by_config: Dict[int, Dict[int, Dict[str, float]]] = {}
     for ci, fi, fm in student_results:
         by_config.setdefault(ci, {})[fi] = fm
@@ -371,8 +367,8 @@ def run_cv(config_path: str, k: int, epochs: int, grid: List[Dict[str, Any]],
         agg = aggregate_folds(fold_metrics)
         rows.append(build_row(cfg, agg, fold_metrics))
         print(f"[{ci+1}/{len(grid)}] {tags[ci]}: "
-              f"f0.5={agg['f0.5_mean']:.4f}±{agg['f0.5_std']:.4f} "
-              f"miou={agg['miou_mean']:.4f}±{agg['miou_std']:.4f}")
+              f"f0.5={agg['f0.5_mean']:.4f}+/-{agg['f0.5_std']:.4f} "
+              f"miou={agg['miou_mean']:.4f}+/-{agg['miou_std']:.4f}")
 
     n_eligible = sum(1 for r in rows if r["miou_mean"] >= min_miou)
     if min_miou > 0.0 and n_eligible == 0:
@@ -391,7 +387,7 @@ def run_cv(config_path: str, k: int, epochs: int, grid: List[Dict[str, Any]],
           f"floor={min_miou:.3f}): "
           f"T={best['temperature']} alpha={best['alpha']} "
           f"regime={best['augment_regime']} ce={best['ce_enabled']} "
-          f"→ f0.5={best['f0.5_mean']:.4f} miou={best['miou_mean']:.4f}")
+          f"-> f0.5={best['f0.5_mean']:.4f} miou={best['miou_mean']:.4f}")
     return {"rows": rows, "best": best}
 
 
@@ -424,7 +420,7 @@ def main():
     p.add_argument("--tversky-alpha", type=float, nargs="+", default=[0.7],
                    help="Tversky alpha_fp (false-positive weight) values to sweep. "
                         "By default beta_fn is derived as 1-alpha (stay on the "
-                        "α+β=1 simplex); override with --tversky-beta. Only active "
+                        "alpha+beta=1 simplex); override with --tversky-beta. Only active "
                         "for tversky weights > 0.")
     p.add_argument("--tversky-beta", type=float, nargs="+", default=None,
                    help="explicit beta_fn values, paired element-wise with "

@@ -113,7 +113,7 @@ def run_analysis_on_device(cmd, log_file, cwd=None, preset_voltage=None, preset_
                             except ValueError:
                                 print("Invalid input. Skipping energy calculation.")
                     else:
-                        print("No current provided — skipping energy calculation.")
+                        print("No current provided - skipping energy calculation.")
 
                     success = True
                     break

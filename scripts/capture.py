@@ -5,9 +5,9 @@ Companion to `firmware/src/bin/capture.rs`. That binary stops the live pipeline
 short of inference and streams the intermediate images over serial so you can see
 what the camera sees and validate each stage on its own:
 
-  * RAW  — QQVGA 160x120 RGB565 straight from the OV2640 (sensor / framing /
+  * RAW  - QQVGA 160x120 RGB565 straight from the OV2640 (sensor / framing /
            byte-order check)
-  * DOWN — 60x80 RGB888 after the 2x2 box downscale (resize check; these are the
+  * DOWN - 60x80 RGB888 after the 2x2 box downscale (resize check; these are the
            exact pixels the INT8 quantizer turns into the model input)
 
 Wire format (one block per stage per frame):
@@ -20,9 +20,9 @@ Wire format (one block per stage per frame):
 Each decoded block is saved as `frame<idx>_<tag>.png` under the output dir.
 
 Usage:
-    python scripts/capture_view.py                 # /dev/ttyACM0, ./capture_out
-    python scripts/capture_view.py -n 5            # stop after 5 frames
-    python scripts/capture_view.py -p /dev/ttyACM1 -o /tmp/cam --upscale 4
+    python scripts/capture.py                      # /dev/ttyACM0, ./capture_out
+    python scripts/capture.py -n 5                 # stop after 5 frames
+    python scripts/capture.py -p /dev/ttyACM1 -o /tmp/cam --upscale 4
 
 Note: this only reads the serial stream. Flash/run the binary separately, e.g.
     MODELS_DIR=../models/TinyAgri cargo run --release --bin capture
@@ -31,7 +31,6 @@ or point this script at the port while the device is already running.
 import argparse
 import base64
 import re
-import sys
 import time
 from pathlib import Path
 

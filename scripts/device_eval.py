@@ -12,9 +12,6 @@ import tensorflow as tf
 import tf_keras as keras
 from pathlib import Path
 
-# Add project root so imports from `src` work.
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 from src.utils import get_project_root, BinaryIoU
 from src.data import make_dataset, sorted_by_frame
 from src.utils.config import load_config
@@ -27,18 +24,18 @@ import matplotlib.pyplot as plt
 EPS = 1e-7
 
 
-# ── Serial protocol parsers ──────────────────────────────────────────────────
+# -- Serial protocol parsers --------------------------------------------------
 # Pure functions so the wire format is unit-tested directly (see
 # tests/unit/test_esp32_parser.py) instead of via a copy of the logic.
 
 def parse_idx_us_line(line_str: str) -> tuple:
-    """Parse 'PREFIX:{idx}:{us}us' (IMG_PREPROCESS / IMG_INFERENCE) → (idx, us)."""
+    """Parse 'PREFIX:{idx}:{us}us' (IMG_PREPROCESS / IMG_INFERENCE) -> (idx, us)."""
     parts = line_str.split(":")
     return int(parts[1]), int(parts[2].rstrip("us"))
 
 
 def parse_stats_line(line_str: str) -> tuple:
-    """Parse 'IMG_STATS:{idx}:{min},{max}' → (idx, min, max)."""
+    """Parse 'IMG_STATS:{idx}:{min},{max}' -> (idx, min, max)."""
     parts = line_str.split(":")
     idx = int(parts[1])
     min_v, max_v = parts[2].split(",")
@@ -80,7 +77,7 @@ def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/
     latency_us = {}
     stats = {}
     expected_row_len = input_shape[1] * 8
-    
+
     try:
         while True:
             if p.poll() is not None:

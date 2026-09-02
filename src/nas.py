@@ -241,12 +241,12 @@ def validate_nas_computation() -> bool:
         assert metrics['condition_number'] > 0, "Condition number should be positive"
         assert metrics['rank'] > 0, "Rank should be positive"
         
-        # Test 2: Identical channels (rank 1) – just check it runs and returns valid score
+        # Test 2: Identical channels (rank 1) - just check it runs and returns valid score
         perfect_corr = tf.tile(tf.random.normal((32, 1)), [1, 64])
         metrics = compute_layer_redundancy(perfect_corr)
         assert 0.0 <= metrics["redundancy_score"] <= 1.0
 
-        # Test 3: Independent channels – valid score in [0, 1]
+        # Test 3: Independent channels - valid score in [0, 1]
         no_corr = tf.random.normal((32, 64))
         metrics = compute_layer_redundancy(no_corr)
         assert 0.0 <= metrics["redundancy_score"] <= 1.0
