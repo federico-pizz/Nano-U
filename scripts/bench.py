@@ -5,27 +5,32 @@ measured on the host, so the MCU latency has something to be compared against.
 
 Usage:
     python scripts/bench.py nano_u
-    python scripts/bench.py bu_net --config config/TinyAgri_config.yaml
+    python scripts/bench.py bu_net --preset botanicgarden
 """
 
 import argparse
 import sys
 
 from src.benchmarks import run_benchmarks
+from nanou.config import preset_path
 
 
 def main():
     parser = argparse.ArgumentParser(
         description='Benchmark Nano-U or BU-Net model inference speed')
     parser.add_argument('model', choices=['bu_net', 'nano_u'], help='Model to benchmark')
-    parser.add_argument('--config', default='config/config.yaml', help='Path to config file')
+    parser.add_argument("--preset", default="tinyagri",
+                        help="config preset from config/presets/ (default: tinyagri)")
+    parser.add_argument("--config", default=None,
+                        help="explicit config file, used instead of --preset")
     args = parser.parse_args()
+    config_path = args.config or str(preset_path(args.preset))
 
     print(f"{'='*55}")
     print(f"BENCHMARKING MODEL: {args.model}")
     print(f"{'='*55}")
 
-    results = run_benchmarks(args.model, config_path=args.config)
+    results = run_benchmarks(args.model, config_path=config_path)
     if "error" in results:
         print(f"\nBenchmark Failed: {results['error']}")
         print(results.get("traceback", ""))

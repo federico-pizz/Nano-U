@@ -20,7 +20,7 @@ aggregated (mean +/- std) into ``results/<dataset>/cv_results.{csv,json}``.
 
 This is built to run unattended for hours. Example:
 
-    python scripts/sweep.py --config config/config.yaml --k 5 --epochs 50 \
+    python scripts/sweep.py --preset tinyagri --k 5 --epochs 50 \
         --temperatures 2 4 8 --alphas 0.3 0.5 0.7 \
         --regimes none geometric photometric full --ce on off
 """
@@ -37,6 +37,7 @@ import numpy as np
 from src.data import make_dataset, sorted_by_frame, sequence_group, grouped_kfold
 from src.pipeline import run_training
 from src.utils.config import load_config
+from nanou.config import preset_path
 from src.utils import get_project_root
 from src.evaluate import run_inference, compute_segmentation_metrics
 
@@ -404,7 +405,10 @@ def _write_table(rows: List[Dict[str, Any]], out: Path) -> None:
 
 def main():
     p = argparse.ArgumentParser(description="Leakage-safe grouped CV hyperparameter search")
-    p.add_argument("--config", default="config/config.yaml")
+    p.add_argument("--preset", default="tinyagri",
+                   help="config preset from config/presets/ (default: tinyagri)")
+    p.add_argument("--config", default=None,
+                   help="explicit config file, used instead of --preset")
     p.add_argument("--k", type=int, default=5, help="number of grouped folds")
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--temperatures", type=float, nargs="+", default=[2.0, 4.0, 8.0])
@@ -452,7 +456,8 @@ def main():
         print("[CV] WARNING: --fixed-teacher reuses one teacher across folds; "
               "the teacher may have seen some folds' validation frames (leakage).")
 
-    config = load_config(args.config)
+    config_path = args.config or str(preset_path(args.preset))
+    config = load_config(config_path)
     output = args.output or os.path.join(
         config.get("data", {}).get("paths", {}).get("results_dir", "results"), "cv")
     ce_options = [c == "on" for c in args.ce]
@@ -476,7 +481,7 @@ def main():
     grid = expand_grid(args.temperatures, args.alphas, args.regimes, ce_options,
                        tversky_specs)
 
-    run_cv(args.config, k=args.k, epochs=args.epochs, grid=grid, output_dir=output,
+    run_cv(config_path, k=args.k, epochs=args.epochs, grid=grid, output_dir=output,
            threshold=args.threshold, seed=args.seed, fixed_teacher=args.fixed_teacher,
            select_primary=f"{args.select}_mean", min_miou=args.min_miou,
            jobs=args.jobs, teacher_jobs=args.teacher_jobs)

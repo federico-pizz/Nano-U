@@ -16,9 +16,9 @@ Two paths, one program:
 
 Usage:
     python scripts/train.py
-    python scripts/train.py --config config/TinyAgri_config.yaml
+    python scripts/train.py --preset tinyagri
     python scripts/train.py --no-distill --model bu_net
-    python scripts/train.py --no-distill --model nano_u --config config/TinyAgri_config.yaml
+    python scripts/train.py --no-distill --model nano_u --preset tinyagri
 """
 
 import argparse
@@ -28,6 +28,7 @@ from pathlib import Path
 
 from src.pipeline import run_training, export_int8
 from src.utils.config import load_config
+from nanou.config import preset_path
 
 
 def _warn_firmware_dependency(quant_res):
@@ -259,7 +260,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train Nano-U: QAD by default, or a single model with --no-distill"
     )
-    parser.add_argument("--config", default="config/config.yaml", help="Path to config file")
+    parser.add_argument("--preset", default="tinyagri",
+                        help="config preset from config/presets/ (default: tinyagri)")
+    parser.add_argument("--config", default=None,
+                        help="explicit config file, used instead of --preset")
     parser.add_argument("--no-distill", action="store_true",
                         help="Train one model without knowledge distillation")
     # Free-form rather than a choice list: this is the config section name that
@@ -274,13 +278,14 @@ def main():
     if args.no_distill and not args.model:
         parser.error("--no-distill requires --model (e.g. --model bu_net)")
 
-    config = load_config(args.config)
+    config_path = args.config or str(preset_path(args.preset))
+    config = load_config(config_path)
     output_dir = config.get("data", {}).get("paths", {}).get("results_dir", "results/")
 
     if args.no_distill:
-        run_single(args.model, args.config, output_dir)
+        run_single(args.model, config_path, output_dir)
     else:
-        run_qad(args.config, output_dir)
+        run_qad(config_path, output_dir)
 
 
 if __name__ == "__main__":

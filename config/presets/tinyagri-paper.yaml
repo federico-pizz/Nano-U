@@ -1,0 +1,51 @@
+# TinyAgri - the configuration as submitted. Kept runnable so the published
+# numbers can be reproduced; tinyagri.yaml is the tuned one used since.
+extends: base
+
+data_root: data/TinyAgri
+models_dir: models/TinyAgri
+output_dir: results/TinyAgri
+seed: 98
+
+input_shape: [60, 80, 3]
+early_stopping: true
+patience: 20
+optimizer: adamw
+lr_scheduler: plateau
+lr_plateau_patience: 10
+lr_plateau_factor: 0.2
+min_lr: 1.0e-6
+learning_rate: 1.0e-3
+augment: true
+epochs: 200
+
+nano_u:
+  filters: [4, 8, 16]
+  bottleneck: 16
+  decoder_filters: [16, 8, 4]
+  batch_size: 16
+  weight_decay: 1.0e-4
+
+  use_distillation: true
+  teacher_model_name: bu_net
+  teacher_weights: models/TinyAgri/bu_net.h5
+  alpha: 0.5
+  temperature: 4.0
+
+  tversky_weight: 0.5
+  tversky_alpha: 0.7
+  tversky_beta: 0.3
+
+  # No augment_params: the submission ran make_dataset's defaults, which are the
+  # "full" regime (flip 0.5 + rotation 20 deg).
+
+  qat_enabled: true
+  track_redundancy: true
+  redundancy_layers: [enc1a_dw, bottleneck_a_dw, dec2_conv_b_pw]
+
+bu_net:
+  filters: [64, 128, 256, 512, 1024]
+  bottleneck: 1024
+  decoder_filters: [512, 256, 128, 64]
+  batch_size: 32
+  weight_decay: 5.0e-3

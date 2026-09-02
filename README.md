@@ -1,14 +1,14 @@
 # Nano-U
 
-> **Binary terrain segmentation in 3,357 parameters — small enough to run bare-metal on a $10 microcontroller.**
-> Distilled with quantization awareness · Deployed in pure Rust · 1.7 FPS on an ESP32-S3, no ML accelerator.
+> **Binary terrain segmentation in 3,357 parameters - small enough to run bare-metal on a $10 microcontroller.**
+> Distilled with quantization awareness | Deployed in pure Rust | 1.7 FPS on an ESP32-S3, no ML accelerator.
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 [![TensorFlow](https://img.shields.io/badge/TensorFlow-2.x-orange.svg)](https://www.tensorflow.org/)
 [![Rust](https://img.shields.io/badge/rust-esp--rs-red.svg)](https://esp-rs.github.io/book/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Dataset](https://img.shields.io/badge/🤗%20Dataset-TinyAgri-yellow)](https://huggingface.co/datasets/federico-pizz/TinyAgri)
+[![Dataset](https://img.shields.io/badge/HF%20Dataset-TinyAgri-yellow)](https://huggingface.co/datasets/federico-pizz/TinyAgri)
 
 ---
 
@@ -16,10 +16,10 @@ Nano-U is a tiny encoder-decoder segmentation network built for autonomous navig
 
 Two ideas make it fit:
 
-- **Quantization-Aware Distillation (QAD)** — a single-pass regime that fuses knowledge distillation from a full-precision BU-Net teacher with INT8 fake-quantization from epoch one.
-- **A compile-time Rust engine** — a [fork of MicroFlow](https://github.com/federico-pizz/microflow-rs) that resolves the whole operator graph at build time: no heap allocator, no dynamic dispatch, no interpreter.
+- **Quantization-Aware Distillation (QAD)** - a single-pass regime that fuses knowledge distillation from a full-precision BU-Net teacher with INT8 fake-quantization from epoch one.
+- **A compile-time Rust engine** - a [fork of MicroFlow](https://github.com/federico-pizz/microflow-rs) that resolves the whole operator graph at build time: no heap allocator, no dynamic dispatch, no interpreter.
 
-> **⚡ Want more speed?** The [`multicore`](../../tree/multicore) branch splits inference across both Xtensa cores for **~27% lower latency** (~2.35 FPS vs ~1.7 FPS) with bit-identical output. See [Branches](#branches).
+> **Want more speed?** The [`multicore`](../../tree/multicore) branch splits inference across both Xtensa cores for **~27% lower latency** (~2.35 FPS vs ~1.7 FPS) with bit-identical output. See [Branches](#branches).
 
 ---
 
@@ -36,7 +36,7 @@ Two ideas make it fit:
 | Nano-U (Float32) | TinyAgri | 88.4% | 93.7% | 93.5% | 94.0% |
 | **Nano-U (INT8, on ESP32)** | **TinyAgri** | **88.4%** | **93.7%** | **93.5%** | **93.9%** |
 
-The near-zero Float32→INT8 gap (≈0 pp mIoU on both domains) shows QAD carries accuracy through quantization — the on-device INT8 model matches its Float32 source within measurement noise.
+The near-zero Float32->INT8 gap (~0 pp mIoU on both domains) shows QAD carries accuracy through quantization - the on-device INT8 model matches its Float32 source within measurement noise.
 
 ### Qualitative Results
 
@@ -66,23 +66,23 @@ Peak RAM measured via stack painting (hardware high-water mark). Power measured 
 
 ## Architecture
 
-Nano-U is a strictly sequential 7-stage encoder-decoder. Skip connections are omitted on purpose — holding encoder feature maps in SRAM until the decoder consumes them would blow the 320 KB budget. Depthwise separable convolutions (K=3) are used throughout.
+Nano-U is a strictly sequential 7-stage encoder-decoder. Skip connections are omitted on purpose - holding encoder feature maps in SRAM until the decoder consumes them would blow the 320 KB budget. Depthwise separable convolutions (K=3) are used throughout.
 
 | Stage | Spatial | Channels | Operation |
 |:---|:---:|:---:|:---|
-| Encoder 1 | 60×80 → 30×40 | 3 → 4 | DW-Sep Conv × 2, MaxPool 2×2 |
-| Encoder 2 | 30×40 → 15×20 | 4 → 8 | DW-Sep Conv × 2, MaxPool 2×2 |
-| Encoder 3 | 15×20 → 5×10 | 8 → 16 | DW-Sep Conv × 2, MaxPool **3×2** |
-| Bottleneck | 5×10 | 16 | DW-Sep Conv × 2 |
-| Decoder 1 | 5×10 → 15×20 | 16 → 16 | NN Upsample 3×2, DW-Sep Conv × 2 |
-| Decoder 2 | 15×20 → 30×40 | 16 → 8 | NN Upsample 2×2, DW-Sep Conv × 2 |
-| Decoder 3 | 30×40 → 60×80 | 8 → 1 | NN Upsample 2×2, DW-Sep Conv × 2 |
+| Encoder 1 | 60x80 -> 30x40 | 3 -> 4 | DW-Sep Conv x 2, MaxPool 2x2 |
+| Encoder 2 | 30x40 -> 15x20 | 4 -> 8 | DW-Sep Conv x 2, MaxPool 2x2 |
+| Encoder 3 | 15x20 -> 5x10 | 8 -> 16 | DW-Sep Conv x 2, MaxPool **3x2** |
+| Bottleneck | 5x10 | 16 | DW-Sep Conv x 2 |
+| Decoder 1 | 5x10 -> 15x20 | 16 -> 16 | NN Upsample 3x2, DW-Sep Conv x 2 |
+| Decoder 2 | 15x20 -> 30x40 | 16 -> 8 | NN Upsample 2x2, DW-Sep Conv x 2 |
+| Decoder 3 | 30x40 -> 60x80 | 8 -> 1 | NN Upsample 2x2, DW-Sep Conv x 2 |
 
-The asymmetric 3×2 MaxPool at Stage 3 reduces 15×20 cleanly to 5×10 with no spatial misalignment. The largest intermediate tensor is 60×80×4 = 19.2 KB (INT8), keeping the arena within budget.
+The asymmetric 3x2 MaxPool at Stage 3 reduces 15x20 cleanly to 5x10 with no spatial misalignment. The largest intermediate tensor is 60x80x4 = 19.2 KB (INT8), keeping the arena within budget.
 
 Parameter count is reported at three stages: the plain Float32 architecture has **4,212** weights; QAT wraps these in fake-quant nodes for a saved-checkpoint count of **4,688**; and at TFLite export the batch-norm statistics fold into the preceding convolutions, leaving **3,357** stored INT8 parameters with no accuracy loss.
 
-SVD-based redundancy scores (`src/nas.py`) track layer utilization during training. They empirically confirm that encoder layers generalize across domains while decoder layers are domain-specific — motivating the decoder-only re-distillation strategy in [Limitations](#limitations).
+SVD-based redundancy scores (`src/nas.py`) track layer utilization during training. They empirically confirm that encoder layers generalize across domains while decoder layers are domain-specific - motivating the decoder-only re-distillation strategy in [Limitations](#limitations).
 
 ### Quantization-Aware Distillation
 
@@ -94,13 +94,13 @@ $\alpha$ weights the **distillation** term; $(1-\alpha)$ weights the supervised 
 
 ### Relation to the published paper
 
-The numbers above are **not** the ones in the [TAROS 2026 paper](#citation); the paper reports the state of the system at submission, and the repo has moved since. Both are reproducible — the difference is which config you run:
+The numbers above are **not** the ones in the [TAROS 2026 paper](#citation); the paper reports the state of the system at submission, and the repo has moved since. Both are reproducible - the difference is which config you run:
 
 | | Paper (arXiv:2605.10210) | This repo (current) |
 |:---|:---|:---|
-| Config | `config/BotanicGarden_config.yaml`, `config/TinyAgri_config.yaml` | `config/*_tuned_config.yaml` |
-| Distillation ($T$, $\alpha$) | BG 8.0 / 0.3 · TinyAgri 4.0 / 0.5 | BG 4.0 / 0.3 · TinyAgri 0.7 / 0.3 |
-| Supervised loss | BCE only | BG: BCE · TinyAgri: 0.3·BCE + 0.7·Tversky (0.8/0.2) |
+| Preset | `botanicgarden-paper`, `tinyagri-paper` | `botanicgarden`, `tinyagri` |
+| Distillation ($T$, $\alpha$) | BG 8.0 / 0.3 | TinyAgri 4.0 / 0.5 | BG 4.0 / 0.3 | TinyAgri 0.7 / 0.3 |
+| Supervised loss | BCE only | BG: BCE | TinyAgri: 0.3*BCE + 0.7*Tversky (0.8/0.2) |
 | Botanic Garden mIoU (FP32 / INT8) | 0.870 / 0.870 | 0.876 / 0.876 |
 | TinyAgri mIoU (FP32 / INT8) | 0.883 / **0.700** | 0.884 / 0.884 |
 | Inference latency | 845 ms (1.2 FPS) | 581 ms (~1.7 FPS), 426 ms on `multicore` |
@@ -109,9 +109,9 @@ The numbers above are **not** the ones in the [TAROS 2026 paper](#citation); the
 
 Three changes account for the gaps:
 
-- **The TinyAgri INT8 collapse (0.883 → 0.700) is attributable to a calibration plumbing bug rather than to QAD itself.** `export_int8` did not forward `--config` to the quantizer, so INT8 calibration always read whatever `config/config.yaml` happened to contain, regardless of which config trained the model — calibrating on another domain's images, or on random noise when the paths were placeholders. Botanic Garden was unaffected because it was the domain `config/config.yaml` was filled in for. The config is now threaded through, and missing calibration images raise instead of silently degrading to noise.
-- **The tuned configs** come from the leakage-safe grouped CV sweep (`scripts/cv_search.py`) run after submission; TinyAgri in particular moved to a precision-favoring Tversky blend and a sharpening $T<1$.
-- **Latency and RAM** reflect the buffer-reuse work in the inference engine: faster (845 → 581 ms) at the cost of a slightly larger static arena (257 → 281 KB).
+- **The TinyAgri INT8 collapse (0.883 -> 0.700) is attributable to a calibration plumbing bug rather than to QAD itself.** `export_int8` did not forward `--config` to the quantizer, so INT8 calibration always read whatever the single template config happened to contain, regardless of which config trained the model - calibrating on another domain's images, or on random noise when the paths were placeholders. Botanic Garden was unaffected because it was the domain that template was filled in for. The config is now threaded through, and missing calibration images raise instead of silently degrading to noise.
+- **The tuned configs** come from the leakage-safe grouped CV sweep (`scripts/sweep.py`) run after submission; TinyAgri in particular moved to a precision-favoring Tversky blend and a sharpening $T<1$.
+- **Latency and RAM** reflect the buffer-reuse work in the inference engine: faster (845 -> 581 ms) at the cost of a slightly larger static arena (257 -> 281 KB).
 
 ---
 
@@ -124,25 +124,25 @@ Two deployment pipelines live in parallel branches, each paired with a matching 
 | [`main`](../../tree/main) (this one) | 1 | 581 ms (~1.7 FPS) | Simpler, lower-stack single-core baseline |
 | [`multicore`](../../tree/multicore) | 2 | 426 ms (~2.35 FPS) | Splits each heavy layer across both Xtensa LX7 cores; bit-identical output |
 
-The training/evaluation stack is identical on both — only the firmware inference path differs. See [`firmware/README.md`](firmware/README.md) for the build details.
+The training/evaluation stack is identical on both - only the firmware inference path differs. See [`firmware/README.md`](firmware/README.md) for the build details.
 
 ---
 
 ## Datasets
 
 Nano-U is dataset-agnostic: any binary terrain-segmentation dataset laid out as
-`data/<name>/{train,val,test}/{img,mask}` works by pointing `config/config.yaml` at it.
+`data/<name>/{train,val,test}/{img,mask}` works by pointing a preset's `data_root` at it.
 The two below are the ones behind the results in this repo and its accompanying publication.
 
 ### Botanic Garden
-An outdoor robot navigation benchmark collected in a 48,000 m² unstructured environment. We use 1,181 images from all 5 annotated sequences, split by contiguous sequence (70/20/10) to prevent temporal leakage. Binary traversability masks are derived from the original *path* class annotations.
+An outdoor robot navigation benchmark collected in a 48,000 m^2 unstructured environment. We use 1,181 images from all 5 annotated sequences, split by contiguous sequence (70/20/10) to prevent temporal leakage. Binary traversability masks are derived from the original *path* class annotations.
 
 **Original Source:** [robot-pesg/BotanicGarden](https://github.com/robot-pesg/BotanicGarden)
 
 ### TinyAgri
 A custom terrain segmentation dataset captured with the onboard OV2640 camera of an ESP32-CAM mounted on a SunFounder Galaxy RVR rover. 2,659 images across two agricultural environments (tomato and corn fields), annotated with SAM 2. Released alongside this project to support future edge-robotics research.
 
-<img src="tools/poster/out/tinyagri_grid.png" alt="Sample images from the TinyAgri dataset — tomato and corn field terrain" width="800"/>
+<img src="tools/poster/out/tinyagri_grid.png" alt="Sample images from the TinyAgri dataset - tomato and corn field terrain" width="800"/>
 
 ---
 
@@ -165,7 +165,7 @@ The pinned install is CPU-only so it works everywhere; the test suite runs on CP
 pip install "tensorflow[and-cuda]==2.20.0"
 ```
 
-> Very new GPUs (RTX 50-series / Blackwell, sm_120) aren't covered by stock TensorFlow builds yet — they need a CUDA 12.8+ toolkit and a TensorFlow nightly, typically in a separate conda environment. See NVIDIA's Blackwell compatibility guide.
+> Very new GPUs (RTX 50-series / Blackwell, sm_120) aren't covered by stock TensorFlow builds yet - they need a CUDA 12.8+ toolkit and a TensorFlow nightly, typically in a separate conda environment. See NVIDIA's Blackwell compatibility guide.
 
 For Rust firmware build and deployment, see [`firmware/README.md`](firmware/README.md).
 
@@ -179,55 +179,69 @@ INT8 TFLite models for both domains ship in the repo under `models/`:
 
 ```
 models/
-├── BotanicGarden/nano_u.tflite
-└── TinyAgri/nano_u.tflite
+|-- BotanicGarden/nano_u.tflite
++-- TinyAgri/nano_u.tflite
 ```
 
 You can evaluate these directly without training from scratch (see [Evaluate](#evaluate)).
 
 ### Training
 
-Fill in `config/config.yaml` with your dataset paths, then pick one of the two (mutually exclusive) options.
+Pick a preset, then pick one of the two (mutually exclusive) options. `--preset`
+is the only flag a full run needs; every script takes it and defaults to
+`tinyagri`.
 
-**Option A — QAD Pipeline (recommended).** All four phases in one shot: teacher training → student training with distillation → INT8 TFLite export → evaluation.
+| Preset | What it is |
+|:---|:---|
+| `tinyagri` | TinyAgri, tuned - the current headline numbers |
+| `botanicgarden` | Botanic Garden, tuned |
+| `tinyagri-paper` | TinyAgri, as submitted |
+| `botanicgarden-paper` | Botanic Garden, as submitted |
+
+For your own dataset, copy a preset and change `data_root`, `models_dir` and
+`output_dir`. Anything you do not set comes from `config/base.yaml`, and a key
+that is not part of the schema is an error rather than a silent default.
+
+**Option A - QAD Pipeline (recommended).** All four phases in one shot: teacher training -> student training with distillation -> INT8 TFLite export -> evaluation.
 
 ```bash
-python scripts/run_qad.py --config config/config.yaml
+python scripts/train.py --preset tinyagri
 ```
 
-**Option B — Standard training (no distillation).** Trains teacher and student independently.
+**Option B - Standard training (no distillation).** Trains teacher and student independently.
 
 ```bash
-python scripts/train_model.py bu_net --config config/config.yaml   # Teacher
-python scripts/train_model.py nano_u --config config/config.yaml   # Student
+python scripts/train.py --no-distill --model bu_net --preset tinyagri   # Teacher
+python scripts/train.py --no-distill --model nano_u --preset tinyagri   # Student
 ```
 
 ### Evaluate
 
 ```bash
-python src/evaluate.py nano_u --config config/config.yaml            # held-out test split
-python src/evaluate.py nano_u --config config/config.yaml --split val --threshold 0.6
+python scripts/evaluate.py nano_u --preset tinyagri            # held-out test split
+python scripts/evaluate.py nano_u --preset tinyagri --split val --threshold 0.6
+python scripts/evaluate.py nano_u --preset tinyagri --info     # parameter counts, layers, summary
 ```
 
-Reports mIoU, Dice, precision/recall and the F0.5/F1/F2 family, plus a precision–recall curve and a metric-vs-threshold sweep. When frames carry sequence ids it adds a per-sequence variance breakdown (plot + `*_report.json`). Outputs land in `results/<dataset>/<model>/`. INT8 TFLite and float Keras models go through the same forward path.
+Reports mIoU, Dice, precision/recall and the F0.5/F1/F2 family, plus a precision-recall curve and a metric-vs-threshold sweep. When frames carry sequence ids it adds a per-sequence variance breakdown (plot + `*_report.json`). Outputs land in `results/<dataset>/<model>/`. INT8 TFLite and float Keras models go through the same forward path.
 
 ### Hyperparameter search (leakage-safe CV)
 
 Grouped k-fold sweep over distillation temperature/alpha, augmentation regime, the CE-loss ablation, and the conservative Tversky term, with each whole capture sequence kept inside one fold. Selects by mIoU with F0.5 as the safety tiebreak.
 
 ```bash
-python scripts/cv_search.py --config config/config.yaml --k 4 --epochs 200 \
+python scripts/sweep.py --preset tinyagri --k 4 --epochs 200 \
     --temperatures 2 4 8 --alphas 0.3 0.5 0.7 \
     --regimes none geometric photometric full --ce on off \
     --tversky 0.0 0.5 --jobs 3
 ```
 
-`--ce on off` toggles the CE term (off ≡ `alpha=1.0`); `--tversky` sweeps the precision-favoring loss `(1-w)·BCE + w·Tversky` (default `0.0` = pure BCE). `--jobs N` runs N **student** pipelines concurrently; the heavy BU-Net teacher has its own `--teacher-jobs` (default 1). `--k` must be ≤ the number of distinct sequences.
+`--ce on off` toggles the CE term (off == `alpha=1.0`); `--tversky` sweeps the precision-favoring loss `(1-w)*BCE + w*Tversky` (default `0.0` = pure BCE). `--jobs N` runs N **student** pipelines concurrently; the heavy BU-Net teacher has its own `--teacher-jobs` (default 1). `--k` must be <= the number of distinct sequences.
 
 ### On-Device Evaluation
 
 ```bash
-python scripts/eval_esp32.py nano_u --config config/config.yaml
+python scripts/device_eval.py nano_u --preset tinyagri
 ```
 
 ### MCU Deployment
@@ -240,40 +254,44 @@ See [`firmware/README.md`](firmware/README.md) for build setup, binary descripti
 
 ```
 Nano-U/
-├── config/config.yaml          # Configuration template
-├── src/
-│   ├── models/                 # Nano-U and BU-Net builders
-│   ├── utils/                  # Metrics, QAT wrappers, config loader
-│   ├── data.py                 # tf.data pipelines and augmentation
-│   ├── evaluate.py             # Evaluation and visualization
-│   ├── nas.py                  # SVD-based redundancy monitoring
-│   ├── quantize_model.py       # INT8 TFLite export and calibration
-│   └── train.py                # Training loops (standard + distillation)
-├── scripts/
-│   ├── run_qad.py              # Full QAD pipeline
-│   ├── cv_search.py            # Leakage-safe grouped-CV hyperparameter search
-│   ├── train_model.py          # Single-model training
-│   ├── eval_esp32.py           # On-device inference and evaluation
-│   ├── capture_view.py         # Decode live-camera frame dumps (capture bin) to PNG
-│   └── profile_nano_u.py       # Stack painting and energy profiling
-├── firmware/                   # ESP32-S3 bare-metal Rust
-│   ├── src/bin/
-│   │   ├── online.rs                 # Live-camera control loop (OV2640 → nav decision)
-│   │   ├── capture.rs                # Live-camera frame dump for pipeline validation
-│   │   ├── run.rs                    # Continuous inference loop (default target)
-│   │   ├── inference.rs              # One-shot INT8 benchmark over all test images
-│   │   ├── single_inference.rs       # Single-image inference + serial output
-│   │   ├── analysis.rs               # Stack painting + power profiling (Nano-U)
-│   │   └── analysis_person_detect.rs # Stack painting + power profiling (person_detect)
-│   ├── src/camera.rs                 # OV2640 live-capture driver
-│   ├── src/control.rs                # Pure navigation policy
-│   └── build.rs                      # Compile-time quantization param extraction + image packing
-├── models/
-│   ├── BotanicGarden/nano_u.tflite
-│   └── TinyAgri/nano_u.tflite
-└── data/
-    ├── BotanicGarden/
-    └── TinyAgri/
+|-- config/
+|   |-- base.yaml               # Every default, in one place
+|   +-- presets/                # One file per dataset x (tuned | as submitted)
+|-- src/
+|   |-- models/                 # Nano-U and BU-Net builders
+|   |-- utils/                  # Metrics, QAT wrappers, config loader
+|   |-- data.py                 # tf.data pipelines and augmentation
+|   |-- evaluate.py             # Evaluation and visualization
+|   |-- nas.py                  # SVD-based redundancy monitoring
+|   |-- quantize_model.py       # INT8 TFLite export and calibration
+|   +-- train.py                # Training loops (standard + distillation)
+|-- scripts/
+|   |-- train.py                # QAD pipeline (--no-distill for the plain path)
+|   |-- evaluate.py             # Host evaluation (--info for model stats)
+|   |-- export.py               # INT8 TFLite + quant_params.json
+|   |-- bench.py                # Host-side latency benchmark
+|   |-- sweep.py                # Leakage-safe grouped-CV hyperparameter search
+|   |-- device_eval.py          # On-device inference and evaluation
+|   |-- capture.py              # Decode live-camera frame dumps (capture bin) to PNG
+|   +-- profile.py              # Stack painting and energy profiling
+|-- firmware/                   # ESP32-S3 bare-metal Rust
+|   |-- src/bin/
+|   |   |-- online.rs                 # Live-camera control loop (OV2640 -> nav decision)
+|   |   |-- capture.rs                # Live-camera frame dump for pipeline validation
+|   |   |-- run.rs                    # Continuous inference loop (default target)
+|   |   |-- inference.rs              # One-shot INT8 benchmark over all test images
+|   |   |-- single_inference.rs       # Single-image inference + serial output
+|   |   |-- analysis.rs               # Stack painting + power profiling (Nano-U)
+|   |   +-- analysis_person_detect.rs # Stack painting + power profiling (person_detect)
+|   |-- src/camera.rs                 # OV2640 live-capture driver
+|   |-- src/control.rs                # Pure navigation policy
+|   +-- build.rs                      # Compile-time quantization param extraction + image packing
+|-- models/
+|   |-- BotanicGarden/nano_u.tflite
+|   +-- TinyAgri/nano_u.tflite
++-- data/
+    |-- BotanicGarden/
+    +-- TinyAgri/
 ```
 
 ---
@@ -308,4 +326,4 @@ If you use Nano-U or the TinyAgri dataset, please cite:
 
 ## License
 
-Dual-licensed under the **MIT License** and the **Apache License 2.0** — use it under either, at your option. See [LICENSE](LICENSE) for the full text.
+Dual-licensed under the **MIT License** and the **Apache License 2.0** - use it under either, at your option. See [LICENSE](LICENSE) for the full text.

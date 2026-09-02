@@ -16,6 +16,7 @@ from src.utils import get_project_root, BinaryIoU
 from src.data import make_dataset, sorted_by_frame
 from src.utils.config import load_config
 from src.evaluate import dice_coef, bce_loss_from_logits, focal_loss_from_logits, sigmoid
+from nanou.config import preset_path
 
 import matplotlib
 matplotlib.use('Agg')
@@ -47,7 +48,7 @@ def decode_hex_row(hex_str: str) -> np.ndarray:
     return np.frombuffer(bytes.fromhex(hex_str), dtype="<f4")
 
 
-def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/config.yaml"):
+def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/presets/tinyagri.yaml"):
     print(f"[1/3] Building inference binary for {model_name}...")
     
     config = load_config(str(repo_root / config_path))
@@ -152,7 +153,7 @@ def run_inference_on_device(repo_root, model_name="nano_u", config_path="config/
         
     return {"img_data": img_data, "latency_us": latency_us, "stats": stats}
 
-def evaluate_esp_outputs(device_result, repo_root, model_name="nano_u", config_path="config/config.yaml", threshold=0.5, samples_to_plot=6):
+def evaluate_esp_outputs(device_result, repo_root, model_name="nano_u", config_path="config/presets/tinyagri.yaml", threshold=0.5, samples_to_plot=6):
     img_data_dict = device_result["img_data"]
     latency_us = device_result.get("latency_us", {})
     config = load_config(str(repo_root / config_path))
@@ -300,21 +301,25 @@ def evaluate_esp_outputs(device_result, repo_root, model_name="nano_u", config_p
 def main():
     parser = argparse.ArgumentParser(description='Benchmark Nano-U model on ESP32 hardware')
     parser.add_argument('model', default='nano_u', nargs='?', help='Model to benchmark')
-    parser.add_argument('--config', default='config/config.yaml', help='Path to config file')
+    parser.add_argument("--preset", default="tinyagri",
+                        help="config preset from config/presets/ (default: tinyagri)")
+    parser.add_argument("--config", default=None,
+                        help="explicit config file, used instead of --preset")
     args = parser.parse_args()
+    config_path = args.config or str(preset_path(args.preset))
 
     repo_root = Path(__file__).parent.parent.resolve()
     print("==========================================")
     print(f"ESP32 Benchmarking Pipeline ({args.model})")
     print("==========================================")
     
-    device_result = run_inference_on_device(repo_root, model_name=args.model, config_path=args.config)
+    device_result = run_inference_on_device(repo_root, model_name=args.model, config_path=config_path)
     if not device_result or not device_result.get("img_data"):
         print("Failed to collect inference data from ESP32.")
         sys.exit(1)
 
     print(f"\n[3/3] Evaluating ESP32 outputs and calculating metrics...")
-    evaluate_esp_outputs(device_result, repo_root, model_name=args.model, config_path=args.config)
+    evaluate_esp_outputs(device_result, repo_root, model_name=args.model, config_path=config_path)
 
 if __name__ == '__main__':
     main()

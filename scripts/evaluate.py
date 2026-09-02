@@ -13,7 +13,7 @@ Two modes:
 
 Usage:
     python scripts/evaluate.py                                     # nano_u, test split
-    python scripts/evaluate.py bu_net --config config/TinyAgri_config.yaml
+    python scripts/evaluate.py bu_net --preset botanicgarden
     python scripts/evaluate.py nano_u --split val --threshold 0.6
     python scripts/evaluate.py nano_u --info
 """
@@ -24,6 +24,7 @@ import os
 from src.evaluate import evaluate_and_plot
 from src.utils import get_project_root
 from src.utils.config import load_config
+from nanou.config import preset_path
 
 
 def show_info(model_name, config_path):
@@ -85,7 +86,10 @@ def main():
     parser = argparse.ArgumentParser(description='Evaluate a model, or report its structure')
     parser.add_argument('model', nargs='?', default='nano_u',
                         help='Model to evaluate (.h5 or .tflite basename without extension)')
-    parser.add_argument('--config', default='config/config.yaml', help='Path to config file')
+    parser.add_argument("--preset", default="tinyagri",
+                        help="config preset from config/presets/ (default: tinyagri)")
+    parser.add_argument("--config", default=None,
+                        help="explicit config file, used instead of --preset")
     parser.add_argument('--split', default='test', choices=['train', 'val', 'test'],
                         help="Split to evaluate (default test; val is what selection may look at)")
     parser.add_argument('--threshold', type=float, default=0.5,
@@ -93,12 +97,13 @@ def main():
     parser.add_argument('--info', action='store_true',
                         help='Report model structure and parameter counts instead of evaluating')
     args = parser.parse_args()
+    config_path = args.config or str(preset_path(args.preset))
 
     if args.info:
-        show_info(args.model, args.config)
+        show_info(args.model, config_path)
         return
 
-    evaluate_and_plot(args.model, args.config, batch_size=8, threshold=args.threshold,
+    evaluate_and_plot(args.model, config_path, batch_size=8, threshold=args.threshold,
                       samples_to_plot=6, split=args.split)
 
 

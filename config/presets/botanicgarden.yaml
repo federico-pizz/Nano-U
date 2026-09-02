@@ -1,0 +1,66 @@
+# Botanic Garden - the tuned configuration.
+extends: base
+
+data_root: data/BotanicGarden
+models_dir: models/BotanicGarden
+output_dir: results/BotanicGarden
+seed: 98
+
+input_shape: [60, 80, 3]
+early_stopping: true
+patience: 20
+optimizer: adamw
+lr_scheduler: plateau
+lr_plateau_patience: 10
+lr_plateau_factor: 0.2
+min_lr: 1.0e-6
+learning_rate: 1.0e-3
+augment: true
+epochs: 200
+
+nano_u:
+  filters: [4, 8, 16]
+  bottleneck: 16
+  decoder_filters: [16, 8, 4]
+  batch_size: 16
+  weight_decay: 1.0e-4
+
+  use_distillation: true
+  teacher_model_name: bu_net
+  teacher_weights: models/BotanicGarden/bu_net.h5
+  # CV stage-2 winner (full regime, CE on): F0.5 leader (0.9041) and co-best
+  # mIoU (0.8692) over the T x alpha grid. T=4.0 was the interior peak on both.
+  alpha: 0.3
+  temperature: 4.0
+
+  # CV stage-3 winner: tversky_weight=0.0, i.e. plain BCE. At the tuned T=4.0
+  # every Tversky weight underperformed BCE on both axes (weights
+  # 0.0/0.3/0.5/0.7 -> F0.5 0.9013/0.8959/0.8843/0.8978, mIoU
+  # 0.8672/0.8658/0.8560/0.8574). Unlike TinyAgri, this domain gets no benefit
+  # from the precision-favoring blend. alpha/beta are inert at weight 0.0 and
+  # were not swept.
+  tversky_weight: 0.0
+  tversky_alpha: 0.7
+  tversky_beta: 0.3
+
+  # CV winner: the "full" regime - geometric flip and rotation plus colour
+  # jitter. Spelled out so the selected config is reproduced exactly rather than
+  # relying on make_dataset's defaults happening to match.
+  augment_params:
+    flip_prob: 0.5
+    max_rotation_deg: 20.0
+    brightness: 0.2
+    contrast: 0.2
+    saturation: 0.2
+    hue: 0.05
+
+  qat_enabled: true
+  track_redundancy: true
+  redundancy_layers: [enc1a_dw, bottleneck_a_dw, dec2_conv_b_pw]
+
+bu_net:
+  filters: [64, 128, 256, 512, 1024]
+  bottleneck: 1024
+  decoder_filters: [512, 256, 128, 64]
+  batch_size: 32
+  weight_decay: 1.0e-3
