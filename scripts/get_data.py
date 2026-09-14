@@ -20,14 +20,18 @@ from nanou.fetch import FetchError, download, plan, spec_for, verify
 
 def main():
     parser = argparse.ArgumentParser(description="Download and lay out a dataset")
-    parser.add_argument("--preset", default="tinyagri",
-                        help="config preset from config/presets/ (default: tinyagri)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="report the split plan without downloading")
-    parser.add_argument("--verify", action="store_true",
-                        help="check the dataset already on disk and exit")
-    parser.add_argument("--workers", type=int, default=8,
-                        help="concurrent downloads (default: 8)")
+    parser.add_argument(
+        "--preset",
+        default="tinyagri",
+        help="config preset from config/presets/ (default: tinyagri)",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="report the split plan without downloading"
+    )
+    parser.add_argument(
+        "--verify", action="store_true", help="check the dataset already on disk and exit"
+    )
+    parser.add_argument("--workers", type=int, default=8, help="concurrent downloads (default: 8)")
     args = parser.parse_args()
 
     resolved = resolve(args.preset)

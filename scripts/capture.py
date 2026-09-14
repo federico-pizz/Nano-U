@@ -1,103 +1,39 @@
-#!/usr/bin/env python3
-"""Decode and save the frames streamed by the firmware `capture` binary.
+"""Capture RAW and downsampled frames from the board and save them as PNGs."""
 
-Companion to `firmware/src/bin/capture.rs`. That binary stops the live pipeline
-short of inference and streams the intermediate images over serial so you can see
-what the camera sees and validate each stage on its own:
-
-  * RAW  - QQVGA 160x120 RGB565 straight from the OV2640 (sensor / framing /
-           byte-order check)
-  * DOWN - 60x80 RGB888 after the 2x2 box downscale (resize check; these are the
-           exact pixels the INT8 quantizer turns into the model input)
-
-Wire format (one block per stage per frame):
-
-    <TAG>_BEGIN idx=<n> w=<w> h=<h> bytes=<len> fmt=<rgb565|rgb888>
-    <base64 line>
-    ...
-    <TAG>_END idx=<n>
-
-Each decoded block is saved as `frame<idx>_<tag>.png` under the output dir.
-
-Usage:
-    python scripts/capture.py                      # /dev/ttyACM0, ./capture_out
-    python scripts/capture.py -n 5                 # stop after 5 frames
-    python scripts/capture.py -p /dev/ttyACM1 -o /tmp/cam --upscale 4
-
-Note: this only reads the serial stream. Flash/run the binary separately, e.g.
-    MODELS_DIR=../models/TinyAgri cargo run --release --bin capture
-or point this script at the port while the device is already running.
-"""
 import argparse
-import base64
 import re
 import time
 from pathlib import Path
 
-import numpy as np
 import serial
-from PIL import Image
 
-BEGIN_RE = re.compile(
-    r"^(?P<tag>\w+)_BEGIN idx=(?P<idx>\d+) w=(?P<w>\d+) h=(?P<h>\d+) "
-    r"bytes=(?P<bytes>\d+) fmt=(?P<fmt>\w+)$"
-)
-
-
-def rgb565_to_rgb888(buf: bytes, w: int, h: int, swap: bool) -> np.ndarray:
-    """Decode a big-endian (unless `swap`) RGB565 buffer to an (h, w, 3) uint8 array."""
-    raw = np.frombuffer(buf, dtype=np.uint8).astype(np.uint16)
-    if swap:
-        px = raw[0::2] | (raw[1::2] << 8)
-    else:
-        px = (raw[0::2] << 8) | raw[1::2]
-    px = px[: w * h].reshape(h, w)
-    r5 = (px >> 11) & 0x1F
-    g6 = (px >> 5) & 0x3F
-    b5 = px & 0x1F
-    r = (r5 << 3) | (r5 >> 2)
-    g = (g6 << 2) | (g6 >> 4)
-    b = (b5 << 3) | (b5 >> 2)
-    return np.stack([r, g, b], axis=-1).astype(np.uint8)
-
-
-def save_block(meta: dict, b64_lines: list, out_dir: Path, upscale: int) -> Path:
-    """Decode one completed BEGIN/END block and write it as a PNG."""
-    data = base64.b64decode("".join(b64_lines))
-    w, h, fmt = meta["w"], meta["h"], meta["fmt"]
-
-    if fmt == "rgb565":
-        arr = rgb565_to_rgb888(data, w, h, meta["swap"])
-    elif fmt == "rgb888":
-        arr = np.frombuffer(data, dtype=np.uint8)[: w * h * 3].reshape(h, w, 3)
-    else:
-        raise ValueError(f"unknown fmt {fmt!r}")
-
-    img = Image.fromarray(arr, "RGB")
-    if upscale > 1:
-        img = img.resize((w * upscale, h * upscale), Image.NEAREST)
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"frame{meta['idx']:04d}_{meta['tag']}.png"
-    img.save(path)
-    return path
+from nanou.device.protocol import BEGIN_RE, save_block
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("-p", "--port", default="/dev/ttyACM0", help="serial port")
     ap.add_argument("-b", "--baud", type=int, default=115200, help="baud rate")
     ap.add_argument("-o", "--out", default="capture_out", help="output directory")
-    ap.add_argument("-n", "--frames", type=int, default=0,
-                    help="stop after N frames (0 = until Ctrl-C)")
-    ap.add_argument("--upscale", type=int, default=1,
-                    help="nearest-neighbour upscale factor for the saved PNGs")
-    ap.add_argument("--swap-rgb565", action="store_true",
-                    help="treat RAW frames as little-endian RGB565 (match the "
-                         "firmware SWAP_RGB565_BYTES flag if colours look wrong)")
-    ap.add_argument("--no-reset", action="store_true",
-                    help="don't pulse RTS/DTR to reset the board into normal boot")
+    ap.add_argument(
+        "-n", "--frames", type=int, default=0, help="stop after N frames (0 = until Ctrl-C)"
+    )
+    ap.add_argument(
+        "--upscale", type=int, default=1, help="nearest-neighbour upscale factor for the saved PNGs"
+    )
+    ap.add_argument(
+        "--swap-rgb565",
+        action="store_true",
+        help="treat RAW frames as little-endian RGB565 (match the "
+        "firmware SWAP_RGB565_BYTES flag if colours look wrong)",
+    )
+    ap.add_argument(
+        "--no-reset",
+        action="store_true",
+        help="don't pulse RTS/DTR to reset the board into normal boot",
+    )
     args = ap.parse_args()
 
     out_dir = Path(args.out)
@@ -113,7 +49,7 @@ def main():
 
     print(f"Listening on {args.port} @ {args.baud}; saving to {out_dir}/  (Ctrl-C to stop)")
 
-    meta = None          # current block metadata, or None when outside a block
+    meta = None  # current block metadata, or None when outside a block
     b64_lines = []
     frames_done = set()
     buf = b""

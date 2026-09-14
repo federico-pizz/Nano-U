@@ -1,336 +1,54 @@
-#!/usr/bin/env python3
-import os
-import sys
+"""On-device evaluation: flash the eval binary, read the serial output, score it."""
+
 import argparse
-import subprocess
-import pty
-import select
-import time
-import json
-import numpy as np
-import tensorflow as tf
-import tf_keras as keras
+import sys
 from pathlib import Path
 
-from src.utils import get_project_root, BinaryIoU
-from src.data import make_dataset, sorted_by_frame
-from src.utils.config import load_config
-from src.evaluate import dice_coef, bce_loss_from_logits, focal_loss_from_logits, sigmoid
-from nanou.config import preset_path
+from nanou.config import load_config, preset_path
+from nanou.device.evaluate import evaluate_esp_outputs, run_inference_on_device
 from nanou.preflight import (
     PreflightError,
     require_esp_toolchain,
     require_tflite_model,
 )
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-EPS = 1e-7
-
-
-# -- Serial protocol parsers --------------------------------------------------
-# Pure functions so the wire format is unit-tested directly (see
-# tests/unit/test_esp32_parser.py) instead of via a copy of the logic.
-
-def parse_idx_us_line(line_str: str) -> tuple:
-    """Parse 'PREFIX:{idx}:{us}us' (IMG_PREPROCESS / IMG_INFERENCE) -> (idx, us)."""
-    parts = line_str.split(":")
-    return int(parts[1]), int(parts[2].rstrip("us"))
-
-
-def parse_stats_line(line_str: str) -> tuple:
-    """Parse 'IMG_STATS:{idx}:{min},{max}' -> (idx, min, max)."""
-    parts = line_str.split(":")
-    idx = int(parts[1])
-    min_v, max_v = parts[2].split(",")
-    return idx, float(min_v), float(max_v)
-
-
-def decode_hex_row(hex_str: str) -> np.ndarray:
-    """Decode a row of little-endian f32 pixels from the firmware hex output."""
-    return np.frombuffer(bytes.fromhex(hex_str), dtype="<f4")
-
-
-def run_inference_on_device(repo_root, model_name="nanou", config_path="config/presets/tinyagri.yaml"):
-    print(f"[1/3] Building inference binary for {model_name}...")
-    
-    config = load_config(str(repo_root / config_path))
-    data_paths = config.get("data", {}).get("paths", {})
-    models_dir = repo_root / data_paths.get("models_dir", "models")
-    test_img_dir = repo_root / data_paths.get("processed", {}).get("test", {}).get("img", "")
-    input_shape = config.get("data", {}).get("input_shape", [60, 80, 3])
-
-    env = os.environ.copy()
-    env["MODEL_NAME"] = model_name
-    env["MODELS_DIR"] = str(models_dir)
-    env["TEST_IMG_DIR"] = str(test_img_dir)
-    subprocess.run(["cargo", "build", "--release", "--bin", "inference"], cwd=repo_root / "firmware", check=True, env=env)
-
-    print(f"\n[2/3] Flashing and running inference for {model_name}...")
-    cmd = ["cargo", "run", "--release", "--bin", "inference"]
-
-    master, slave = pty.openpty()
-    p = subprocess.Popen(cmd, cwd=repo_root / "firmware", stdin=slave, stdout=slave, stderr=subprocess.STDOUT, close_fds=True, env=env)
-    os.close(slave)
-
-    buffer = b""
-    start_time = time.time()
-    capturing = False
-    current_img = -1
-    img_data = {}
-    latency_us = {}
-    stats = {}
-    expected_row_len = input_shape[1] * 8
-
-    try:
-        while True:
-            if p.poll() is not None:
-                break
-            if time.time() - start_time > 300:
-                print("\nTimeout reached (300s). Aborting.")
-                break
-            r, _, _ = select.select([master], [], [], 0.1)
-            if master in r:
-                try:
-                    data = os.read(master, 1024)
-                except OSError:
-                    break
-                if not data:
-                    break
-                
-                sys.stdout.write(data.decode('utf-8', errors='replace'))
-                sys.stdout.flush()
-                
-                buffer += data
-                
-                # Parse lines
-                while b'\n' in buffer:
-                    line, buffer = buffer.split(b'\n', 1)
-                    line_str = line.decode('utf-8', errors='replace').strip()
-                    
-                    if line_str.startswith("BENCHMARK_START:"):
-                        num_images = int(line_str.split(":")[1])
-                        print(f"\nDevice announced {num_images} images.")
-                        
-                    elif line_str.startswith("IMG_OUTPUT_START:"):
-                        current_img = int(line_str.split(":")[1])
-                        img_data[current_img] = []
-                        capturing = True
-                        
-                    elif line_str.startswith("IMG_OUTPUT_END:"):
-                        capturing = False
-                        
-                    elif line_str.startswith("IMG_PREPROCESS:"):
-                        idx, us = parse_idx_us_line(line_str)
-                        latency_us.setdefault(idx, {})["preprocess"] = us
-
-                    elif line_str.startswith("IMG_INFERENCE:"):
-                        idx, us = parse_idx_us_line(line_str)
-                        latency_us.setdefault(idx, {})["inference"] = us
-
-                    elif line_str.startswith("IMG_STATS:"):
-                        idx, min_v, max_v = parse_stats_line(line_str)
-                        stats[idx] = {"min": min_v, "max": max_v}
-
-                    elif line_str == "BENCHMARK_DONE":
-                        p.terminate()
-                        return {"img_data": img_data, "latency_us": latency_us, "stats": stats}
-
-                    elif capturing:
-                        # Dynamic hex string length checking
-                        if len(line_str) == expected_row_len:
-                            try:
-                                img_data[current_img].append(decode_hex_row(line_str))
-                            except ValueError:
-                                pass
-                                
-    except KeyboardInterrupt:
-        print("\nInterrupted.")
-    finally:
-        if p.poll() is None:
-            p.terminate()
-            time.sleep(0.5)
-            if p.poll() is None:
-                p.kill()
-        os.close(master)
-        
-    return {"img_data": img_data, "latency_us": latency_us, "stats": stats}
-
-def evaluate_esp_outputs(device_result, repo_root, model_name="nanou", config_path="config/presets/tinyagri.yaml", threshold=0.5, samples_to_plot=6):
-    img_data_dict = device_result["img_data"]
-    latency_us = device_result.get("latency_us", {})
-    config = load_config(str(repo_root / config_path))
-    
-    data_paths = config.get("data", {}).get("paths", {})
-    test_cfg = data_paths.get("processed", {}).get("test", {})
-        
-    test_img_dir = repo_root / test_cfg.get('img', '')
-    test_mask_dir = repo_root / test_cfg.get('mask', '')
-    
-    test_imgs = sorted_by_frame([str(p) for p in test_img_dir.glob('*.png')])
-    test_masks = sorted_by_frame([str(p) for p in test_mask_dir.glob('*.png')])
-    
-
-    mean = config['data']['normalization']['mean']
-    std = config['data']['normalization']['std']
-    input_shape = config.get("data", {}).get("input_shape", [60, 80, 3])
-    test_ds = make_dataset(
-        test_imgs, test_masks,
-        batch_size=1, shuffle=False, augment=False,
-        target_size=(input_shape[0], input_shape[1]),
-        mean=mean, std=std
-    )
-    
-    all_masks = []
-    all_imgs = []
-    for imgs, masks in test_ds:
-        all_masks.append(masks.numpy()[0])
-        all_imgs.append(imgs.numpy()[0])
-        
-    if not all_masks:
-        print(f"Warning: No test images loaded.")
-        return None
-        
-    expected_h = config['data']['input_shape'][0]
-
-    mean_bce = keras.metrics.Mean(name='bce')
-    mean_dice = keras.metrics.Mean(name='dice')
-    mean_focal = keras.metrics.Mean(name='focal')
-    iou_metric = BinaryIoU(threshold=threshold, name='binary_iou')
-    precision = keras.metrics.Precision(name='precision')
-    recall = keras.metrics.Recall(name='recall')
-
-    all_probs = []
-    all_preds_bin = []
-
-    batch_img_indices = sorted(img_data_dict.keys())[:len(all_masks)]
-    print(f"\nEvaluating {len(batch_img_indices)} images for {model_name}...")
-
-    for i_in_batch, i_global in enumerate(batch_img_indices):
-        raw_rows = img_data_dict[i_global]
-        if len(raw_rows) != expected_h:
-            print(f"Warning: Image {i_global} has incomplete data, skipping.")
-            continue
-            
-        out_f32 = np.stack(raw_rows, axis=0)
-        out_f32 = np.expand_dims(np.expand_dims(out_f32, axis=0), axis=-1)
-        logits = tf.convert_to_tensor(out_f32, dtype=tf.float32)
-        probs = sigmoid(logits)
-            
-        masks_t = tf.convert_to_tensor(np.expand_dims(all_masks[i_in_batch], 0), dtype=tf.float32)
-        
-        bce = bce_loss_from_logits(masks_t, logits).numpy()
-        d = dice_coef(masks_t, probs, threshold=None).numpy()
-        f = focal_loss_from_logits(masks_t, logits).numpy()
-        preds_bin = (probs.numpy() > threshold).astype(np.uint8)
-        
-        mean_bce.update_state(bce)
-        mean_dice.update_state(d)
-        mean_focal.update_state(f)
-        iou_metric.update_state(masks_t, probs)
-        precision.update_state(masks_t, preds_bin)
-        recall.update_state(masks_t, preds_bin)
-        
-        all_probs.append(probs.numpy()[0])
-        all_preds_bin.append(preds_bin[0])
-        
-    if not all_probs:
-        return None
-
-    all_probs = np.stack(all_probs, axis=0)
-    all_preds_bin = np.stack(all_preds_bin, axis=0)
-    all_masks = np.stack(all_masks, axis=0)
-    all_imgs = np.stack(all_imgs, axis=0)
-    
-    results = {
-        'bce': float(mean_bce.result().numpy()),
-        'dice': float(mean_dice.result().numpy()),
-        'focal': float(mean_focal.result().numpy()),
-        'miou': float(iou_metric.result().numpy()),
-        'precision': float(precision.result().numpy()),
-        'recall': float(recall.result().numpy()),
-    }
-    results['f1'] = 2 * results['precision'] * results['recall'] / (results['precision'] + results['recall'] + EPS)
-    if latency_us:
-        infer_times = [v["inference"] for v in latency_us.values() if "inference" in v]
-        preprocess_times = [v["preprocess"] for v in latency_us.values() if "preprocess" in v]
-        if infer_times:
-            results["inference_mean_us"] = float(np.mean(infer_times))
-            results["inference_min_us"] = int(min(infer_times))
-            results["inference_max_us"] = int(max(infer_times))
-        if preprocess_times:
-            results["preprocess_mean_us"] = float(np.mean(preprocess_times))
-    
-    print(f'Results from ESP32 inference:')
-    for k, v in results.items():
-        print(f'  {k}: {v:.4f}')
-        
-    # Plotting
-    samples = min(samples_to_plot, len(all_probs))
-    sample_indices = np.linspace(0, len(all_probs) - 1, samples, dtype=int)
-    fig, axes = plt.subplots(samples, 4, figsize=(12, 3 * samples))
-    mean_arr, std_arr = np.array(mean, dtype=np.float32), np.array(std, dtype=np.float32)
-
-    for idx, i in enumerate(sample_indices):
-        img_orig = np.clip((all_imgs[i] * std_arr) + mean_arr, 0.0, 1.0)
-        mask = all_masks[i, ..., 0]
-        prob = all_probs[i, ..., 0]
-        pred_bin = all_preds_bin[i, ..., 0]
-
-        ax0 = axes[idx, 0] if samples > 1 else axes[0]
-        ax1 = axes[idx, 1] if samples > 1 else axes[1]
-        ax2 = axes[idx, 2] if samples > 1 else axes[2]
-        ax3 = axes[idx, 3] if samples > 1 else axes[3]
-
-        ax0.imshow(img_orig)
-        ax0.set_title(f'Img {i}')
-        ax0.axis('off')
-        ax1.imshow(mask, cmap='gray'); ax1.set_title('GT'); ax1.axis('off')
-        ax2.imshow(prob, cmap='viridis', vmin=0, vmax=1); ax2.set_title('Prob'); ax2.axis('off')
-        ax3.imshow(pred_bin, cmap='gray'); ax3.set_title('Pred'); ax3.axis('off')
-
-    plt.tight_layout()
-    config_results_dir = config.get("data", {}).get("paths", {}).get("results_dir", "results") if config else "results"
-    out_dir = repo_root / config_results_dir / model_name
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f'esp32_hw_eval.png'
-    plt.savefig(out_path, dpi=150)
-    print(f'Plot saved to {out_path}')
-    
-    with open(out_dir / f'hw_metrics.json', 'w') as mf:
-        json.dump(results, mf, indent=2)
-    return results
 
 def main():
-    parser = argparse.ArgumentParser(description='Benchmark Nano-U model on ESP32 hardware')
-    parser.add_argument('model', default='nanou', nargs='?', help='Model to benchmark')
-    parser.add_argument("--preset", default="tinyagri",
-                        help="config preset from config/presets/ (default: tinyagri)")
-    parser.add_argument("--config", default=None,
-                        help="explicit config file, used instead of --preset")
+    parser = argparse.ArgumentParser(description="Benchmark Nano-U model on ESP32 hardware")
+    parser.add_argument("model", default="nanou", nargs="?", help="Model to benchmark")
+    parser.add_argument(
+        "--preset",
+        default="tinyagri",
+        help="config preset from config/presets/ (default: tinyagri)",
+    )
+    parser.add_argument(
+        "--config", default=None, help="explicit config file, used instead of --preset"
+    )
     args = parser.parse_args()
     config_path = args.config or str(preset_path(args.preset))
     try:
         require_esp_toolchain()
-        require_tflite_model(load_config(config_path)['data']['paths']['models_dir'],
-                             args.model, preset=args.preset)
+        require_tflite_model(
+            load_config(config_path)["data"]["paths"]["models_dir"], args.model, preset=args.preset
+        )
     except PreflightError as e:
-        raise SystemExit(f'\n{e}')
+        raise SystemExit(f"\n{e}") from e
 
     repo_root = Path(__file__).parent.parent.resolve()
     print("==========================================")
     print(f"ESP32 Benchmarking Pipeline ({args.model})")
     print("==========================================")
-    
-    device_result = run_inference_on_device(repo_root, model_name=args.model, config_path=config_path)
+
+    device_result = run_inference_on_device(
+        repo_root, model_name=args.model, config_path=config_path
+    )
     if not device_result or not device_result.get("img_data"):
         print("Failed to collect inference data from ESP32.")
         sys.exit(1)
 
-    print(f"\n[3/3] Evaluating ESP32 outputs and calculating metrics...")
+    print("\n[3/3] Evaluating ESP32 outputs and calculating metrics...")
     evaluate_esp_outputs(device_result, repo_root, model_name=args.model, config_path=config_path)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

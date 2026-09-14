@@ -17,11 +17,11 @@ import json
 import re
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
 
 from PIL import Image
 
@@ -56,12 +56,12 @@ class DatasetSpec:
     """
 
     name: str
-    repo_id: Optional[str] = None
-    sequences: Sequence[Tuple[str, str]] = ()
+    repo_id: str | None = None
+    sequences: Sequence[tuple[str, str]] = ()
     image_dir: str = "{domain}/{scene}"
     mask_dir: str = "SAM2-masks/{domain}/{scene}"
-    target_size: Tuple[int, int] = (80, 60)
-    fractions: Tuple[float, float] = (0.70, 0.20)
+    target_size: tuple[int, int] = (80, 60)
+    fractions: tuple[float, float] = (0.70, 0.20)
     note: str = ""
 
 
@@ -83,7 +83,7 @@ BOTANICGARDEN = DatasetSpec(
     ),
 )
 
-DATASETS: Dict[str, DatasetSpec] = {d.name: d for d in (TINYAGRI, BOTANICGARDEN)}
+DATASETS: dict[str, DatasetSpec] = {d.name: d for d in (TINYAGRI, BOTANICGARDEN)}
 
 
 def spec_for(data_root) -> DatasetSpec:
@@ -102,8 +102,9 @@ def spec_for(data_root) -> DatasetSpec:
 
 # -- source listing -------------------------------------------------------------
 
+
 def _get(url: str, retries: int = 3) -> bytes:
-    last: Optional[Exception] = None
+    last: Exception | None = None
     for _ in range(retries):
         try:
             with urllib.request.urlopen(url, timeout=60) as response:
@@ -113,13 +114,13 @@ def _get(url: str, retries: int = 3) -> bytes:
     raise FetchError(f"could not fetch {url}: {last}")
 
 
-def _list_dir(repo_id: str, path: str) -> List[str]:
+def _list_dir(repo_id: str, path: str) -> list[str]:
     """Return the file paths in one directory of the dataset repository."""
     entries = json.loads(_get(HF_TREE.format(repo=repo_id, path=path)))
     return [e["path"] for e in entries if e.get("type") == "file"]
 
 
-def _by_frame(paths: Sequence[str], pattern: re.Pattern) -> Dict[int, str]:
+def _by_frame(paths: Sequence[str], pattern: re.Pattern) -> dict[int, str]:
     found = {}
     for path in paths:
         match = pattern.search(path)
@@ -128,7 +129,7 @@ def _by_frame(paths: Sequence[str], pattern: re.Pattern) -> Dict[int, str]:
     return found
 
 
-def sequential_split(items: Sequence, train: float, val: float) -> Tuple[List, List, List]:
+def sequential_split(items: Sequence, train: float, val: float) -> tuple[list, list, list]:
     """Split a sequence in capture order into train / val / test.
 
     Rounding is to the nearest frame, and test takes whatever is left, so the
@@ -137,12 +138,14 @@ def sequential_split(items: Sequence, train: float, val: float) -> Tuple[List, L
     n = len(items)
     n_train = round(train * n)
     n_val = round(val * n)
-    return (list(items[:n_train]),
-            list(items[n_train:n_train + n_val]),
-            list(items[n_train + n_val:]))
+    return (
+        list(items[:n_train]),
+        list(items[n_train : n_train + n_val]),
+        list(items[n_train + n_val :]),
+    )
 
 
-def plan(spec: DatasetSpec) -> Dict[str, List[Tuple[str, str, str]]]:
+def plan(spec: DatasetSpec) -> dict[str, list[tuple[str, str, str]]]:
     """Work out what to download, without downloading anything.
 
     Returns:
@@ -157,45 +160,46 @@ def plan(spec: DatasetSpec) -> Dict[str, List[Tuple[str, str, str]]]:
     if not spec.repo_id:
         raise FetchError(spec.note or f"{spec.name} has no public release")
 
-    out: Dict[str, List[Tuple[str, str, str]]] = {s: [] for s in SPLITS}
+    out: dict[str, list[tuple[str, str, str]]] = {s: [] for s in SPLITS}
     for domain, scene in spec.sequences:
         images = _by_frame(
-            _list_dir(spec.repo_id, spec.image_dir.format(domain=domain, scene=scene)),
-            IMAGE_FRAME)
+            _list_dir(spec.repo_id, spec.image_dir.format(domain=domain, scene=scene)), IMAGE_FRAME
+        )
         masks = _by_frame(
-            _list_dir(spec.repo_id, spec.mask_dir.format(domain=domain, scene=scene)),
-            MASK_FRAME)
+            _list_dir(spec.repo_id, spec.mask_dir.format(domain=domain, scene=scene)), MASK_FRAME
+        )
         frames = sorted(set(images) & set(masks))
         parts = sequential_split(frames, *spec.fractions)
-        for split, numbers in zip(SPLITS, parts):
+        for split, numbers in zip(SPLITS, parts, strict=True):
             out[split].extend(
-                (f"{domain}_{scene}_frame{n}.png", images[n], masks[n]) for n in numbers)
+                (f"{domain}_{scene}_frame{n}.png", images[n], masks[n]) for n in numbers
+            )
     return out
 
 
 # -- download and write ---------------------------------------------------------
 
-def _fetch_resized(repo_id: str, path: str, size: Tuple[int, int],
-                   mode: str, resample: int) -> Image.Image:
+
+def _fetch_resized(
+    repo_id: str, path: str, size: tuple[int, int], mode: str, resample: int
+) -> Image.Image:
     raw = _get(HF_FILE.format(repo=repo_id, path=path))
     return Image.open(BytesIO(raw)).convert(mode).resize(size, resample)
 
 
-def _write_pair(spec: DatasetSpec, out_root: Path, split: str,
-                item: Tuple[str, str, str]) -> None:
+def _write_pair(spec: DatasetSpec, out_root: Path, split: str, item: tuple[str, str, str]) -> None:
     name, image_path, mask_path = item
     # Bilinear for the image and nearest for the mask: the mask is a label map,
     # so an interpolated edge pixel would be a class that does not exist.
-    image = _fetch_resized(spec.repo_id, image_path, spec.target_size,
-                           "RGB", Image.Resampling.BILINEAR)
-    mask = _fetch_resized(spec.repo_id, mask_path, spec.target_size,
-                          "L", Image.Resampling.NEAREST)
+    image = _fetch_resized(
+        spec.repo_id, image_path, spec.target_size, "RGB", Image.Resampling.BILINEAR
+    )
+    mask = _fetch_resized(spec.repo_id, mask_path, spec.target_size, "L", Image.Resampling.NEAREST)
     image.save(out_root / split / "img" / name)
     mask.save(out_root / split / "mask" / name)
 
 
-def download(spec: DatasetSpec, out_root, workers: int = 8,
-             progress=print) -> Dict[str, int]:
+def download(spec: DatasetSpec, out_root, workers: int = 8, progress=print) -> dict[str, int]:
     """Download a dataset and write the processed splits under *out_root*.
 
     Args:
@@ -217,14 +221,17 @@ def download(spec: DatasetSpec, out_root, workers: int = 8,
     for split, items in work.items():
         progress(f"  {split}: {len(items)} frame pairs")
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            list(pool.map(lambda item: _write_pair(spec, out_root, split, item), items))
+            list(
+                pool.map(lambda item, split=split: _write_pair(spec, out_root, split, item), items)
+            )
         written[split] = len(items)
     return written
 
 
 # -- verification ---------------------------------------------------------------
 
-def verify(out_root) -> Dict[str, int]:
+
+def verify(out_root) -> dict[str, int]:
     """Check a processed dataset and return its per-split pair count.
 
     Raises:
@@ -244,7 +251,8 @@ def verify(out_root) -> Dict[str, int]:
             missing = sorted(images ^ masks)[:5]
             raise FetchError(
                 f"{out_root}: {split} images and masks do not pair up "
-                f"({len(images)} vs {len(masks)}); first unmatched: {missing}")
+                f"({len(images)} vs {len(masks)}); first unmatched: {missing}"
+            )
         counts[split] = len(images)
     return counts
 

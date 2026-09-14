@@ -12,8 +12,8 @@ this module has stopped earning its place.
 
 import os
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Optional
 
 from .config import SPLITS
 
@@ -30,14 +30,14 @@ def _fix(message: str, command: str) -> PreflightError:
     return PreflightError(f"{message}\n\n  Fix it with:  {command}\n")
 
 
-def _preset_flag(preset: Optional[str]) -> str:
+def _preset_flag(preset: str | None) -> str:
     return f" --preset {preset}" if preset else ""
 
 
 # -- dataset --------------------------------------------------------------------
 
-def require_dataset(data_root, preset: Optional[str] = None,
-                    splits: Iterable[str] = SPLITS) -> None:
+
+def require_dataset(data_root, preset: str | None = None, splits: Iterable[str] = SPLITS) -> None:
     """Check that a dataset is present and laid out as the pipeline expects.
 
     Verifies `<data_root>/<split>/{img,mask}` for each split, that they hold
@@ -76,7 +76,8 @@ def require_dataset(data_root, preset: Optional[str] = None,
 
 # -- models ---------------------------------------------------------------------
 
-def require_keras_model(models_dir, model_name: str, preset: Optional[str] = None) -> Path:
+
+def require_keras_model(models_dir, model_name: str, preset: str | None = None) -> Path:
     """Return the trained Keras checkpoint for *model_name*, or raise.
 
     Raises:
@@ -93,7 +94,7 @@ def require_keras_model(models_dir, model_name: str, preset: Optional[str] = Non
     )
 
 
-def require_tflite_model(models_dir, model_name: str, preset: Optional[str] = None) -> Path:
+def require_tflite_model(models_dir, model_name: str, preset: str | None = None) -> Path:
     """Return the INT8 TFLite file for *model_name*, or raise.
 
     Raises:
@@ -108,7 +109,7 @@ def require_tflite_model(models_dir, model_name: str, preset: Optional[str] = No
     return path
 
 
-def require_model(models_dir, model_name: str, preset: Optional[str] = None) -> Path:
+def require_model(models_dir, model_name: str, preset: str | None = None) -> Path:
     """Return whichever model file exists for *model_name*, preferring the INT8 one.
 
     Evaluation runs either format through the same forward path, so it only
@@ -183,15 +184,15 @@ def require_espflash() -> None:
     """
     if shutil.which("espflash") is None:
         raise _fix(
-            "espflash is not on PATH; `cargo run` uses it as the runner for the "
-            "xtensa target",
+            "espflash is not on PATH; `cargo run` uses it as the runner for the xtensa target",
             "cargo install espflash",
         )
 
 
 # -- serial ---------------------------------------------------------------------
 
-def require_serial_port(port: Optional[str] = None) -> None:
+
+def require_serial_port(port: str | None = None) -> None:
     """Check that the board's serial port exists and is not already held open.
 
     A port held by another process is the single most common device-side

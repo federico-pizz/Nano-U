@@ -40,6 +40,13 @@ training:
   alpha: 0.3                # weight on the teacher term; (1-alpha) is the CE weight
   temperature: 4.0
 
+  # Rescaling of the distillation term after temperature scaling.
+  #   squared - multiply by T^2, the classical Hinton correction, which assumes T>1
+  #   none    - leave the term alone
+  # The tuned TinyAgri temperature is 0.7, so T^2 = 0.49 down-weights KD rather
+  # than compensating for anything. "none" is the other half of that experiment.
+  t_scale: squared
+
   # Conservative supervised loss, student only:
   #   (1 - tversky_weight)*BCE + tversky_weight*Tversky(alpha_fp, beta_fn)
   # alpha_fp > beta_fn penalizes false path harder than missed path. Weight 0.0
@@ -48,7 +55,9 @@ training:
   tversky_alpha: 0.7
   tversky_beta: 0.3
 
-  # SVD channel-redundancy monitoring (diagnostic; does not change training)
+  # SVD channel-redundancy monitoring. Observation only: it logs the condition
+  # number of each monitored layer's activations and touches neither the
+  # gradients nor checkpoint selection, so it cannot change what a run learns.
   track_redundancy: false
   redundancy_every_epochs: 10
   redundancy_layers: [enc1a_dw, enc1a_pw]

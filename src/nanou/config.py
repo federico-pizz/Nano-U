@@ -32,11 +32,12 @@ mapping at the top level is a model block; any other scalar is a preset-level
 default shared by every model in the file.
 """
 
+import os
 import warnings
 from dataclasses import dataclass, field, fields, replace
 from difflib import get_close_matches
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import yaml
 
@@ -54,7 +55,7 @@ def get_project_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
-def resolve_path(value, project_root: Optional[Path] = None):
+def resolve_path(value, project_root: Path | None = None):
     """Make a path absolute against the project root, leaving non-strings alone.
 
     A path above the repository is allowed: a multi-gigabyte image set normally
@@ -67,8 +68,9 @@ def resolve_path(value, project_root: Optional[Path] = None):
     path = Path(value)
     resolved = (path if path.is_absolute() else root / path).resolve()
     if root not in resolved.parents and resolved != root:
-        warnings.warn(f"path '{value}' resolves outside the project root ({resolved})",
-                      stacklevel=2)
+        warnings.warn(
+            f"path '{value}' resolves outside the project root ({resolved})", stacklevel=2
+        )
     return str(resolved)
 
 
@@ -95,7 +97,7 @@ class TrainConfig:
     # Augmentation. Empty `augment_params` means make_dataset's own defaults,
     # which are the "full" regime - set them explicitly to pin a regime.
     augment: bool = False
-    augment_params: Dict[str, Any] = field(default_factory=dict)
+    augment_params: dict[str, Any] = field(default_factory=dict)
 
     # Stopping and learning-rate schedule
     early_stopping: bool = False
@@ -111,9 +113,10 @@ class TrainConfig:
     # Knowledge distillation
     use_distillation: bool = False
     teacher_model_name: str = "bu_net"
-    teacher_weights: Optional[str] = None
+    teacher_weights: str | None = None
     alpha: float = 0.3
     temperature: float = 4.0
+    t_scale: str = "squared"  # "squared" applies the T^2 Hinton factor; "none" drops it
 
     # Conservative supervised loss: (1-w)*BCE + w*Tversky(alpha_fp, beta_fn)
     tversky_weight: float = 0.0
@@ -123,33 +126,32 @@ class TrainConfig:
     # SVD channel-redundancy monitoring
     track_redundancy: bool = False
     redundancy_every_epochs: int = 10
-    redundancy_layers: List[str] = field(default_factory=lambda: ["enc1a_dw", "enc1a_pw"])
+    redundancy_layers: list[str] = field(default_factory=lambda: ["enc1a_dw", "enc1a_pw"])
 
     tensorboard: bool = False
-    seed: Optional[int] = None
+    seed: int | None = None
 
     # Architecture. None means "the builder's own default for this model".
-    input_shape: Tuple[int, int, int] = (60, 80, 3)
-    filters: Optional[List[int]] = None
-    bottleneck: Optional[int] = None
-    decoder_filters: Optional[List[int]] = None
+    input_shape: tuple[int, int, int] = (60, 80, 3)
+    filters: list[int] | None = None
+    bottleneck: int | None = None
+    decoder_filters: list[int] | None = None
 
     # Output locations
-    models_dir: Optional[str] = None
-    output_dir: Optional[str] = None
+    models_dir: str | None = None
+    output_dir: str | None = None
 
     @property
-    def split_paths(self) -> Dict[str, Dict[str, str]]:
+    def split_paths(self) -> dict[str, dict[str, str]]:
         """The six dataset directories derived from `data_root`."""
         root = Path(self.data_root)
-        return {s: {"img": str(root / s / "img"), "mask": str(root / s / "mask")}
-                for s in SPLITS}
+        return {s: {"img": str(root / s / "img"), "mask": str(root / s / "mask")} for s in SPLITS}
 
 
 TRAIN_KEYS = frozenset(f.name for f in fields(TrainConfig))
 
 
-def _reject_unknown(mapping: Dict[str, Any], where: str, allowed=TRAIN_KEYS) -> None:
+def _reject_unknown(mapping: dict[str, Any], where: str, allowed=TRAIN_KEYS) -> None:
     """Raise on the first key that is not part of the schema."""
     for key in mapping:
         if key in allowed:
@@ -159,7 +161,7 @@ def _reject_unknown(mapping: Dict[str, Any], where: str, allowed=TRAIN_KEYS) -> 
         raise ValueError(f"unknown config key '{key}' in {where}.{suffix}")
 
 
-def _load_yaml(path: Path) -> Dict[str, Any]:
+def _load_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"config file not found: {path}")
     with open(path) as f:
@@ -177,9 +179,9 @@ class ResolvedConfig:
 
     name: str
     path: Path
-    models: Dict[str, TrainConfig]
-    data: Dict[str, Any]
-    quantization: Dict[str, Any]
+    models: dict[str, TrainConfig]
+    data: dict[str, Any]
+    quantization: dict[str, Any]
 
     def for_model(self, model_name: str) -> TrainConfig:
         """Return the resolved config for one model block."""
@@ -191,7 +193,7 @@ class ResolvedConfig:
                 f"preset '{self.name}' defines no model '{model_name}' (has: {known})"
             ) from None
 
-    def to_legacy_dict(self) -> Dict[str, Any]:
+    def to_legacy_dict(self) -> dict[str, Any]:
         """Emit the nested dictionary the current `src/` modules still expect.
 
         A bridge, not a design: it exists so `--preset` works end to end while
@@ -216,7 +218,7 @@ class ResolvedConfig:
                     )
         splits = any_model.split_paths
 
-        legacy: Dict[str, Any] = {
+        legacy: dict[str, Any] = {
             "data": {
                 "input_shape": list(any_model.input_shape),
                 "num_classes": self.data.get("num_classes", 1),
@@ -260,6 +262,7 @@ class ResolvedConfig:
                 "teacher_weights": cfg.teacher_weights,
                 "alpha": cfg.alpha,
                 "temperature": cfg.temperature,
+                "t_scale": cfg.t_scale,
                 "tversky_weight": cfg.tversky_weight,
                 "tversky_alpha": cfg.tversky_alpha,
                 "tversky_beta": cfg.tversky_beta,
@@ -284,7 +287,7 @@ def preset_path(preset: str) -> Path:
     return get_project_root() / "config" / "presets" / f"{preset}.yaml"
 
 
-def available_presets() -> List[str]:
+def available_presets() -> list[str]:
     """Names of every preset shipped in `config/presets/`, sorted."""
     directory = get_project_root() / "config" / "presets"
     return sorted(p.stem for p in directory.glob("*.yaml")) if directory.is_dir() else []
@@ -299,8 +302,9 @@ def is_preset_file(path) -> bool:
     return isinstance(loaded, dict) and "extends" in loaded
 
 
-def resolve(preset: Optional[str] = None, path=None,
-            overrides: Optional[Dict[str, Any]] = None) -> ResolvedConfig:
+def resolve(
+    preset: str | None = None, path=None, overrides: dict[str, Any] | None = None
+) -> ResolvedConfig:
     """Merge base, preset and overrides into one `ResolvedConfig`.
 
     Args:
@@ -333,8 +337,8 @@ def resolve(preset: Optional[str] = None, path=None,
 
     # Preset top level splits three ways: reserved blocks, shared training
     # defaults, and one block per model.
-    shared: Dict[str, Any] = {}
-    blocks: Dict[str, Dict[str, Any]] = {}
+    shared: dict[str, Any] = {}
+    blocks: dict[str, dict[str, Any]] = {}
     for key, value in raw.items():
         if key in RESERVED_KEYS:
             continue
@@ -351,7 +355,7 @@ def resolve(preset: Optional[str] = None, path=None,
     merged_data = {**(base.get("data") or {}), **(raw.get("data") or {})}
     merged_quant = {**(base.get("quantization") or {}), **(raw.get("quantization") or {})}
 
-    models: Dict[str, TrainConfig] = {}
+    models: dict[str, TrainConfig] = {}
     for model_name, block in blocks.items():
         _reject_unknown(block, f"{path} block '{model_name}'")
         merged = {**base_training, **shared, **block, **(overrides or {})}
@@ -367,14 +371,71 @@ def resolve(preset: Optional[str] = None, path=None,
             merged["input_shape"] = tuple(merged["input_shape"])
         models[model_name] = TrainConfig(**merged)
 
-    return ResolvedConfig(name=name, path=path, models=models,
-                          data=merged_data, quantization=merged_quant)
+    return ResolvedConfig(
+        name=name, path=path, models=models, data=merged_data, quantization=merged_quant
+    )
+
+
+def load_config(config_path: str = "tinyagri") -> dict[str, Any]:
+    """Resolve a config and return it in the pre-v2 nested dictionary shape.
+
+    Accepts a preset name (`"tinyagri"`), a path to a preset, or a path to a
+    pre-v2 flat config file. Presets go through `resolve()` - so `base.yaml` is
+    merged under them and unknown keys still raise - and are then flattened by
+    `ResolvedConfig.to_legacy_dict`.
+
+    This is a bridge, not a design: it exists so the modules that still read a
+    dictionary keep working while they are moved, and it disappears when they
+    take a `TrainConfig` directly.
+    """
+    root = Path(get_project_root())
+
+    # A bare name (no separator, no suffix) is a preset name.
+    if (
+        isinstance(config_path, str)
+        and not os.path.splitext(config_path)[1]
+        and os.sep not in config_path
+    ):
+        config_path = str(preset_path(config_path))
+
+    target = Path(config_path) if os.path.isabs(config_path) else root / config_path
+    if not target.exists():
+        raise FileNotFoundError(f"Config file not found: {target}")
+
+    if is_preset_file(target):
+        return resolve(path=target).to_legacy_dict()
+
+    with open(target) as fh:
+        config = yaml.safe_load(fh)
+
+    # Flat pre-v2 file: keep the structure as written, absolutize the paths.
+    paths = config.get("data", {}).get("paths", {})
+    raw = paths.get("raw_datasets")
+    if isinstance(raw, list):
+        for entry in raw:
+            for key in ("images", "masks"):
+                if isinstance(entry, dict) and key in entry:
+                    entry[key] = resolve_path(entry[key], root)
+    processed = paths.get("processed")
+    if isinstance(processed, dict):
+        for key, value in processed.items():
+            if isinstance(value, str):
+                processed[key] = resolve_path(value, root)
+            elif isinstance(value, dict):
+                for sub, sub_value in value.items():
+                    if isinstance(sub_value, str):
+                        value[sub] = resolve_path(sub_value, root)
+    if "models_dir" in paths:
+        paths["models_dir"] = resolve_path(paths["models_dir"], root)
+
+    return config
 
 
 __all__ = [
     "TrainConfig",
     "ResolvedConfig",
     "resolve",
+    "load_config",
     "get_project_root",
     "resolve_path",
     "preset_path",

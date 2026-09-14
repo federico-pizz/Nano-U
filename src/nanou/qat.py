@@ -1,8 +1,7 @@
 """Quantization-Aware Training (QAT) utilities for Keras models."""
 
-import tensorflow as tf
-import tf_keras as keras
 import tensorflow_model_optimization as tfmot
+import tf_keras as keras
 
 
 def apply_qat_to_model(model: keras.Model, strict: bool = True) -> keras.Model:
@@ -29,8 +28,7 @@ def apply_qat_to_model(model: keras.Model, strict: bool = True) -> keras.Model:
     """
     try:
         qat_model = tfmot.quantization.keras.quantize_model(model)
-        print(f"  QAT applied: {qat_model.count_params():,} params "
-              f"(was {model.count_params():,})")
+        print(f"  QAT applied: {qat_model.count_params():,} params (was {model.count_params():,})")
         return qat_model
 
     except Exception as exc:

@@ -37,13 +37,8 @@ dev = ["pytest==9.0.2", "ruff==0.14.5"]
 # command a reader sees in the README is the file they can open.
 
 [tool.setuptools.packages.find]
-# Two roots during the transition. `src/nanou` is the real package. The legacy
-# `src`, `src.models` and `src.utils` are installed alongside it only so that
-# `import src.train` resolves from any working directory, which is what removes the
-# need for a `sys.path.insert` in every script. Once the modules have moved into
-# `nanou`, drop the three `src*` entries and the second `where` root with them.
-where = ["src", "."]
-include = ["nanou*", "src", "src.models", "src.utils"]
+where = ["src"]
+include = ["nanou*"]
 
 [tool.ruff]
 line-length = 100

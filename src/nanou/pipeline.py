@@ -1,42 +1,30 @@
 """Core pipeline functions: single training run, NAS search, quantize+benchmark helper."""
 
-import os
-import sys
 import json
 import shutil
 import traceback
-import time
-from pathlib import Path
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Union
+from pathlib import Path
+from typing import Any
 
-import yaml
-import tensorflow as tf
 import numpy as np
 
-# Allow running the script directly (python src/pipeline.py)
-if __name__ == "__main__" and __package__ is None:
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from src.train import train_model
-from src.utils import NumpyEncoder
-from src.utils.config import load_config
-
+from nanou.metrics import NumpyEncoder
+from nanou.train import train_model
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _select_best_epoch_metrics(raw: Dict[str, Any]) -> Dict[str, Any]:
+
+def _select_best_epoch_metrics(raw: dict[str, Any]) -> dict[str, Any]:
     """Collapse a per-epoch history dict to a single-value summary.
 
     Val metrics are taken at the epoch with the lowest val_loss (the saved
     checkpoint epoch). Train metrics are taken at the final epoch.
     """
     val_losses = raw.get("val_loss")
-    best_epoch = (
-        int(np.argmin(val_losses)) if isinstance(val_losses, list) and val_losses else None
-    )
+    best_epoch = int(np.argmin(val_losses)) if isinstance(val_losses, list) and val_losses else None
     out = {}
     for k, v in raw.items():
         if isinstance(v, list) and len(v) > 0:
@@ -47,10 +35,10 @@ def _select_best_epoch_metrics(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def export_int8(
-    keras_path: Union[str, Path],
-    models_dir: Union[str, Path] = "models/",
-    config_path: str = "config/config.yaml",
-) -> Dict[str, Any]:
+    keras_path: str | Path,
+    models_dir: str | Path = "models/",
+    config_path: str = "config/presets/tinyagri.yaml",
+) -> dict[str, Any]:
     """Convert a Keras model to a calibrated INT8 TFLite file.
 
     Also produces a companion _quant_params.json consumed by firmware/build.rs
@@ -61,7 +49,7 @@ def export_int8(
     mean/std. Pointing it at a different config silently calibrates on the wrong
     (or missing) data, which quietly wrecks the INT8 scales.
     """
-    from src.quantize_model import quantize_model
+    from nanou.quantize import quantize_model
 
     keras_path = Path(keras_path)
     models_dir = Path(models_dir)
@@ -74,15 +62,19 @@ def export_int8(
 
     if keras_path != model_dest:
         shutil.copy(keras_path, model_dest)
-        print(f"Copied {keras_path.name} → {model_dest}")
+        print(f"Copied {keras_path.name} -> {model_dest}")
 
-    print(f"Quantizing {model_name} → INT8 TFLite...")
+    print(f"Quantizing {model_name} -> INT8 TFLite...")
     quant_ok = quantize_model(str(model_dest), str(tflite_path), config_path=config_path)
     quant_result = {
         "status": "success" if quant_ok else "failed",
         "tflite_path": str(tflite_path) if quant_ok else None,
-        "quant_params_path": str(quant_params_path) if quant_ok and quant_params_path.exists() else None,
-        "size_kb": round(tflite_path.stat().st_size / 1024, 2) if quant_ok and tflite_path.exists() else None,
+        "quant_params_path": str(quant_params_path)
+        if quant_ok and quant_params_path.exists()
+        else None,
+        "size_kb": round(tflite_path.stat().st_size / 1024, 2)
+        if quant_ok and tflite_path.exists()
+        else None,
     }
     if quant_ok:
         print(f"TFLite export complete: {tflite_path} ({quant_result['size_kb']} KB)")
@@ -97,12 +89,13 @@ def export_int8(
 # Single experiment
 # ---------------------------------------------------------------------------
 
+
 def run_training(
     config_name: str,
-    config_path: str = "config/experiments.yaml",
+    config_path: str = "config/presets/tinyagri.yaml",
     output_dir: str = "results/",
-    config_overrides: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    config_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Train one named experiment and return result dict.
 
     config_overrides: merged on top of the YAML config before training begins.
@@ -120,11 +113,13 @@ def run_training(
         )
 
         results_path = pipeline_dir / "results.json"
-        
+
         summary_result = result.copy()
         if "final_metrics" in summary_result and isinstance(summary_result["final_metrics"], dict):
-            summary_result["final_metrics"] = _select_best_epoch_metrics(summary_result["final_metrics"])
-            
+            summary_result["final_metrics"] = _select_best_epoch_metrics(
+                summary_result["final_metrics"]
+            )
+
         with open(results_path, "w") as f:
             json.dump(summary_result, f, indent=2, cls=NumpyEncoder)
 

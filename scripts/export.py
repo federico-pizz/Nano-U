@@ -18,19 +18,22 @@ import argparse
 import sys
 from pathlib import Path
 
-from src.quantize_model import quantize_model
 from nanou.config import preset_path
-from nanou.preflight import PreflightError
+from nanou.quantize import quantize_model
 
 
 def main():
     parser = argparse.ArgumentParser(description="Export a Keras model to INT8 TFLite")
     parser.add_argument("model_path", nargs="?", default="models/nanou.h5")
     parser.add_argument("output_path", nargs="?", default="models/nanou.tflite")
-    parser.add_argument("--preset", default="tinyagri",
-                        help="config preset from config/presets/ (default: tinyagri)")
-    parser.add_argument("--config", default=None,
-                        help="explicit config file, used instead of --preset")
+    parser.add_argument(
+        "--preset",
+        default="tinyagri",
+        help="config preset from config/presets/ (default: tinyagri)",
+    )
+    parser.add_argument(
+        "--config", default=None, help="explicit config file, used instead of --preset"
+    )
     args = parser.parse_args()
 
     config_path = args.config or str(preset_path(args.preset))

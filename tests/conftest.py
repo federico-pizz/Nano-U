@@ -1,8 +1,5 @@
 """Shared fixtures for the Nano-U test suite."""
 
-import os
-import tempfile
-
 import cv2
 import numpy as np
 import pytest
@@ -69,5 +66,6 @@ def tmp_png_dataset(tmp_path_factory):
 @pytest.fixture(scope="session")
 def nano_u_model():
     """A small Nano-U instance (16-channel) built once per test session."""
-    from src.models.builders import create_nano_u
+    from nanou.architectures import create_nano_u
+
     return create_nano_u(input_shape=(H, W, 3), filters=[4, 8, 16], bottleneck=16)

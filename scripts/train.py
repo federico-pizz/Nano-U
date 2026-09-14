@@ -26,9 +26,8 @@ import json
 import sys
 from pathlib import Path
 
-from src.pipeline import run_training, export_int8
-from src.utils.config import load_config
-from nanou.config import preset_path
+from nanou.config import load_config, preset_path
+from nanou.pipeline import export_int8, run_training
 from nanou.preflight import PreflightError, require_dataset
 
 
@@ -41,9 +40,9 @@ def _warn_firmware_dependency(quant_res):
 
 def run_qad(config_path, output_dir):
     """Teacher -> student(KD+QAT) -> INT8 -> evaluate. Writes pipeline_summary.json."""
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print("TEACHER -> STUDENT DISTILLATION PIPELINE")
-    print(f"{'='*55}")
+    print(f"{'=' * 55}")
 
     # Phase 1: Train Teacher
     print("\nPhase 1: Training Teacher")
@@ -60,7 +59,9 @@ def run_qad(config_path, output_dir):
     # Inject the teacher path resolved at runtime so the student always distils
     # from the model trained in Phase 1, regardless of what is in the YAML.
     student_res = run_training(
-        "nanou", config_path, output_dir,
+        "nanou",
+        config_path,
+        output_dir,
         config_overrides={"teacher_weights": teacher_res["model_path"]},
     )
 
@@ -78,8 +79,9 @@ def run_qad(config_path, output_dir):
         print(f"Student model not found at {student_src}")
         sys.exit(1)
 
-    quant_res = export_int8(str(student_src), models_dir=str(student_src.parent),
-                            config_path=config_path)
+    quant_res = export_int8(
+        str(student_src), models_dir=str(student_src.parent), config_path=config_path
+    )
     _warn_firmware_dependency(quant_res)
 
     if quant_res.get("status") != "success":
@@ -92,13 +94,13 @@ def run_qad(config_path, output_dir):
     print("\nPhase 4: Evaluation and Visualization")
     eval_results_all = {}
     try:
-        from src.evaluate import evaluate_and_plot
+        from nanou.evaluate import evaluate_and_plot
 
         # Evaluate Teacher (float Keras - used only as distillation reference)
         teacher_path = Path(teacher_res["model_path"])
         teacher_eval_out = Path(teacher_res["pipeline_dir"]) / "eval_predictions.png"
         print(f"\nEvaluating Teacher ({teacher_path.stem})...")
-        eval_results_all['teacher'] = evaluate_and_plot(
+        eval_results_all["teacher"] = evaluate_and_plot(
             model_name=teacher_path.stem,
             config_path=config_path,
             out_path=str(teacher_eval_out),
@@ -111,7 +113,7 @@ def run_qad(config_path, output_dir):
         # making the "float" row silently identical to INT8.
         student_dir = Path(student_res["pipeline_dir"])
         print(f"\nEvaluating Student FP32 Keras ({student_src.stem})...")
-        eval_results_all['student_fp32'] = evaluate_and_plot(
+        eval_results_all["student_fp32"] = evaluate_and_plot(
             model_name=student_src.stem,
             config_path=config_path,
             out_path=str(student_dir / "eval_predictions_fp32.png"),
@@ -119,7 +121,7 @@ def run_qad(config_path, output_dir):
         )
 
         print(f"\nEvaluating Student INT8 TFLite ({student_src.stem})...")
-        eval_results_all['student_int8'] = evaluate_and_plot(
+        eval_results_all["student_int8"] = evaluate_and_plot(
             model_name=student_src.stem,
             config_path=config_path,
             out_path=str(student_dir / "eval_predictions_int8.png"),
@@ -156,31 +158,35 @@ def run_qad(config_path, output_dir):
     student_fp32_miou = eval_results_all.get("student_fp32", {}).get("miou", float("nan"))
     student_miou = eval_results_all.get("student_int8", {}).get("miou", float("nan"))
 
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print("PIPELINE COMPLETE")
     print(f"   Teacher path:     {teacher_res['model_path']}")
     print(f"   Student path:     {student_res['model_path']}")
     print(f"   TFLite:           {quant_res.get('tflite_path', 'N/A')}")
     print(f"   Size:             {quant_res.get('size_kb', 'N/A')} KB")
-    print(f"   Quant params:     {quant_res.get('quant_params_path', 'N/A')}  <- required by firmware/build.rs")
+    print(
+        f"   Quant params:     {quant_res.get('quant_params_path', 'N/A')}  <- required by firmware/build.rs"
+    )
     print(f"   Teacher mIoU:     {teacher_miou:.4f}")
     print(f"   Student mIoU:     {student_fp32_miou:.4f}  (FP32 Keras)")
     print(f"   Student mIoU:     {student_miou:.4f}  (INT8 TFLite)")
     print(f"   Summary JSON:     {summary_path}")
-    print(f"{'='*55}\n")
+    print(f"{'=' * 55}\n")
 
 
 def run_single(model, config_path, output_dir):
     """Train one model without KD, then quantize and evaluate it. Writes summary.json."""
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print(f"STANDARD TRAINING: {model.upper()} (No KD)")
-    print(f"{'='*55}")
+    print(f"{'=' * 55}")
 
     # Phase 1: Train
     print("\nPhase 1: Training")
 
     result = run_training(
-        model, config_path, output_dir,
+        model,
+        config_path,
+        output_dir,
         config_overrides={"use_distillation": False},
     )
 
@@ -202,11 +208,11 @@ def run_single(model, config_path, output_dir):
     # bu_net is the teacher: it never runs on the MCU, so there is nothing to
     # quantize and no INT8 number to report for it.
     if result.get("model_name", "") != "bu_net":
-
         # Phase 2: Quantize to INT8 TFLite
         print("\nPhase 2: Quantize to INT8 TFLite")
-        quant_res = export_int8(str(src_model), models_dir=str(src_model.parent),
-                                config_path=config_path)
+        quant_res = export_int8(
+            str(src_model), models_dir=str(src_model.parent), config_path=config_path
+        )
         _warn_firmware_dependency(quant_res)
 
         if quant_res.get("status") != "success":
@@ -216,7 +222,8 @@ def run_single(model, config_path, output_dir):
             # evaluate_and_plot resolves .tflite before .h5 - evaluates INT8 model
             print("\nPhase 3: Evaluation")
             try:
-                from src.evaluate import evaluate_and_plot
+                from nanou.evaluate import evaluate_and_plot
+
                 eval_out = Path(result["pipeline_dir"]) / "eval_predictions.png"
                 print(f"Evaluating {model} (INT8 TFLite)...")
                 eval_results = evaluate_and_plot(
@@ -243,35 +250,43 @@ def run_single(model, config_path, output_dir):
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
 
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print("DONE")
     print(f"   Model:        {result['model_path']}")
     if quant_res.get("tflite_path"):
         print(f"   TFLite:       {quant_res['tflite_path']}")
         print(f"   Size:         {quant_res.get('size_kb', 'N/A')} KB")
-        print(f"   Quant params: {quant_res.get('quant_params_path', 'N/A')}  <- required by firmware/build.rs")
+        print(
+            f"   Quant params: {quant_res.get('quant_params_path', 'N/A')}  <- required by firmware/build.rs"
+        )
     if eval_results:
         print(f"   mIoU (INT8):  {eval_results.get('miou', float('nan')):.4f}")
         print(f"   F1   (INT8):  {eval_results.get('f1', float('nan')):.4f}")
     print(f"   Summary:      {summary_path}")
-    print(f"{'='*55}\n")
+    print(f"{'=' * 55}\n")
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Train Nano-U: QAD by default, or a single model with --no-distill"
     )
-    parser.add_argument("--preset", default="tinyagri",
-                        help="config preset from config/presets/ (default: tinyagri)")
-    parser.add_argument("--config", default=None,
-                        help="explicit config file, used instead of --preset")
-    parser.add_argument("--no-distill", action="store_true",
-                        help="Train one model without knowledge distillation")
+    parser.add_argument(
+        "--preset",
+        default="tinyagri",
+        help="config preset from config/presets/ (default: tinyagri)",
+    )
+    parser.add_argument(
+        "--config", default=None, help="explicit config file, used instead of --preset"
+    )
+    parser.add_argument(
+        "--no-distill", action="store_true", help="Train one model without knowledge distillation"
+    )
     # Free-form rather than a choice list: this is the config section name that
     # run_training passes through as the experiment name, so a config may define
     # sections beyond bu_net/nanou.
-    parser.add_argument("--model", default=None,
-                        help="With --no-distill: the model/experiment section to train")
+    parser.add_argument(
+        "--model", default=None, help="With --no-distill: the model/experiment section to train"
+    )
     args = parser.parse_args()
 
     if args.model and not args.no_distill:
