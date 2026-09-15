@@ -27,8 +27,8 @@ Usage:
 import argparse
 import os
 
-from nanou.config import load_config, preset_path
-from nanou.evaluate import evaluate, project_path
+from nanou.config import preset_path, resolve
+from nanou.evaluate import evaluate
 from nanou.preflight import (
     PreflightError,
     require_keras_model,
@@ -117,7 +117,7 @@ def main():
     )
     args = parser.parse_args()
     config_path = args.config or str(preset_path(args.preset))
-    models_dir = project_path(load_config(config_path)["data"]["paths"]["models_dir"])
+    models_dir = resolve(path=config_path).models_dir
 
     try:
         if args.info or args.format == "fp32":

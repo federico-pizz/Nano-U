@@ -34,7 +34,7 @@ from typing import Any
 import numpy as np
 import yaml
 
-from nanou.config import get_project_root, load_config, resolve_path
+from nanou.config import ResolvedConfig, resolve, resolve_path
 from nanou.data import grouped_kfold, make_dataset, sequence_group, sorted_by_frame
 from nanou.metrics import compute_segmentation_metrics
 from nanou.pipeline import run_training
@@ -81,6 +81,12 @@ AUGMENT_REGIMES: dict[str, dict[str, Any]] = {
         },
     },
 }
+
+
+# Keys a grid point carries for the results table only. `make_config_overrides`
+# writes them next to the real overrides so every row says what was asked for;
+# they are taken out before training, since they are not part of the schema.
+ROW_ONLY_KEYS = ("ce_enabled", "requested_alpha", "augment_regime")
 
 
 def make_config_overrides(
@@ -332,15 +338,10 @@ def load_sweep(path) -> dict[str, Any]:
 # -----------------------------------------------------------------------------
 
 
-def _list_split_files(config: dict[str, Any], split: str):
+def _list_split_files(config: ResolvedConfig, split: str):
     """Resolve (img_files, mask_files) for a processed split, frame-sorted."""
-    root = str(get_project_root())
-
-    def rp(p):
-        return p if os.path.isabs(p) else os.path.join(root, p)
-
-    sc = config["data"]["paths"]["processed"][split]
-    img_dir, mask_dir = rp(sc["img"]), rp(sc["mask"])
+    sc = config.split_paths[split]
+    img_dir, mask_dir = sc["img"], sc["mask"]
     imgs = sorted_by_frame(
         [os.path.join(img_dir, f) for f in os.listdir(img_dir) if f.endswith(".png")]
     )
@@ -350,7 +351,7 @@ def _list_split_files(config: dict[str, Any], split: str):
     return imgs, masks
 
 
-def pool_train_val(config: dict[str, Any]):
+def pool_train_val(config: ResolvedConfig):
     """Pool the train and val processed splits (test stays untouched)."""
     ti, tm = _list_split_files(config, "train")
     try:
@@ -361,11 +362,11 @@ def pool_train_val(config: dict[str, Any]):
 
 
 def evaluate_on_files(
-    model_path: str, img_files, mask_files, config: dict[str, Any], threshold: float = 0.5
+    model_path: str, img_files, mask_files, config: ResolvedConfig, threshold: float = 0.5
 ) -> dict[str, float]:
     """Build a dataset from explicit files and score a saved model on it."""
-    norm = config["data"]["normalization"]
-    ishape = config["data"].get("input_shape", [60, 80, 3])
+    norm = config.normalization
+    ishape = config.input_shape
     ds = make_dataset(
         img_files,
         mask_files,
@@ -418,7 +419,7 @@ def _train_student_job(job: dict[str, Any]):
             job["run_dir"],
             config_overrides={
                 **job["fold_lists"],
-                **job["cfg"],
+                **{k: v for k, v in job["cfg"].items() if k not in ROW_ONLY_KEYS},
                 "models_dir": job["models_dir"],
                 "epochs": job["epochs"],
                 "teacher_weights": job["teacher_weights"],
@@ -427,7 +428,7 @@ def _train_student_job(job: dict[str, Any]):
     except Exception as e:
         e.add_note(f"while training the student {job['tag']} fold{job['fi']}")
         raise
-    config = load_config(job["config_path"])
+    config = resolve(path=job["config_path"])
     fm = evaluate_on_files(
         res["model_path"],
         job["fold_lists"]["cv_val_img"],
@@ -478,7 +479,7 @@ def run_cv(
     heavier than the 3.3k-param student - three concurrent teachers OOM a ~6 GB
     GPU, so teachers default to sequential.
     """
-    config = load_config(config_path)
+    config = resolve(path=config_path)
     img_files, mask_files = pool_train_val(config)
     mask_by_name = {os.path.basename(m): m for m in mask_files}
     img_files = [i for i in img_files if os.path.basename(i) in mask_by_name]

@@ -9,7 +9,7 @@ import tensorflow as tf
 import tensorflow_model_optimization as tfmot
 import tf_keras as keras
 
-from nanou.config import load_config
+from nanou.config import resolve
 from nanou.data import make_dataset
 
 
@@ -241,8 +241,8 @@ def run_benchmarks(
     Raises:
         FileNotFoundError: if no saved model matches ``model_name``.
     """
-    config = load_config(config_path)
-    models_dir = Path(config.get("data", {}).get("paths", {}).get("models_dir", "models"))
+    config = resolve(path=config_path)
+    models_dir = Path(config.models_dir or "models")
 
     # Handle model_name as a full path or a name
     input_path = Path(model_name)
@@ -266,25 +266,23 @@ def run_benchmarks(
 
     print(f"Benchmarking model: {model_path}")
 
-    actual_shape = tuple(config.get("data", {}).get("input_shape", (60, 80, 3)))
+    actual_shape = config.input_shape
 
     # Try to load test dataset
     test_ds = None
     try:
-        data_paths = config.get("data", {}).get("paths", {})
-        test_cfg = data_paths.get("processed", {}).get("test", {})
+        test_cfg = config.split_paths["test"]
         print(f"Loading test dataset for {model_name}...")
 
-        t_img_dir = Path(test_cfg.get("img", ""))
-        t_mask_dir = Path(test_cfg.get("mask", ""))
+        t_img_dir = Path(test_cfg["img"])
+        t_mask_dir = Path(test_cfg["mask"])
 
         if t_img_dir.exists() and t_mask_dir.exists():
             test_img_files = sorted([str(f) for f in t_img_dir.glob("*.png")])
             test_mask_files = sorted([str(f) for f in t_mask_dir.glob("*.png")])
 
-            norm_cfg = config.get("data", {}).get("normalization", {})
-            norm_mean = norm_cfg.get("mean", [0.5, 0.5, 0.5])
-            norm_std = norm_cfg.get("std", [0.5, 0.5, 0.5])
+            norm_mean = config.normalization["mean"]
+            norm_std = config.normalization["std"]
             if test_img_files and len(test_img_files) == len(test_mask_files):
                 print(f"Found {len(test_img_files)} test pairs for benchmarking.")
                 test_ds = make_dataset(

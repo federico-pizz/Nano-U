@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from nanou.config import get_project_root, load_config
+from nanou.config import get_project_root, resolve
 from nanou.device.protocol import decode_hex_row, parse_idx_us_line, parse_stats_line
 from nanou.device.session import DeviceSession
 from nanou.evaluate import (
@@ -87,14 +87,13 @@ def run_inference_on_device(model_name="nanou", config_path="config/presets/tiny
     Returns:
         What `read_device_outputs` returns.
     """
-    config = load_config(str(config_path))
-    paths = config["data"]["paths"]
+    config = resolve(path=config_path)
     firmware = get_project_root() / "firmware"
     env = dict(
         os.environ,
         MODEL_NAME=model_name,
-        MODELS_DIR=project_path(paths.get("models_dir", "models")),
-        TEST_IMG_DIR=project_path(paths["processed"]["test"]["img"]),
+        MODELS_DIR=project_path(config.models_dir or "models"),
+        TEST_IMG_DIR=project_path(config.split_paths["test"]["img"]),
     )
 
     print(f"[1/3] Building inference binary for {model_name}...")
@@ -103,7 +102,7 @@ def run_inference_on_device(model_name="nanou", config_path="config/presets/tiny
     )
 
     print(f"\n[2/3] Flashing and running inference for {model_name}...")
-    width = config["data"].get("input_shape", [60, 80, 3])[1]
+    width = config.input_shape[1]
     with DeviceSession(
         ["cargo", "run", "--release", "--bin", "inference"],
         cwd=firmware,
@@ -185,7 +184,7 @@ def evaluate_esp_outputs(
     Returns:
         The metrics dict, with the device latency figures added.
     """
-    config = load_config(str(config_path))
+    config = resolve(path=config_path)
     imgs, masks = split_files(config, "test")
     inputs, gt = [], []
     for x, y in split_dataset(config, imgs, masks):
@@ -193,7 +192,7 @@ def evaluate_esp_outputs(
         gt.append(y.numpy())
     inputs, gt = np.concatenate(inputs, axis=0), np.concatenate(gt, axis=0)
 
-    height = config["data"].get("input_shape", [60, 80, 3])[0]
+    height = config.input_shape[0]
     probs, kept = device_probs(device_result["img_data"], len(gt), height)
     print(f"\nEvaluating {len(kept)} of {len(gt)} images for {model_name}...")
     groups = frame_groups(imgs, len(gt))
@@ -201,9 +200,9 @@ def evaluate_esp_outputs(
     results.update(_latency_summary(device_result.get("latency_us", {})))
     print_headline(results, "Results from on-device inference")
 
-    results_dir = config.get("data", {}).get("paths", {}).get("results_dir", "results")
+    results_dir = config.output_dir or "results"
     out_dir = Path(project_path(os.path.join(results_dir, model_name)))
-    norm = config["data"]["normalization"]
+    norm = config.normalization
     plot(
         probs,
         gt[kept],

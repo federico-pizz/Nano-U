@@ -48,7 +48,14 @@ def test_int8_export_roundtrip(tmp_path):
     assert len(params["normalization"]["std"]) == 3
 
 
-def test_missing_calibration_images_raise(tmp_path, monkeypatch):
+def _datasetless_preset(tmp_path, extra=""):
+    """A preset whose data_root does not exist, so there is nothing to calibrate on."""
+    path = tmp_path / "preset.yaml"
+    path.write_text(f"extends: base\ndata_root: {tmp_path / 'no_data'}\nnanou: {{}}\n{extra}")
+    return str(path)
+
+
+def test_missing_calibration_images_raise(tmp_path):
     """A missing calibration split must fail loudly, not fall back to noise.
 
     Noise-calibrated INT8 models load and run while being numerically useless,
@@ -56,38 +63,27 @@ def test_missing_calibration_images_raise(tmp_path, monkeypatch):
     """
     from nanou import quantize as qm
 
-    cfg = {
-        "data": {
-            "input_shape": (H, W, 3),
-            "paths": {"processed": {"val": {"img": str(tmp_path / "does_not_exist")}}},
-        }
-    }
-    monkeypatch.setattr(qm, "load_config", lambda *_a, **_k: cfg)
-
     model = create_nano_u(input_shape=(H, W, 3), filters=[4, 8, 16], bottleneck=16)
     keras_path = str(tmp_path / "nanou.h5")
     model.save(keras_path)
 
     with pytest.raises(FileNotFoundError, match="No calibration images"):
-        qm.quantize_model(keras_path, str(tmp_path / "nanou.tflite"))
+        qm.quantize_model(
+            keras_path, str(tmp_path / "nanou.tflite"), config_path=_datasetless_preset(tmp_path)
+        )
 
 
-def test_calibration_split_is_validated(tmp_path, monkeypatch):
+def test_calibration_split_is_validated(tmp_path):
     """Only 'val' and 'train' are accepted - never the held-out test split."""
     from nanou import quantize as qm
 
-    cfg = {
-        "data": {"input_shape": (H, W, 3), "paths": {"processed": {}}},
-        "quantization": {"calibration_split": "test"},
-    }
-    monkeypatch.setattr(qm, "load_config", lambda *_a, **_k: cfg)
-
+    preset = _datasetless_preset(tmp_path, "quantization:\n  calibration_split: test\n")
     model = create_nano_u(input_shape=(H, W, 3), filters=[4, 8, 16], bottleneck=16)
     keras_path = str(tmp_path / "nanou.h5")
     model.save(keras_path)
 
     with pytest.raises(ValueError, match="calibration_split"):
-        qm.quantize_model(keras_path, str(tmp_path / "nanou.tflite"))
+        qm.quantize_model(keras_path, str(tmp_path / "nanou.tflite"), config_path=preset)
 
 
 # -- the paper's central claim: INT8 tracks its float source --------------------

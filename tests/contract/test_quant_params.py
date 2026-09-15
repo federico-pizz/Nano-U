@@ -68,11 +68,10 @@ def test_agrees_with_the_exported_graph(dataset, artifacts):
 
 def test_normalization_matches_the_preset(dataset, artifacts):
     """The constants baked into the firmware are the ones training used."""
-    from nanou.config import load_config
+    from nanou.config import resolve
 
-    config = load_config(oracle.DATASETS[dataset])
     params = oracle.load_json(artifacts["quant_params"])
-    norm = config["data"]["normalization"]
+    norm = resolve(oracle.DATASETS[dataset]).normalization
 
     assert params["normalization"]["mean"] == pytest.approx(norm["mean"])
     assert params["normalization"]["std"] == pytest.approx(norm["std"])

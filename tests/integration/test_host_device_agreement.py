@@ -16,6 +16,7 @@ import pytest
 import tf_keras as keras
 
 from nanou import evaluate as ev
+from nanou.config import resolve
 from nanou.device.evaluate import device_probs, read_device_outputs
 from nanou.predictor import KerasPredictor, TFLitePredictor, load_predictor, logits_to_probs
 from nanou.quantize import convert_to_tflite_quantized
@@ -53,22 +54,22 @@ def models(tmp_path_factory):
 
 
 @pytest.fixture
-def config(tmp_png_dataset, tmp_path):
-    return {
-        "data": {
-            "input_shape": list(SHAPE),
-            "normalization": {"mean": [0.5] * 3, "std": [0.5] * 3},
-            "paths": {
-                "processed": {
-                    "test": {
-                        "img": os.path.dirname(tmp_png_dataset["imgs"][0]),
-                        "mask": os.path.dirname(tmp_png_dataset["masks"][0]),
-                    }
-                },
-                "results_dir": str(tmp_path / "results"),
-            },
-        }
-    }
+def preset(tmp_png_dataset, tmp_path):
+    """A preset whose test split is the synthetic dataset; base.yaml gives SHAPE."""
+    root = tmp_path / "data"
+    (root / "test").mkdir(parents=True)
+    (root / "test" / "img").symlink_to(os.path.dirname(tmp_png_dataset["imgs"][0]))
+    (root / "test" / "mask").symlink_to(os.path.dirname(tmp_png_dataset["masks"][0]))
+    path = tmp_path / "preset.yaml"
+    path.write_text(
+        f"extends: base\ndata_root: {root}\noutput_dir: {tmp_path / 'results'}\nnanou: {{}}\n"
+    )
+    return path
+
+
+@pytest.fixture
+def config(preset):
+    return resolve(path=preset)
 
 
 def test_the_suffix_picks_the_predictor(models):
@@ -126,12 +127,9 @@ def test_host_and_device_paths_score_the_same_logits_identically(models, config)
 
 
 @pytest.mark.parametrize("which, fmt", [(1, "fp32"), (2, "int8")])
-def test_evaluate_writes_two_figures_and_one_report(
-    models, config, monkeypatch, tmp_path, which, fmt
-):
-    monkeypatch.setattr(ev, "load_config", lambda _path: config)
+def test_evaluate_writes_two_figures_and_one_report(models, preset, tmp_path, which, fmt):
     out = tmp_path / "out"
-    results = ev.evaluate(models[which], "unused.yaml", out_dir=out)
+    results = ev.evaluate(models[which], str(preset), out_dir=out)
 
     assert sorted(p.name for p in out.iterdir()) == [
         f"eval_{fmt}_test.json",

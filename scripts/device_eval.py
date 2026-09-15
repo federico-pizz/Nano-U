@@ -2,7 +2,7 @@
 
 import argparse
 
-from nanou.config import load_config, preset_path
+from nanou.config import preset_path, resolve
 from nanou.device.evaluate import evaluate_esp_outputs, run_inference_on_device
 from nanou.preflight import (
     PreflightError,
@@ -26,9 +26,7 @@ def main():
     config_path = args.config or str(preset_path(args.preset))
     try:
         require_esp_toolchain()
-        require_tflite_model(
-            load_config(config_path)["data"]["paths"]["models_dir"], args.model, preset=args.preset
-        )
+        require_tflite_model(resolve(path=config_path).models_dir, args.model, preset=args.preset)
     except PreflightError as e:
         raise SystemExit(f"\n{e}") from e
 

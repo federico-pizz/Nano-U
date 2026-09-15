@@ -148,17 +148,13 @@ def float_param_count(preset="tinyagri", model_name=MODEL_NAME):
 
     The builders take no default architecture any more, so the preset is the
     only statement of what the shipped model is - which is the right source for
-    a contract test anyway. This mirrors how ``train_model`` assembles the
-    architecture keys: the preset's ``models`` block plus the shared input shape.
+    a contract test anyway. It is built the way ``train_model`` builds it, from
+    the model's resolved config.
     """
     from nanou.architectures import build_from_config
-    from nanou.config import load_config
+    from nanou.config import resolve
 
-    full = load_config(preset)
-    config = dict(full["models"][model_name])
-    config["model_name"] = model_name
-    config["input_shape"] = full["data"].get("input_shape", [60, 80, 3])
-    return int(build_from_config(config).count_params())
+    return int(build_from_config(resolve(preset).for_model(model_name)).count_params())
 
 
 def keras_param_count(h5_path):
@@ -186,13 +182,13 @@ def score_split(preset, model_path, split="test", batch_size=8):
     - reproduced here without the plotting and report writing, so the oracle
     does not depend on where those artefacts get written.
     """
-    from nanou.config import load_config
+    from nanou.config import resolve
     from nanou.data import make_dataset, sorted_by_frame
     from nanou.metrics import compute_segmentation_metrics
     from nanou.predictor import load_predictor
 
-    config = load_config(preset)
-    split_cfg = config["data"]["paths"]["processed"][split]
+    config = resolve(preset)
+    split_cfg = config.split_paths[split]
     img_dir, mask_dir = split_cfg["img"], split_cfg["mask"]
 
     imgs = sorted_by_frame(
@@ -204,8 +200,8 @@ def score_split(preset, model_path, split="test", batch_size=8):
     if not imgs:
         raise RuntimeError(f"no images for split={split} under {img_dir}")
 
-    norm = config["data"]["normalization"]
-    shape = config["data"].get("input_shape", [60, 80, 3])
+    norm = config.normalization
+    shape = config.input_shape
     dataset = make_dataset(
         imgs,
         masks,

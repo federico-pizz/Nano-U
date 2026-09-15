@@ -1,12 +1,11 @@
 """The two architectures: the Nano-U student and the BU-Net teacher."""
 
-from typing import Any
-
 import tensorflow as tf
 import tf_keras as keras
 from tf_keras import Model, layers
 
 from nanou.blocks import depthwise_sep_conv, triple_conv
+from nanou.config import TrainConfig
 
 
 @tf.keras.utils.register_keras_serializable(package="NanoU")
@@ -135,11 +134,11 @@ def create_bu_net(
     return Model(inputs=inputs, outputs=outputs, name=name)
 
 
-def build_from_config(config: dict[str, Any]) -> keras.Model:
-    """Instantiate one of the two architectures from a resolved config dict.
+def build_from_config(config: TrainConfig) -> keras.Model:
+    """Instantiate one of the two architectures from a model's resolved config.
 
     Args:
-        config: Must contain `model_name`, `filters`, `bottleneck` and
+        config: Must set `model_name`, `filters`, `bottleneck` and
             `input_shape`. Every shipped preset sets all four; there are no
             fallbacks here on purpose, so a missing key fails loudly at build
             time instead of silently training a differently shaped model.
@@ -148,25 +147,20 @@ def build_from_config(config: dict[str, Any]) -> keras.Model:
         Uncompiled Keras Model.
 
     Raises:
-        KeyError: If any of the four required keys is missing or None.
+        KeyError: If any of the four required keys is None.
     """
     required = ("model_name", "filters", "bottleneck", "input_shape")
-    missing = [k for k in required if config.get(k) is None]
+    missing = [k for k in required if getattr(config, k) is None]
     if missing:
         raise KeyError(
             f"config is missing the architecture keys {missing}; "
             "every preset must set model_name, filters, bottleneck and input_shape"
         )
 
-    model_name = config["model_name"]
-    input_shape = config["input_shape"]
-    if isinstance(input_shape, list):
-        input_shape = tuple(input_shape)
-
-    builder = create_bu_net if model_name == "bu_net" else create_nano_u
+    builder = create_bu_net if config.model_name == "bu_net" else create_nano_u
     return builder(
-        input_shape=input_shape,
-        filters=list(config["filters"]),
-        bottleneck=int(config["bottleneck"]),
-        name=model_name,
+        input_shape=tuple(config.input_shape),
+        filters=list(config.filters),
+        bottleneck=int(config.bottleneck),
+        name=config.model_name,
     )

@@ -11,6 +11,7 @@ import numpy as np
 import tf_keras as keras
 
 from nanou.architectures import create_nano_u
+from nanou.config import TrainConfig
 from nanou.data import make_dataset
 from nanou.distill import DistillModel
 from nanou.train import train_with_distillation
@@ -53,16 +54,17 @@ def _first_batch(tmp_png_dataset, batch_size=4):
 
 
 def _config(tmp_path, **overrides):
-    config = {
-        "epochs": 2,
-        "batch_size": 4,
-        "learning_rate": 1e-3,
-        "alpha": 0.5,
-        "temperature": 4.0,
-        "models_dir": str(tmp_path / "models"),
-    }
-    config.update(overrides)
-    return config
+    return TrainConfig(
+        model_name="nanou",
+        data_root=str(tmp_path),
+        epochs=2,
+        batch_size=4,
+        learning_rate=1e-3,
+        alpha=0.5,
+        temperature=4.0,
+        models_dir=str(tmp_path / "models"),
+        **overrides,
+    )
 
 
 def test_train_step_returns_finite_losses(tmp_png_dataset):

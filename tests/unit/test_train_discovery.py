@@ -71,7 +71,7 @@ def test_discover_val_count_mismatch_skips_val(tmp_path):
 
 
 def test_discover_missing_train_key_raises():
-    with pytest.raises(ValueError, match="processed.train"):
+    with pytest.raises(ValueError, match="no 'train' split"):
         discover_processed_pairs({"val": {}})
 
 

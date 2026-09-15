@@ -152,6 +152,15 @@ def test_select_best_raises_when_floor_infeasible():
         cv.select_best(rows, primary="f0.5_mean", secondary="miou_mean", min_miou=0.70)
 
 
+def test_a_grid_point_holds_schema_keys_and_row_only_keys_nothing_else():
+    """What reaches train_model must resolve; a new record-only key has to be declared."""
+    from nanou.config import TRAIN_KEYS
+
+    point = cv.make_config_overrides(0.7, 0.3, "photometric", False, 0.7, 0.8, 0.2)
+    assert set(cv.ROW_ONLY_KEYS) <= set(point)
+    assert set(point) - set(cv.ROW_ONLY_KEYS) <= TRAIN_KEYS
+
+
 # -- run_cv end-to-end with stubbed training (no TF training) -------------------
 
 
@@ -159,17 +168,6 @@ def test_run_cv_stubbed(monkeypatch, tmp_path):
     """run_cv assembles a table + winner without any real training."""
     files = [f"/d/img/s{s}_frame{f}.png" for s in range(4) for f in range(3)]
     masks = [p.replace("/img/", "/mask/") for p in files]
-
-    monkeypatch.setattr(
-        cv,
-        "load_config",
-        lambda _p: {
-            "data": {
-                "normalization": {"mean": [0.5] * 3, "std": [0.5] * 3},
-                "input_shape": [60, 80, 3],
-            }
-        },
-    )
     monkeypatch.setattr(cv, "pool_train_val", lambda _c: (files, masks))
 
     # Stub training: just return a fake saved-model path per call.
@@ -224,16 +222,6 @@ def test_run_cv_caches_one_teacher_per_fold(monkeypatch, tmp_path):
     """
     files = [f"/d/img/s{s}_frame{f}.png" for s in range(4) for f in range(3)]
     masks = [p.replace("/img/", "/mask/") for p in files]
-    monkeypatch.setattr(
-        cv,
-        "load_config",
-        lambda _p: {
-            "data": {
-                "normalization": {"mean": [0.5] * 3, "std": [0.5] * 3},
-                "input_shape": [60, 80, 3],
-            }
-        },
-    )
     monkeypatch.setattr(cv, "pool_train_val", lambda _c: (files, masks))
 
     counts = {"bu_net": 0, "nanou": 0}

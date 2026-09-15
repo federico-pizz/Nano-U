@@ -5,6 +5,7 @@ import json
 import numpy as np
 import pytest
 
+from nanou.config import resolve
 from nanou.evaluate import frame_groups, plot, score, split_files, write_report
 from nanou.metrics import compute_segmentation_metrics
 
@@ -47,18 +48,12 @@ def test_plot_writes_the_two_figures(arrays, tmp_path, groups):
 
 def _split_config(tmp_path, names):
     for sub in ("img", "mask"):
-        (tmp_path / sub).mkdir()
+        (tmp_path / "test" / sub).mkdir(parents=True)
         for n in names:
-            (tmp_path / sub / n).touch()
-    return {
-        "data": {
-            "paths": {
-                "processed": {
-                    "test": {"img": str(tmp_path / "img"), "mask": str(tmp_path / "mask")}
-                }
-            }
-        }
-    }
+            (tmp_path / "test" / sub / n).touch()
+    preset = tmp_path / "preset.yaml"
+    preset.write_text(f"extends: base\ndata_root: {tmp_path}\nnanou: {{}}\n")
+    return resolve(path=preset)
 
 
 def test_split_files_come_in_the_firmware_order(tmp_path):

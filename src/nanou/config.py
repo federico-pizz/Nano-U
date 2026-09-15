@@ -32,7 +32,6 @@ mapping at the top level is a model block; any other scalar is a preset-level
 default shared by every model in the file.
 """
 
-import os
 import warnings
 from dataclasses import dataclass, field, fields, replace
 from difflib import get_close_matches
@@ -47,6 +46,10 @@ RESERVED_KEYS = ("extends", "data", "quantization")
 # Split directory layout derived from `data_root`. Changing this changes what a
 # preset means, so it lives here rather than being spelled out in five places.
 SPLITS = ("train", "val", "test")
+
+# Keys that describe the dataset rather than one model's run. They must agree
+# across a preset's model blocks, which is what lets the preset answer for them.
+DATASET_KEYS = ("data_root", "models_dir", "output_dir", "input_shape", "seed")
 
 
 def get_project_root() -> Path:
@@ -193,92 +196,47 @@ class ResolvedConfig:
                 f"preset '{self.name}' defines no model '{model_name}' (has: {known})"
             ) from None
 
-    def to_legacy_dict(self) -> dict[str, Any]:
-        """Emit the nested dictionary the current `src/` modules still expect.
+    # Dataset-level facts. `resolve()` refuses a preset whose model blocks
+    # disagree on any of `DATASET_KEYS`, so the first block answers for all.
 
-        A bridge, not a design: it exists so `--preset` works end to end while
-        the library beneath still takes a config path and re-reads keys itself.
-        It goes away once those modules take a `TrainConfig` directly, and it is
-        the single place where the old `results_dir` spelling survives.
-        """
-        # The legacy shape has one `data.paths` block for the whole file, so
-        # the dataset-level keys have to agree across the model blocks. They do
-        # in every shipped preset (all four set them at the preset level); this
-        # fails loudly rather than silently picking whichever block came first.
-        shared_keys = ("data_root", "models_dir", "output_dir", "input_shape", "seed")
-        any_model = next(iter(self.models.values()))
-        for name, cfg in self.models.items():
-            for key in shared_keys:
-                if getattr(cfg, key) != getattr(any_model, key):
-                    raise ValueError(
-                        f"preset '{self.name}': model '{name}' sets a different "
-                        f"'{key}' than '{any_model.model_name}'. Dataset-level keys "
-                        f"belong at the top of the preset, not inside a model block."
-                    )
-        splits = any_model.split_paths
+    @property
+    def _first(self) -> TrainConfig:
+        return next(iter(self.models.values()))
 
-        legacy: dict[str, Any] = {
-            "data": {
-                "input_shape": list(any_model.input_shape),
-                "num_classes": self.data.get("num_classes", 1),
-                "normalization": self.data.get("normalization", {}),
-                "split": self.data.get("split", {}),
-                "paths": {
-                    "processed": {"root": any_model.data_root, **splits},
-                    "models_dir": any_model.models_dir,
-                    "results_dir": any_model.output_dir,
-                },
-            },
-            "models": {},
-            "training": {"seed": any_model.seed},
-            "quantization": dict(self.quantization),
-        }
+    @property
+    def data_root(self) -> str:
+        """The dataset directory, holding `<split>/{img,mask}`."""
+        return self._first.data_root
 
-        for name, cfg in self.models.items():
-            legacy["models"][name] = {
-                "filters": cfg.filters,
-                "bottleneck": cfg.bottleneck,
-                "decoder_filters": cfg.decoder_filters,
-            }
-            legacy["training"][name] = {
-                "model_name": cfg.model_name,
-                "epochs": cfg.epochs,
-                "batch_size": cfg.batch_size,
-                "learning_rate": cfg.learning_rate,
-                "weight_decay": cfg.weight_decay,
-                "optimizer": cfg.optimizer,
-                "augment": cfg.augment,
-                "augment_params": dict(cfg.augment_params),
-                "early_stopping": cfg.early_stopping,
-                "patience": cfg.patience,
-                "lr_scheduler": cfg.lr_scheduler,
-                "lr_plateau_patience": cfg.lr_plateau_patience,
-                "lr_plateau_factor": cfg.lr_plateau_factor,
-                "min_lr": cfg.min_lr,
-                "qat_enabled": cfg.qat_enabled,
-                "use_distillation": cfg.use_distillation,
-                "teacher_model_name": cfg.teacher_model_name,
-                "teacher_weights": cfg.teacher_weights,
-                "alpha": cfg.alpha,
-                "temperature": cfg.temperature,
-                "t_scale": cfg.t_scale,
-                "tversky_weight": cfg.tversky_weight,
-                "tversky_alpha": cfg.tversky_alpha,
-                "tversky_beta": cfg.tversky_beta,
-                "track_redundancy": cfg.track_redundancy,
-                "redundancy_every_epochs": cfg.redundancy_every_epochs,
-                "redundancy_layers": list(cfg.redundancy_layers),
-                "tensorboard": cfg.tensorboard,
-                "seed": cfg.seed,
-                "input_shape": list(cfg.input_shape),
-                "filters": cfg.filters,
-                "bottleneck": cfg.bottleneck,
-                "decoder_filters": cfg.decoder_filters,
-                "models_dir": cfg.models_dir,
-                "output_dir": cfg.output_dir,
-            }
+    @property
+    def split_paths(self) -> dict[str, dict[str, str]]:
+        """The six split directories derived from `data_root`."""
+        return self._first.split_paths
 
-        return legacy
+    @property
+    def models_dir(self) -> str | None:
+        """Where the dataset's trained models and exports live."""
+        return self._first.models_dir
+
+    @property
+    def output_dir(self) -> str | None:
+        """Where the dataset's run outputs and reports go."""
+        return self._first.output_dir
+
+    @property
+    def input_shape(self) -> tuple[int, int, int]:
+        """(height, width, channels) every model of the preset takes."""
+        return self._first.input_shape
+
+    @property
+    def seed(self) -> int | None:
+        """The run seed shared by every model of the preset."""
+        return self._first.seed
+
+    @property
+    def normalization(self) -> dict[str, list[float]]:
+        """The `data.normalization` block: `mean` and `std`, one value per channel."""
+        return self.data["normalization"]
 
 
 def preset_path(preset: str) -> Path:
@@ -292,15 +250,6 @@ def available_presets() -> list[str]:
     return sorted(p.stem for p in directory.glob("*.yaml")) if directory.is_dir() else []
 
 
-def is_preset_file(path) -> bool:
-    """True when *path* is a preset (as opposed to a pre-v2 flat config file)."""
-    try:
-        loaded = _load_yaml(Path(path))
-    except (FileNotFoundError, yaml.YAMLError):
-        return False
-    return isinstance(loaded, dict) and "extends" in loaded
-
-
 def resolve(
     preset: str | None = None, path=None, overrides: dict[str, Any] | None = None
 ) -> ResolvedConfig:
@@ -308,14 +257,18 @@ def resolve(
 
     Args:
         preset: preset name, resolved to `config/presets/<name>.yaml`.
-        path: an explicit preset file, used instead of *preset*.
+        path: an explicit preset file, used instead of *preset*. A relative
+            path is taken from the repository root, not the working directory.
         overrides: keys applied last, on top of every model block. These come
             from the command line, so they win over anything on disk.
 
     Raises:
-        ValueError: a key is not part of the schema, or `data_root` is missing.
+        ValueError: a key (overrides included) is not part of the schema,
+            `data_root` is missing, or two model blocks disagree on one of
+            `DATASET_KEYS`.
         FileNotFoundError: the preset or the file it extends does not exist.
     """
+    root = get_project_root()
     if path is None:
         if preset is None:
             raise ValueError("resolve() needs either a preset name or a path")
@@ -324,9 +277,10 @@ def resolve(
             known = ", ".join(available_presets()) or "none"
             raise FileNotFoundError(f"no preset '{preset}' (available: {known})")
     path = Path(path)
+    if not path.is_absolute():
+        path = root / path
     raw = _load_yaml(path)
     name = preset or path.stem
-    root = get_project_root()
 
     base_name = raw.get("extends", "base")
     base = _load_yaml(root / "config" / f"{base_name}.yaml")
@@ -350,6 +304,7 @@ def resolve(
 
     if not blocks:
         raise ValueError(f"{path} defines no model blocks")
+    _reject_unknown(overrides or {}, "the overrides")
 
     merged_data = {**(base.get("data") or {}), **(raw.get("data") or {})}
     merged_quant = {**(base.get("quantization") or {}), **(raw.get("quantization") or {})}
@@ -370,76 +325,32 @@ def resolve(
             merged["input_shape"] = tuple(merged["input_shape"])
         models[model_name] = TrainConfig(**merged)
 
+    # One dataset per preset. A block that moved one of these would train its
+    # model on different data, and the preset could no longer answer for it.
+    first = next(iter(models.values()))
+    for model_name, cfg in models.items():
+        for key in DATASET_KEYS:
+            if getattr(cfg, key) != getattr(first, key):
+                raise ValueError(
+                    f"preset '{name}': model '{model_name}' sets a different '{key}' "
+                    f"than '{first.model_name}'. Dataset-level keys belong at the top "
+                    "of the preset, not inside a model block."
+                )
+
     return ResolvedConfig(
         name=name, path=path, models=models, data=merged_data, quantization=merged_quant
     )
-
-
-def load_config(config_path: str = "tinyagri") -> dict[str, Any]:
-    """Resolve a config and return it in the pre-v2 nested dictionary shape.
-
-    Accepts a preset name (`"tinyagri"`), a path to a preset, or a path to a
-    pre-v2 flat config file. Presets go through `resolve()` - so `base.yaml` is
-    merged under them and unknown keys still raise - and are then flattened by
-    `ResolvedConfig.to_legacy_dict`.
-
-    This is a bridge, not a design: it exists so the modules that still read a
-    dictionary keep working while they are moved, and it disappears when they
-    take a `TrainConfig` directly.
-    """
-    root = Path(get_project_root())
-
-    # A bare name (no separator, no suffix) is a preset name.
-    if (
-        isinstance(config_path, str)
-        and not os.path.splitext(config_path)[1]
-        and os.sep not in config_path
-    ):
-        config_path = str(preset_path(config_path))
-
-    target = Path(config_path) if os.path.isabs(config_path) else root / config_path
-    if not target.exists():
-        raise FileNotFoundError(f"Config file not found: {target}")
-
-    if is_preset_file(target):
-        return resolve(path=target).to_legacy_dict()
-
-    with open(target) as fh:
-        config = yaml.safe_load(fh)
-
-    # Flat pre-v2 file: keep the structure as written, absolutize the paths.
-    paths = config.get("data", {}).get("paths", {})
-    raw = paths.get("raw_datasets")
-    if isinstance(raw, list):
-        for entry in raw:
-            for key in ("images", "masks"):
-                if isinstance(entry, dict) and key in entry:
-                    entry[key] = resolve_path(entry[key], root)
-    processed = paths.get("processed")
-    if isinstance(processed, dict):
-        for key, value in processed.items():
-            if isinstance(value, str):
-                processed[key] = resolve_path(value, root)
-            elif isinstance(value, dict):
-                for sub, sub_value in value.items():
-                    if isinstance(sub_value, str):
-                        value[sub] = resolve_path(sub_value, root)
-    if "models_dir" in paths:
-        paths["models_dir"] = resolve_path(paths["models_dir"], root)
-
-    return config
 
 
 __all__ = [
     "TrainConfig",
     "ResolvedConfig",
     "resolve",
-    "load_config",
     "get_project_root",
     "resolve_path",
     "preset_path",
     "available_presets",
-    "is_preset_file",
+    "DATASET_KEYS",
     "TRAIN_KEYS",
     "replace",
 ]

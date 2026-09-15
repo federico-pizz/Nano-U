@@ -306,7 +306,7 @@ def as_dataset(
 def discover_processed_pairs(
     processed: dict[str, Any],
 ) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Resolve processed train/val image and mask file lists from a config block.
+    """Resolve processed train/val image and mask file lists from the split paths.
 
     Returns ``(train_img_files, train_mask_files, val_img_files, val_mask_files)``.
     Validation lists come back empty when the val directories are absent or their
@@ -322,9 +322,7 @@ def discover_processed_pairs(
     the count checks here are only a cheap guard against an obviously broken split.
     """
     if not isinstance(processed, dict) or "train" not in processed:
-        raise ValueError(
-            "'data.paths.processed.train' not found in configuration. Processed data is required."
-        )
+        raise ValueError("no 'train' split in the split paths. Processed data is required.")
 
     train_cfg = processed.get("train", {})
     val_cfg = processed.get("val", {})

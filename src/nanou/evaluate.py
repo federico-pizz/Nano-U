@@ -19,7 +19,7 @@ import tensorflow as tf
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from nanou.config import get_project_root, load_config
+from nanou.config import ResolvedConfig, get_project_root, resolve
 from nanou.data import make_dataset, sequence_group, sorted_by_frame
 from nanou.metrics import (
     EPS,
@@ -40,7 +40,7 @@ def project_path(path) -> str:
     return path if os.path.isabs(path) else os.path.join(str(get_project_root()), path)
 
 
-def split_files(config, split: str = "test") -> tuple[list[str], list[str]]:
+def split_files(config: ResolvedConfig, split: str = "test") -> tuple[list[str], list[str]]:
     """The (images, masks) of one split, in frame order - the order build.rs embeds them.
 
     Raises:
@@ -49,7 +49,7 @@ def split_files(config, split: str = "test") -> tuple[list[str], list[str]]:
     """
     if split not in SPLITS:
         raise ValueError(f"split must be 'train'|'val'|'test', got {split!r}")
-    split_cfg = config["data"]["paths"]["processed"][split]
+    split_cfg = config.split_paths[split]
     img_dir, mask_dir = project_path(split_cfg["img"]), project_path(split_cfg["mask"])
     imgs = sorted_by_frame(
         [os.path.join(img_dir, f) for f in os.listdir(img_dir) if f.endswith(".png")]
@@ -62,10 +62,10 @@ def split_files(config, split: str = "test") -> tuple[list[str], list[str]]:
     return imgs, masks
 
 
-def split_dataset(config, imgs, masks, batch_size: int = 8):
+def split_dataset(config: ResolvedConfig, imgs, masks, batch_size: int = 8):
     """The evaluation view of a split: normalised, unshuffled, unaugmented, in `imgs` order."""
-    norm = config["data"]["normalization"]
-    shape = config.get("data", {}).get("input_shape", [60, 80, 3])
+    norm = config.normalization
+    shape = config.input_shape
     return make_dataset(
         imgs,
         masks,
@@ -240,7 +240,7 @@ def evaluate(
     Returns:
         The metrics dict.
     """
-    config = load_config(config_path)
+    config = resolve(path=config_path)
     imgs, masks = split_files(config, split)
     dataset = split_dataset(config, imgs, masks, batch_size)
     predictor = load_predictor(str(model_path))
@@ -251,10 +251,10 @@ def evaluate(
     print_headline(results, f"Evaluation results, {predictor.fmt}")
 
     if out_dir is None:
-        results_dir = config.get("data", {}).get("paths", {}).get("results_dir", "results")
+        results_dir = config.output_dir or "results"
         out_dir = project_path(os.path.join(results_dir, Path(model_path).stem))
     name = f"eval_{predictor.fmt}_{split}"
-    norm = config["data"]["normalization"]
+    norm = config.normalization
     plot(probs, gt, inputs, results, out_dir, name, norm["mean"], norm["std"], samples)
     write_report(
         results,

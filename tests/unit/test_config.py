@@ -11,12 +11,11 @@ import pytest
 import yaml
 
 from nanou.config import (
+    DATASET_KEYS,
     TRAIN_KEYS,
     TrainConfig,
     available_presets,
     get_project_root,
-    is_preset_file,
-    preset_path,
     resolve,
     resolve_path,
 )
@@ -188,43 +187,30 @@ def test_non_strings_pass_through():
     assert resolve_path(7) == 7
 
 
-# -- preset detection -----------------------------------------------------------
+def test_a_relative_preset_path_is_taken_from_the_project_root(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert resolve(path="config/presets/tinyagri.yaml").name == "tinyagri"
+
+
+# -- overrides ------------------------------------------------------------------
+
+
+def test_an_unknown_override_is_rejected_like_a_preset_typo():
+    with pytest.raises(ValueError, match="Did you mean 'epochs'"):
+        resolve("tinyagri", overrides={"epocs": 3})
+
+
+# -- the dataset, one per preset ------------------------------------------------
 
 
 @pytest.mark.parametrize("name", SHIPPED)
-def test_shipped_files_are_recognised_as_presets(name):
-    assert is_preset_file(preset_path(name))
-
-
-def test_a_flat_config_is_not_a_preset(tmp_path):
-    flat = tmp_path / "old.yaml"
-    flat.write_text("data:\n  input_shape: [60, 80, 3]\n")
-    assert not is_preset_file(flat)
-
-
-def test_a_missing_file_is_not_a_preset(tmp_path):
-    assert not is_preset_file(tmp_path / "nope.yaml")
-
-
-# -- the legacy bridge ----------------------------------------------------------
-
-
-@pytest.mark.parametrize("name", SHIPPED)
-def test_legacy_dict_has_the_shape_src_still_expects(name):
-    legacy = resolve(name).to_legacy_dict()
-    assert set(legacy) == {"data", "models", "training", "quantization"}
-    paths = legacy["data"]["paths"]
-    assert set(paths["processed"]) == {"root", "train", "val", "test"}
-    assert paths["models_dir"] and paths["results_dir"]
-    for model_name in ("nanou", "bu_net"):
-        block = legacy["training"][model_name]
-        # The redundancy keys reach src/ under their v2 names, not the pre-v2 ones.
-        assert set(block) >= {
-            "track_redundancy",
-            "redundancy_every_epochs",
-            "redundancy_layers",
-        }
-        assert legacy["models"][model_name]["filters"]
+def test_the_preset_answers_for_its_dataset(name):
+    resolved = resolve(name)
+    for cfg in resolved.models.values():
+        for key in DATASET_KEYS:
+            assert getattr(resolved, key) == getattr(cfg, key), key
+    assert resolved.split_paths == resolved.for_model("nanou").split_paths
+    assert len(resolved.normalization["mean"]) == len(resolved.normalization["std"]) == 3
 
 
 def test_a_model_block_that_moves_a_dataset_key_is_rejected(tmp_path):
@@ -233,4 +219,4 @@ def test_a_model_block_that_moves_a_dataset_key_is_rejected(tmp_path):
         "extends: base\ndata_root: data/x\nnanou:\n  epochs: 5\nbu_net:\n  data_root: data/y\n"
     )
     with pytest.raises(ValueError, match="different 'data_root'"):
-        resolve(path=preset).to_legacy_dict()
+        resolve(path=preset)

@@ -28,7 +28,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from nanou.config import load_config, preset_path
+from nanou.config import preset_path, resolve
 from nanou.pipeline import SUMMARY_FILE, run_pipeline
 from nanou.preflight import PreflightError, require_dataset
 
@@ -83,13 +83,13 @@ def main():
         parser.error("--no-distill requires --model (e.g. --model bu_net)")
 
     config_path = args.config or str(preset_path(args.preset))
-    config = load_config(config_path)
-    output_dir = config.get("data", {}).get("paths", {}).get("results_dir", "results/")
+    config = resolve(path=config_path)
+    output_dir = config.output_dir or "results/"
 
     # The one expected failure, reported as its fix. Anything else is a bug or
     # a broken config, and is left to arrive with its traceback.
     try:
-        require_dataset(config["data"]["paths"]["processed"]["root"], preset=args.preset)
+        require_dataset(config.data_root, preset=args.preset)
     except PreflightError as e:
         print(f"\n{e}", file=sys.stderr)
         sys.exit(1)

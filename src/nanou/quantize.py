@@ -15,7 +15,7 @@ import tensorflow_model_optimization as tfmot
 import tf_keras as keras
 
 from nanou.architectures import PadToMatch
-from nanou.config import load_config
+from nanou.config import resolve
 from nanou.metrics import BinaryIoU
 
 _custom_objects = {"BinaryIoU": BinaryIoU}
@@ -100,6 +100,7 @@ def extract_quant_params(
 
     in_scale, in_zero = _parse(in_quant, input_details.get("quantization"))
     out_scale, out_zero = _parse(out_quant, output_details.get("quantization"))
+    norm = resolve(path=config_path).normalization
 
     params = {
         "input": {
@@ -114,20 +115,7 @@ def extract_quant_params(
             "zero_point": out_zero,
             "shape": [int(s) for s in output_details["shape"]],
         },
-        "normalization": {
-            "mean": list(
-                load_config(config_path)
-                .get("data", {})
-                .get("normalization", {})
-                .get("mean", [0.5, 0.5, 0.5])
-            ),
-            "std": list(
-                load_config(config_path)
-                .get("data", {})
-                .get("normalization", {})
-                .get("std", [0.5, 0.5, 0.5])
-            ),
-        },
+        "normalization": {"mean": list(norm["mean"]), "std": list(norm["std"])},
     }
     return params
 
@@ -152,9 +140,9 @@ def quantize_model(
             calibration images and noise calibration was not asked for.
         ValueError: if ``quantization.calibration_split`` is not val or train.
     """
-    config = load_config(config_path)
+    config = resolve(path=config_path)
     if input_shape is None:
-        input_shape = (1, *config.get("data", {}).get("input_shape", (60, 80, 3)))
+        input_shape = (1, *config.input_shape)
 
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"No model to quantize at {model_path}")
@@ -166,28 +154,19 @@ def quantize_model(
             model = keras.models.load_model(model_path, compile=False)
     print(f"Model loaded successfully from {model_path}")
 
-    data_paths = config.get("data", {}).get("paths", {})
-    data_cfg = data_paths.get("processed", {})
-
     # Which split calibrates the INT8 scales and zero points. "val" reproduces
     # the published results, but val also picks the checkpoint, so calibration
     # is not independent of model selection. "train" is the strictly
     # independent choice. The test split is deliberately not accepted.
-    calib_split = str(config.get("quantization", {}).get("calibration_split", "val")).lower()
+    calib_split = str(config.quantization.get("calibration_split", "val")).lower()
     if calib_split not in ("val", "train"):
         raise ValueError(
             f"quantization.calibration_split must be 'val' or 'train', got {calib_split!r}"
         )
-    calib_img_dir = data_cfg.get(calib_split, {}).get("img", "")
+    calib_img_dir = config.split_paths[calib_split]["img"]
 
-    mean = np.array(
-        config.get("data", {}).get("normalization", {}).get("mean", [0.5, 0.5, 0.5]),
-        dtype=np.float32,
-    )
-    std = np.array(
-        config.get("data", {}).get("normalization", {}).get("std", [0.5, 0.5, 0.5]),
-        dtype=np.float32,
-    )
+    mean = np.array(config.normalization["mean"], dtype=np.float32)
+    std = np.array(config.normalization["std"], dtype=np.float32)
 
     img_files = []
     if calib_img_dir and os.path.isdir(calib_img_dir):
@@ -199,7 +178,7 @@ def quantize_model(
     # A noise-calibrated INT8 model loads, runs, and is quietly worthless: the
     # activation ranges bear no relation to real images. Fail loudly instead,
     # unless a noise run is explicitly requested.
-    allow_noise = bool(config.get("quantization", {}).get("allow_noise_calibration", False))
+    allow_noise = bool(config.quantization.get("allow_noise_calibration", False))
     if not img_files and not allow_noise:
         raise FileNotFoundError(
             f"No calibration images found for the '{calib_split}' split "

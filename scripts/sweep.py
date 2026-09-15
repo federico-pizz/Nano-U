@@ -16,7 +16,7 @@ import os
 import shutil
 from pathlib import Path
 
-from nanou.config import load_config, preset_path
+from nanou.config import preset_path, resolve
 from nanou.preflight import PreflightError, require_dataset
 from nanou.search import load_sweep, run_cv
 
@@ -52,13 +52,13 @@ def main():
         raise SystemExit(f"\n{e}") from e
 
     config_path = str(preset_path(args.preset))
-    config = load_config(config_path)
+    config = resolve(path=config_path)
     try:
-        require_dataset(config["data"]["paths"]["processed"]["root"], preset=args.preset)
+        require_dataset(config.data_root, preset=args.preset)
     except PreflightError as e:
         raise SystemExit(f"\n{e}") from e
 
-    results_dir = config.get("data", {}).get("paths", {}).get("results_dir", "results")
+    results_dir = config.output_dir or "results"
     output = args.output or os.path.join(results_dir, "cv", Path(args.sweep).stem)
     os.makedirs(output, exist_ok=True)
     shutil.copy(args.sweep, output)
