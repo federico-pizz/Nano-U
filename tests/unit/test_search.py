@@ -5,6 +5,7 @@ These cover the pure search/aggregation/selection helpers and a fully stubbed
 """
 
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -247,6 +248,82 @@ def test_run_cv_caches_one_teacher_per_fold(monkeypatch, tmp_path):
 
     assert counts["bu_net"] == 2  # k folds - NOT 2 configs x 2 folds == 4
     assert counts["nanou"] == 4  # 2 configs x 2 folds
+
+
+# -- resume ---------------------------------------------------------------------
+
+
+def _stub_training(monkeypatch, kill_student_at=None):
+    """Stub training that saves a model file, as the real one does, and counts runs.
+
+    With *kill_student_at* the n-th student run dies before it finishes, which
+    is what a walltime does to a sweep.
+    """
+    files = [f"/d/img/s{s}_frame{f}.png" for s in range(4) for f in range(3)]
+    masks = [p.replace("/img/", "/mask/") for p in files]
+    monkeypatch.setattr(cv, "pool_train_val", lambda _c: (files, masks))
+    counts = {"bu_net": 0, "nanou": 0}
+
+    def fake_run_training(name, cfg_path, out_dir, config_overrides=None):
+        counts[name] += 1
+        if name == "nanou" and counts[name] == kill_student_at:
+            raise RuntimeError("killed")
+        path = Path(out_dir) / f"{name}.h5"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+        return {"model_path": str(path)}
+
+    def fake_eval(model_path, img_files, mask_files, config, threshold=0.5):
+        score = 0.9 if "T8" in model_path else 0.5
+        return {m: score for m in ("f0.5", "f1", "f2", "precision", "recall", "miou", "dice")}
+
+    monkeypatch.setattr(cv, "run_training", fake_run_training)
+    monkeypatch.setattr(cv, "evaluate_on_files", fake_eval)
+    return counts
+
+
+def _cv(tmp_path, epochs=1):
+    grid = cv.expand_grid([2.0, 8.0], [0.5], ["none"], [True])
+    return cv.run_cv(
+        "config/presets/tinyagri.yaml", k=2, epochs=epochs, grid=grid, output_dir=str(tmp_path)
+    )
+
+
+def test_a_rerun_reuses_every_finished_run(monkeypatch, tmp_path):
+    _stub_training(monkeypatch)
+    first = _cv(tmp_path)
+    counts = _stub_training(monkeypatch)
+    second = _cv(tmp_path)
+    assert counts == {"bu_net": 0, "nanou": 0}
+    assert second["rows"] == first["rows"]
+
+
+def test_a_killed_sweep_resumes_with_what_it_had_not_finished(monkeypatch, tmp_path):
+    _stub_training(monkeypatch, kill_student_at=3)
+    with pytest.raises(RuntimeError, match="killed"):
+        _cv(tmp_path)
+    counts = _stub_training(monkeypatch)
+    res = _cv(tmp_path)
+    # Both teachers and the first two students finished before the kill.
+    assert counts == {"bu_net": 0, "nanou": 2}
+    assert res["best"]["temperature"] == 8.0
+
+
+def test_a_run_whose_job_changed_is_trained_again(monkeypatch, tmp_path):
+    _stub_training(monkeypatch)
+    _cv(tmp_path, epochs=1)
+    counts = _stub_training(monkeypatch)
+    _cv(tmp_path, epochs=2)
+    assert counts == {"bu_net": 2, "nanou": 4}
+
+
+def test_a_teacher_whose_model_is_gone_is_trained_again(monkeypatch, tmp_path):
+    _stub_training(monkeypatch)
+    _cv(tmp_path)
+    (tmp_path / "teachers" / "fold0" / "bu_net.h5").unlink()
+    counts = _stub_training(monkeypatch)
+    _cv(tmp_path)
+    assert counts["bu_net"] == 1
 
 
 # -- load_sweep (sweeps/*.yaml) --------------------------------------------------

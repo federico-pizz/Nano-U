@@ -22,8 +22,12 @@ The grid comes from a sweep file (``sweeps/*.yaml``, read by `load_sweep`).
 This is built to run unattended for hours. Example:
 
     python scripts/sweep.py sweeps/tinyagri-stage3.yaml --preset tinyagri --jobs 3
+
+A sweep resumes: every finished run leaves a ``done.json`` behind, so the same
+command run again into the same output directory trains only what is missing.
 """
 
+import hashlib
 import itertools
 import json
 import os
@@ -384,6 +388,50 @@ def evaluate_on_files(
     return compute_segmentation_metrics(probs, masks, groups=groups, operating_threshold=threshold)
 
 
+# -- Resume ----------------------------------------------------------------------
+#
+# A run that finished writes `done.json` into its run directory, last and in
+# one rename, so a sweep killed halfway (a walltime, a crash, a shared GPU
+# running out of memory) leaves only complete markers. The marker holds a key
+# saying what the run was; a rerun whose job no longer matches it - the sweep
+# file was edited, the folds moved - is trained again rather than reused.
+
+DONE_FILE = "done.json"
+
+
+def _job_key(config_path: str, epochs: int, fold_lists: dict[str, Any], **extra) -> str:
+    """What a run was, reduced to a short hash.
+
+    Frames go in by file name, not by path, so a sweep resumes with the dataset
+    somewhere else - a cluster job copies it to node-local disk every time.
+    """
+    what = {
+        "preset": Path(config_path).name,
+        "epochs": epochs,
+        "train": sorted(os.path.basename(p) for p in fold_lists["cv_train_img"]),
+        "val": sorted(os.path.basename(p) for p in fold_lists["cv_val_img"]),
+        **extra,
+    }
+    return hashlib.sha256(json.dumps(what, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _load_done(run_dir: str, key: str) -> dict[str, Any] | None:
+    """The marker of a finished run, or None if there is none or it is for another job."""
+    try:
+        done = json.loads((Path(run_dir) / DONE_FILE).read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    return done if done.get("key") == key else None
+
+
+def _mark_done(run_dir: str, key: str, **result) -> None:
+    path = Path(run_dir) / DONE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"key": key, **result}, indent=2))
+    tmp.replace(path)
+
+
 # Module-level worker jobs so they are picklable by the 'spawn' process pool.
 # Each writes to its own models_dir (passed in config_overrides) so concurrent
 # jobs never clobber a shared temp_model.h5 / <model>.h5.
@@ -407,6 +455,8 @@ def _train_teacher_job(job: dict[str, Any]):
         # pool worker, so the traceback says which of the k runs broke.
         e.add_note(f"while training the teacher for fold{job['fi']}")
         raise
+    # Relative, so the output directory can move between a job and its resume.
+    _mark_done(job["run_dir"], job["key"], model=os.path.relpath(res["model_path"], job["run_dir"]))
     return job["fi"], res["model_path"]
 
 
@@ -436,6 +486,7 @@ def _train_student_job(job: dict[str, Any]):
         config,
         threshold=job["threshold"],
     )
+    _mark_done(job["run_dir"], job["key"], metrics=fm)
     return job["ci"], job["fi"], fm
 
 
@@ -478,6 +529,9 @@ def run_cv(
     ``teacher_jobs`` is separate because the 12.85M-param BU-Net teacher is far
     heavier than the 3.3k-param student - three concurrent teachers OOM a ~6 GB
     GPU, so teachers default to sequential.
+
+    Runs already finished in ``output_dir`` for the same job are reused, not
+    retrained (see ``DONE_FILE``), so a killed sweep resumes by running again.
     """
     config = resolve(path=config_path)
     img_files, mask_files = pool_train_val(config)
@@ -510,6 +564,7 @@ def run_cv(
     if fixed_teacher is not None:
         print("[CV] using a single fixed teacher for every fold (leakage caveat)")
         teacher_of = {fi: fixed_teacher for fi in range(len(splits))}
+        teacher_key = {fi: fixed_teacher for fi in range(len(splits))}
     else:
         t_jobs = [
             {
@@ -519,15 +574,27 @@ def run_cv(
                 "fold_lists": fold_lists_by_fold[fi],
                 "epochs": epochs,
                 "fi": fi,
+                "key": _job_key(config_path, epochs, fold_lists_by_fold[fi]),
             }
             for fi in range(len(splits))
         ]
+        teacher_key = {job["fi"]: job["key"] for job in t_jobs}
+        teacher_of = {}
+        todo = []
+        for job in t_jobs:
+            done = _load_done(job["run_dir"], job["key"])
+            model = Path(job["run_dir"]) / done["model"] if done else None
+            if model is not None and model.exists():
+                teacher_of[job["fi"]] = str(model)
+            else:
+                todo.append(job)
         print(
-            f"[CV] training {len(t_jobs)} per-fold teachers "
-            f"(vs {len(t_jobs) * len(grid)} before caching), "
+            f"[CV] training {len(todo)} per-fold teachers "
+            f"(vs {len(t_jobs) * len(grid)} before caching, "
+            f"{len(t_jobs) - len(todo)} already done), "
             f"teacher_jobs={teacher_jobs}"
         )
-        teacher_of = dict(_run_jobs(_train_teacher_job, t_jobs, min(teacher_jobs, len(t_jobs))))
+        teacher_of.update(_run_jobs(_train_teacher_job, todo, min(teacher_jobs, len(todo))))
 
     # -- Phase 2: one student per (config, fold), reusing the fold's teacher ----
     s_jobs: list[dict[str, Any]] = []
@@ -557,10 +624,26 @@ def run_cv(
                     "ci": ci,
                     "fi": fi,
                     "tag": tag,
+                    "key": _job_key(
+                        config_path,
+                        epochs,
+                        fold_lists_by_fold[fi],
+                        cfg=cfg,
+                        threshold=threshold,
+                        teacher=teacher_key[fi],
+                    ),
                 }
             )
-    print(f"[CV] training {len(s_jobs)} student runs")
-    student_results = _run_jobs(_train_student_job, s_jobs, min(jobs, len(s_jobs)))
+    student_results = []
+    todo = []
+    for job in s_jobs:
+        done = _load_done(job["run_dir"], job["key"])
+        if done:
+            student_results.append((job["ci"], job["fi"], done["metrics"]))
+        else:
+            todo.append(job)
+    print(f"[CV] training {len(todo)} student runs ({len(student_results)} already done)")
+    student_results += _run_jobs(_train_student_job, todo, min(jobs, len(todo)))
 
     # -- Aggregate fold metrics per config -------------------------------------
     by_config: dict[int, dict[int, dict[str, float]]] = {}

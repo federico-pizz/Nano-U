@@ -8,7 +8,8 @@ sequence, so no scene appears on both sides of a fold; see `nanou.search`.
     python scripts/sweep.py sweeps/tinyagri-stage3.yaml --preset tinyagri --jobs 3
 
 Runs unattended for hours. The table lands in <results_dir>/cv/<sweep name>/,
-next to a copy of the sweep file that produced it.
+next to a copy of the sweep file that produced it. If a sweep is stopped, run
+the same command again: finished runs are reused, not retrained.
 """
 
 import argparse
