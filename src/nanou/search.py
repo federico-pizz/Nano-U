@@ -288,37 +288,43 @@ def evaluate_on_files(
 
 def _train_teacher_job(job: dict[str, Any]):
     """Train one per-fold BU-Net teacher. Returns (fold_index, model_path)."""
-    res = run_training(
-        "bu_net",
-        job["config_path"],
-        job["run_dir"],
-        config_overrides={
-            **job["fold_lists"],
-            "models_dir": job["models_dir"],
-            "epochs": job["epochs"],
-        },
-    )
-    if res.get("status") != "success":
-        raise RuntimeError(f"teacher failed [fold{job['fi']}]: {res.get('error')}")
+    try:
+        res = run_training(
+            "bu_net",
+            job["config_path"],
+            job["run_dir"],
+            config_overrides={
+                **job["fold_lists"],
+                "models_dir": job["models_dir"],
+                "epochs": job["epochs"],
+            },
+        )
+    except Exception as e:
+        # Not handled, only labelled: the note survives the trip back from a
+        # pool worker, so the traceback says which of the k runs broke.
+        e.add_note(f"while training the teacher for fold{job['fi']}")
+        raise
     return job["fi"], res["model_path"]
 
 
 def _train_student_job(job: dict[str, Any]):
     """Train + evaluate one (config, fold) Nano-U student. Returns (ci, fi, metrics)."""
-    res = run_training(
-        "nanou",
-        job["config_path"],
-        job["run_dir"],
-        config_overrides={
-            **job["fold_lists"],
-            **job["cfg"],
-            "models_dir": job["models_dir"],
-            "epochs": job["epochs"],
-            "teacher_weights": job["teacher_weights"],
-        },
-    )
-    if res.get("status") != "success":
-        raise RuntimeError(f"student failed [{job['tag']} fold{job['fi']}]: {res.get('error')}")
+    try:
+        res = run_training(
+            "nanou",
+            job["config_path"],
+            job["run_dir"],
+            config_overrides={
+                **job["fold_lists"],
+                **job["cfg"],
+                "models_dir": job["models_dir"],
+                "epochs": job["epochs"],
+                "teacher_weights": job["teacher_weights"],
+            },
+        )
+    except Exception as e:
+        e.add_note(f"while training the student {job['tag']} fold{job['fi']}")
+        raise
     config = load_config(job["config_path"])
     fm = evaluate_on_files(
         res["model_path"],

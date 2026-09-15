@@ -15,7 +15,6 @@ Usage:
 """
 
 import argparse
-import sys
 from pathlib import Path
 
 from nanou.config import preset_path
@@ -44,9 +43,7 @@ def main():
             f"  Fix it with:  python scripts/train.py --preset {args.preset}\n"
         )
 
-    ok = quantize_model(args.model_path, args.output_path, config_path=config_path)
-    if not ok:
-        sys.exit(1)
+    quantize_model(args.model_path, args.output_path, config_path=config_path)
 
 
 if __name__ == "__main__":

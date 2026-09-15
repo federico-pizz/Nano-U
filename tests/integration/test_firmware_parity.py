@@ -61,7 +61,7 @@ def _firmware_lut(mean, std, scale, zero_point):
 def quant(tmp_path_factory):
     model = create_nano_u(input_shape=(H, W, 3), filters=[4, 8, 16], bottleneck=16)
     out = str(tmp_path_factory.mktemp("fw") / "nanou.tflite")
-    assert convert_to_tflite_quantized(model, out, _representative_gen), "INT8 export failed"
+    convert_to_tflite_quantized(model, out, _representative_gen)
     params = extract_quant_params(out, config_path="config/presets/tinyagri.yaml")
     return out, params
 

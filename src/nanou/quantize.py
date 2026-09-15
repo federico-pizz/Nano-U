@@ -26,7 +26,7 @@ def convert_to_tflite_quantized(
     output_path: str,
     representative_data_gen=None,
     allow_select_tf_ops: bool = False,
-) -> bool:
+) -> str:
     """Convert Keras model to Int8 Quantized TFLite model.
 
     Args:
@@ -37,36 +37,36 @@ def convert_to_tflite_quantized(
             ops not natively supported in TFLITE_BUILTINS_INT8 mode. Keeps
             the primary ops list as INT8-only so that the microcontroller
             path is still fully quantized.
+
+    Returns:
+        ``output_path``. A converter failure propagates as the converter's own
+        exception.
     """
-    try:
-        converter = tf.lite.TFLiteConverter.from_keras_model(model)
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    converter.optimizations = [tf.lite.Optimize.DEFAULT]
 
-        if representative_data_gen:
-            converter.representative_dataset = representative_data_gen
+    if representative_data_gen:
+        converter.representative_dataset = representative_data_gen
 
-        # Always enforce full-integer quantization as the primary target.
-        supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-        if allow_select_tf_ops:
-            # Allow TF Select ops as a fallback (e.g. for any ops the INT8
-            # kernel set doesn't cover). This will not affect ops that ARE
-            # covered natively.
-            supported_ops.append(tf.lite.OpsSet.SELECT_TF_OPS)
+    # Always enforce full-integer quantization as the primary target.
+    supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+    if allow_select_tf_ops:
+        # Allow TF Select ops as a fallback (e.g. for any ops the INT8
+        # kernel set doesn't cover). This will not affect ops that ARE
+        # covered natively.
+        supported_ops.append(tf.lite.OpsSet.SELECT_TF_OPS)
 
-        converter.target_spec.supported_ops = supported_ops
-        converter.inference_input_type = tf.int8
-        converter.inference_output_type = tf.int8
+    converter.target_spec.supported_ops = supported_ops
+    converter.inference_input_type = tf.int8
+    converter.inference_output_type = tf.int8
 
-        tflite_model = converter.convert()
+    tflite_model = converter.convert()
 
-        with open(output_path, "wb") as f:
-            f.write(tflite_model)
+    with open(output_path, "wb") as f:
+        f.write(tflite_model)
 
-        print(f"Quantized TFLite model saved to {output_path}")
-        return True
-    except Exception as e:
-        print(f"Quantization failed: {e}")
-        return False
+    print(f"Quantized TFLite model saved to {output_path}")
+    return output_path
 
 
 def extract_quant_params(
@@ -137,37 +137,34 @@ def quantize_model(
     output_path: str,
     input_shape: tuple[int, ...] | None = None,
     config_path: str = "config/presets/tinyagri.yaml",
-):
+) -> str:
     """Load a Keras model, convert it to a quantized TFLite model, and record its scales.
 
     The quantization parameters are read back out of the produced .tflite and
     written to a companion JSON file, so the Rust firmware picks up the real
     values rather than hardcoded ones.
+
+    Returns:
+        The path of the companion ``_quant_params.json``.
+
+    Raises:
+        FileNotFoundError: if ``model_path`` does not exist, or if there are no
+            calibration images and noise calibration was not asked for.
+        ValueError: if ``quantization.calibration_split`` is not val or train.
     """
     config = load_config(config_path)
     if input_shape is None:
         input_shape = (1, *config.get("data", {}).get("input_shape", (60, 80, 3)))
 
     if not os.path.exists(model_path):
-        print(f"Error: {model_path} not found!")
-        return False
+        raise FileNotFoundError(f"No model to quantize at {model_path}")
 
-    try:
-        # 1. Custom objects for metrics
-        custom_objects = {"BinaryIoU": BinaryIoU, "PadToMatch": PadToMatch}
-
-        # 2. Add tfmot objects to custom_objects for QAT models
-        with tfmot.quantization.keras.quantize_scope():
-            with keras.utils.custom_object_scope(custom_objects):
-                model = keras.models.load_model(model_path, compile=False)
-
-        print(f"Model loaded successfully from {model_path}")
-    except Exception as e:
-        print(f"Failed to load model: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return False
+    # QAT models carry tfmot wrappers, so they only load inside quantize_scope.
+    custom_objects = {"BinaryIoU": BinaryIoU, "PadToMatch": PadToMatch}
+    with tfmot.quantization.keras.quantize_scope():
+        with keras.utils.custom_object_scope(custom_objects):
+            model = keras.models.load_model(model_path, compile=False)
+    print(f"Model loaded successfully from {model_path}")
 
     data_paths = config.get("data", {}).get("paths", {})
     data_cfg = data_paths.get("processed", {})
@@ -245,20 +242,19 @@ def quantize_model(
                 yield [data]
 
     print(f"Quantizing model {model_path} to {output_path}...")
-    success = convert_to_tflite_quantized(model, output_path, representative_data_gen)
+    convert_to_tflite_quantized(model, output_path, representative_data_gen)
 
-    if success:
-        # Extract actual quant params from the produced .tflite and persist
-        # them for the Rust build script.
-        params = extract_quant_params(output_path, config_path)
+    # Extract actual quant params from the produced .tflite and persist them
+    # for the Rust build script.
+    params = extract_quant_params(output_path, config_path)
 
-        params_path = os.path.splitext(output_path)[0] + "_quant_params.json"
-        with open(params_path, "w") as f:
-            json.dump(params, f, indent=2)
+    params_path = os.path.splitext(output_path)[0] + "_quant_params.json"
+    with open(params_path, "w") as f:
+        json.dump(params, f, indent=2)
 
-        print(
-            f"\n[QUANT] Saved quantization metadata to {params_path} "
-            f"(input_scale={params['input']['scale']}, output_scale={params['output']['scale']})"
-        )
+    print(
+        f"\n[QUANT] Saved quantization metadata to {params_path} "
+        f"(input_scale={params['input']['scale']}, output_scale={params['output']['scale']})"
+    )
 
-    return success
+    return params_path

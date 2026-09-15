@@ -27,8 +27,7 @@ def test_int8_export_roundtrip(tmp_path):
     model = create_nano_u(input_shape=(H, W, 3), filters=[4, 8, 16], bottleneck=16)
     out_path = str(tmp_path / "nanou.tflite")
 
-    ok = convert_to_tflite_quantized(model, out_path, _representative_gen)
-    assert ok, "INT8 conversion failed"
+    convert_to_tflite_quantized(model, out_path, _representative_gen)
     assert os.path.getsize(out_path) > 0
 
     params = extract_quant_params(out_path, config_path="config/presets/tinyagri.yaml")
@@ -175,7 +174,7 @@ def test_int8_output_tracks_float_source(tmp_path):
             yield [batch.numpy().astype(np.float32)]
 
     tflite_path = str(tmp_path / "nanou.tflite")
-    assert convert_to_tflite_quantized(model, tflite_path, representative_gen)
+    convert_to_tflite_quantized(model, tflite_path, representative_gen)
 
     float_probs, gt, _ = run_inference(model, dataset)
     int8_probs, int8_gt, _ = run_inference(tflite_path, dataset)

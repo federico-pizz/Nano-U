@@ -176,7 +176,7 @@ def test_run_cv_stubbed(monkeypatch, tmp_path):
 
     def fake_run_training(name, cfg_path, out_dir, config_overrides=None):
         calls["n"] += 1
-        return {"status": "success", "model_path": f"{out_dir}/{name}.h5"}
+        return {"model_path": f"{out_dir}/{name}.h5"}
 
     monkeypatch.setattr(cv, "run_training", fake_run_training)
 
@@ -240,7 +240,7 @@ def test_run_cv_caches_one_teacher_per_fold(monkeypatch, tmp_path):
     def fake_run_training(name, cfg_path, out_dir, config_overrides=None):
         counts[name] += 1
         # Teacher path must be per-fold-unique so students reuse the right one.
-        return {"status": "success", "model_path": f"{out_dir}/{name}.h5"}
+        return {"model_path": f"{out_dir}/{name}.h5"}
 
     monkeypatch.setattr(cv, "run_training", fake_run_training)
     monkeypatch.setattr(

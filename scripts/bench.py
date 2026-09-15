@@ -9,7 +9,6 @@ Usage:
 """
 
 import argparse
-import sys
 
 from nanou.bench import run_benchmarks
 from nanou.config import load_config, preset_path
@@ -41,13 +40,7 @@ def main():
     except PreflightError as e:
         raise SystemExit(f"\n{e}") from e
 
-    results = run_benchmarks(args.model, config_path=config_path)
-    if "error" in results:
-        print(f"\nBenchmark Failed: {results['error']}")
-        print(results.get("traceback", ""))
-        sys.exit(1)
-
-    inf = results.get("inference", {})
+    inf = run_benchmarks(args.model, config_path=config_path)["inference"]
     print("\nFinal Metrics:")
     print(f"  Avg Latency:    {inf.get('avg_latency_ms', '?'):.2f} ms")
     print(f"  P99 Latency:    {inf.get('p99_latency_ms', '?'):.2f} ms")

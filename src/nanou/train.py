@@ -2,7 +2,6 @@
 
 import json
 import os
-import traceback
 from pathlib import Path
 from typing import Any
 
@@ -179,34 +178,23 @@ def train_single_model(
         print(f"[TRAIN] weight_decay={weight_decay}")
 
     # Fit - accept both tf.data.Dataset and (x, y) tuple
-    is_dataset = isinstance(train_data, tf.data.Dataset)
-    try:
-        if is_dataset:
-            history = model.fit(
-                train_data,
-                epochs=epochs,
-                validation_data=val_data,
-                callbacks=callbacks,
-                verbose=1,
-            )
-        else:
-            history = model.fit(
-                train_data[0],
-                train_data[1],
-                batch_size=batch_size,
-                epochs=epochs,
-                validation_data=val_data,
-                callbacks=callbacks,
-                verbose=1,
-            )
-
-        return history
-
-    except Exception as e:
-        print(f"\nTraining failed: {e}")
-        print("Traceback:")
-        print(traceback.format_exc())
-        raise
+    if isinstance(train_data, tf.data.Dataset):
+        return model.fit(
+            train_data,
+            epochs=epochs,
+            validation_data=val_data,
+            callbacks=callbacks,
+            verbose=1,
+        )
+    return model.fit(
+        train_data[0],
+        train_data[1],
+        batch_size=batch_size,
+        epochs=epochs,
+        validation_data=val_data,
+        callbacks=callbacks,
+        verbose=1,
+    )
 
 
 class StudentCheckpoint(keras.callbacks.ModelCheckpoint):
@@ -418,253 +406,244 @@ def train_model(
             YAML processing. Caller-supplied values always win (e.g. dynamic teacher_weights).
 
     Returns:
-        A dictionary containing termination status, path strings, and the final history structure.
+        The final history, the saved model's path and name, the experiment directory
+        and whether QAT was applied. Any failure propagates as an exception.
     """
-    try:
-        # Load full configuration and resolve experiment
-        full_config = load_config(config_path)
-        config = dict(_get_config(full_config, experiment_name))
+    # Load full configuration and resolve experiment
+    full_config = load_config(config_path)
+    config = dict(_get_config(full_config, experiment_name))
 
-        # Override the model_name to match the experiment_name passed by run_training()
-        config["model_name"] = experiment_name
+    # Override the model_name to match the experiment_name passed by run_training()
+    config["model_name"] = experiment_name
 
-        # Merge model architecture config if available
-        if "models" in full_config and experiment_name in full_config["models"]:
-            model_config = full_config["models"][experiment_name]
-            # Update config with model defaults if not overridden in experiment
-            for key, value in model_config.items():
-                if key not in config:
-                    config[key] = value
+    # Merge model architecture config if available
+    if "models" in full_config and experiment_name in full_config["models"]:
+        model_config = full_config["models"][experiment_name]
+        # Update config with model defaults if not overridden in experiment
+        for key, value in model_config.items():
+            if key not in config:
+                config[key] = value
 
-        # If a nested `distillation` block is present in the experiment config
-        # (as in config/presets/tinyagri.yaml), normalize it into the flat keys expected
-        # by the training pipeline so that knowledge distillation is actually
-        # activated when `enabled: true` is set.
-        dist_cfg = config.get("distillation")
-        if isinstance(dist_cfg, dict) and dist_cfg.get("enabled"):
-            # Enable distillation for this experiment
-            config.setdefault("use_distillation", True)
-            # Teacher model name can differ from the student model_name
-            teacher_model_name = dist_cfg.get("teacher_model_name", "bu_net")
-            config.setdefault("teacher_model_name", teacher_model_name)
-            # Carry over optional knobs if they are provided
-            if "teacher_weights" in dist_cfg:
-                config.setdefault("teacher_weights", dist_cfg["teacher_weights"])
-            if "alpha" in dist_cfg:
-                config.setdefault("alpha", dist_cfg["alpha"])
-            if "temperature" in dist_cfg:
-                config.setdefault("temperature", dist_cfg["temperature"])
+    # If a nested `distillation` block is present in the experiment config
+    # (as in config/presets/tinyagri.yaml), normalize it into the flat keys expected
+    # by the training pipeline so that knowledge distillation is actually
+    # activated when `enabled: true` is set.
+    dist_cfg = config.get("distillation")
+    if isinstance(dist_cfg, dict) and dist_cfg.get("enabled"):
+        # Enable distillation for this experiment
+        config.setdefault("use_distillation", True)
+        # Teacher model name can differ from the student model_name
+        teacher_model_name = dist_cfg.get("teacher_model_name", "bu_net")
+        config.setdefault("teacher_model_name", teacher_model_name)
+        # Carry over optional knobs if they are provided
+        if "teacher_weights" in dist_cfg:
+            config.setdefault("teacher_weights", dist_cfg["teacher_weights"])
+        if "alpha" in dist_cfg:
+            config.setdefault("alpha", dist_cfg["alpha"])
+        if "temperature" in dist_cfg:
+            config.setdefault("temperature", dist_cfg["temperature"])
 
-        # Apply caller overrides last so they win over everything in the YAML
-        # (e.g. teacher_weights dynamically resolved by the QAD pipeline).
-        if extra_config:
-            config.update(extra_config)
+    # Apply caller overrides last so they win over everything in the YAML
+    # (e.g. teacher_weights dynamically resolved by the QAD pipeline).
+    if extra_config:
+        config.update(extra_config)
 
-        if "data" in full_config and "input_shape" in full_config["data"]:
-            config.setdefault("input_shape", full_config["data"]["input_shape"])
+    if "data" in full_config and "input_shape" in full_config["data"]:
+        config.setdefault("input_shape", full_config["data"]["input_shape"])
 
-        # Seed all RNGs up front so the run is reproducible. `seed` lives in the
-        # `training` block alongside the experiment hyperparameter sets.
-        seed = full_config.get("training", {}).get("seed")
-        config.setdefault("seed", seed)
-        set_global_seed(seed)
+    # Seed all RNGs up front so the run is reproducible. `seed` lives in the
+    # `training` block alongside the experiment hyperparameter sets.
+    seed = full_config.get("training", {}).get("seed")
+    config.setdefault("seed", seed)
+    set_global_seed(seed)
 
-        if output_dir is not None:
-            experiment_dir = Path(output_dir)
-        else:
-            base_output = Path(config.get("output_dir", "results/"))
-            model_name_for_dir = config.get("model_name", experiment_name)
-            experiment_dir = base_output / model_name_for_dir
+    if output_dir is not None:
+        experiment_dir = Path(output_dir)
+    else:
+        base_output = Path(config.get("output_dir", "results/"))
+        model_name_for_dir = config.get("model_name", experiment_name)
+        experiment_dir = base_output / model_name_for_dir
 
-        experiment_dir.mkdir(parents=True, exist_ok=True)
+    experiment_dir.mkdir(parents=True, exist_ok=True)
 
-        # Data loading
-        data_paths = full_config.get("data", {}).get("paths", {})
-        # Honor a caller-supplied models_dir override (set via config_overrides)
-        # so concurrent runs - e.g. the CV harness training folds in parallel -
-        # each write their own temp_model.h5 / <model>.h5 instead of clobbering a
-        # shared one. Normal runs don't set it -> fall back to the dataset dir.
-        models_dir = Path(config.get("models_dir") or data_paths.get("models_dir", "models"))
-        config["models_dir"] = str(models_dir)
+    # Data loading
+    data_paths = full_config.get("data", {}).get("paths", {})
+    # Honor a caller-supplied models_dir override (set via config_overrides)
+    # so concurrent runs - e.g. the CV harness training folds in parallel -
+    # each write their own temp_model.h5 / <model>.h5 instead of clobbering a
+    # shared one. Normal runs don't set it -> fall back to the dataset dir.
+    models_dir = Path(config.get("models_dir") or data_paths.get("models_dir", "models"))
+    config["models_dir"] = str(models_dir)
 
-        processed = data_paths.get("processed", {})
+    processed = data_paths.get("processed", {})
 
-        # Injected fold file-lists (set by the CV harness via config_overrides)
-        # bypass directory discovery so a leakage-safe grouped split can be
-        # trained through the exact same code path as a normal run. Guarded by
-        # key presence -> no effect on existing callers.
-        if config.get("cv_train_img") and config.get("cv_train_mask"):
-            train_img_files = list(config["cv_train_img"])
-            train_mask_files = list(config["cv_train_mask"])
-            val_img_files = list(config.get("cv_val_img") or [])
-            val_mask_files = list(config.get("cv_val_mask") or [])
-            print(
-                f"[CV] using injected fold file-lists: "
-                f"{len(train_img_files)} train / {len(val_img_files)} val pairs."
-            )
-        else:
-            print("Loading data from processed paths...")
-            (train_img_files, train_mask_files, val_img_files, val_mask_files) = (
-                discover_processed_pairs(processed)
-            )
-
-        print(f"Found {len(train_img_files)} training pairs.")
-        if val_img_files:
-            print(f"Found {len(val_img_files)} validation pairs.")
-        else:
-            print("Validation data skipped (mismatch, empty, or no val dirs).")
-
-        norm_mean = (
-            full_config.get("data", {}).get("normalization", {}).get("mean", [0.5, 0.5, 0.5])
+    # Injected fold file-lists (set by the CV harness via config_overrides)
+    # bypass directory discovery so a leakage-safe grouped split can be
+    # trained through the exact same code path as a normal run. Guarded by
+    # key presence -> no effect on existing callers.
+    if config.get("cv_train_img") and config.get("cv_train_mask"):
+        train_img_files = list(config["cv_train_img"])
+        train_mask_files = list(config["cv_train_mask"])
+        val_img_files = list(config.get("cv_val_img") or [])
+        val_mask_files = list(config.get("cv_val_mask") or [])
+        print(
+            f"[CV] using injected fold file-lists: "
+            f"{len(train_img_files)} train / {len(val_img_files)} val pairs."
         )
-        norm_std = full_config.get("data", {}).get("normalization", {}).get("std", [0.5, 0.5, 0.5])
+    else:
+        print("Loading data from processed paths...")
+        (train_img_files, train_mask_files, val_img_files, val_mask_files) = (
+            discover_processed_pairs(processed)
+        )
 
-        batch_size = config.get("batch_size", 16)
+    print(f"Found {len(train_img_files)} training pairs.")
+    if val_img_files:
+        print(f"Found {len(val_img_files)} validation pairs.")
+    else:
+        print("Validation data skipped (mismatch, empty, or no val dirs).")
 
-        input_shape_cfg = config.get("input_shape")
-        target_size = (input_shape_cfg[0], input_shape_cfg[1]) if input_shape_cfg else None
+    norm_mean = full_config.get("data", {}).get("normalization", {}).get("mean", [0.5, 0.5, 0.5])
+    norm_std = full_config.get("data", {}).get("normalization", {}).get("std", [0.5, 0.5, 0.5])
 
-        # augment_params lets the CV harness sweep the *kind* of augmentation
-        # (geometric / photometric / full); ignored when augment is False.
-        augment_params = config.get("augment_params", {}) or {}
-        train_ds = make_dataset(
-            train_img_files,
-            train_mask_files,
+    batch_size = config.get("batch_size", 16)
+
+    input_shape_cfg = config.get("input_shape")
+    target_size = (input_shape_cfg[0], input_shape_cfg[1]) if input_shape_cfg else None
+
+    # augment_params lets the CV harness sweep the *kind* of augmentation
+    # (geometric / photometric / full); ignored when augment is False.
+    augment_params = config.get("augment_params", {}) or {}
+    train_ds = make_dataset(
+        train_img_files,
+        train_mask_files,
+        batch_size=batch_size,
+        augment=config.get("augment", False),
+        target_size=target_size,
+        mean=norm_mean,
+        std=norm_std,
+        seed=seed,
+        **augment_params,
+    )
+    val_ds: tf.data.Dataset | None = None
+    if val_img_files:
+        val_ds = make_dataset(
+            val_img_files,
+            val_mask_files,
             batch_size=batch_size,
-            augment=config.get("augment", False),
+            augment=False,
+            shuffle=False,
             target_size=target_size,
             mean=norm_mean,
             std=norm_std,
             seed=seed,
-            **augment_params,
         )
-        val_ds: tf.data.Dataset | None = None
-        if val_img_files:
-            val_ds = make_dataset(
-                val_img_files,
-                val_mask_files,
-                batch_size=batch_size,
-                augment=False,
-                shuffle=False,
-                target_size=target_size,
-                mean=norm_mean,
-                std=norm_std,
-                seed=seed,
-            )
 
-        train_data = train_ds
-        val_data = val_ds
+    train_data = train_ds
+    val_data = val_ds
 
-        model_to_save = None
+    model_to_save = None
 
-        # Build models
-        if config.get("use_distillation", False):
-            # The 'teacher_experiment' is basically an experiment config or model name
-            # Let's see if we can extract its structure.
-            teacher_name = config.get("teacher_model_name", "bu_net")
-            teacher_config = config.copy()
-            teacher_config["model_name"] = teacher_name
+    # Build models
+    if config.get("use_distillation", False):
+        # The 'teacher_experiment' is basically an experiment config or model name
+        # Let's see if we can extract its structure.
+        teacher_name = config.get("teacher_model_name", "bu_net")
+        teacher_config = config.copy()
+        teacher_config["model_name"] = teacher_name
 
-            # Re-apply the teacher's architecture from the preset's `models` block.
-            if teacher_name in full_config.get("models", {}):
-                teacher_config.update(full_config["models"][teacher_name])
+        # Re-apply the teacher's architecture from the preset's `models` block.
+        if teacher_name in full_config.get("models", {}):
+            teacher_config.update(full_config["models"][teacher_name])
 
-            print(f"[KD] Building teacher '{teacher_name}'")
-            teacher = build_from_config(teacher_config)
+        print(f"[KD] Building teacher '{teacher_name}'")
+        teacher = build_from_config(teacher_config)
 
-            teacher_weights = config.get("teacher_weights")
-            if teacher_weights and Path(teacher_weights).exists():
-                print(f"[KD] Loading teacher weights from {teacher_weights}")
-                teacher.load_weights(teacher_weights)
-            else:
-                if teacher_weights:
-                    print(
-                        f"[KD] Teacher weights not found at {teacher_weights}; using random initialization."
-                    )
-
-            student = build_from_config(config)
-
-            # Apply QAT (Quantization-Aware Training) to the student model.
-            # apply_qat_to_model raises on failure: QAD requires fake-quant nodes
-            # from epoch 1, so a silent float fallback must not be possible.
-            qat_enabled = config.get("qat_enabled", True)
-            if qat_enabled:
-                print("Applying Quantization-Aware Training (QAT) to student model...")
-                student = apply_qat_to_model(student)
-
-            # Distillation can now correctly handle tf.data.Dataset transparently
-            history = train_with_distillation(
-                student, teacher, config, train_data, val_data, experiment_dir=str(experiment_dir)
-            )
-            model_to_save = student
-            is_qat_model = qat_enabled
+        teacher_weights = config.get("teacher_weights")
+        if teacher_weights and Path(teacher_weights).exists():
+            print(f"[KD] Loading teacher weights from {teacher_weights}")
+            teacher.load_weights(teacher_weights)
         else:
-            model = build_from_config(config)
+            if teacher_weights:
+                print(
+                    f"[KD] Teacher weights not found at {teacher_weights}; using random initialization."
+                )
 
-            # Apply QAT only to nanou (the student / deployment model).
-            # TFMOT requires a Sequential or Functional model; bu_net and other
-            # custom subclasses are not compatible and must skip QAT.
-            model_name = config.get("model_name", "nanou")
-            qat_enabled = config.get("qat_enabled", True) and model_name == "nanou"
-            if qat_enabled:
-                print("Applying Quantization-Aware Training (QAT) to model...")
-                model = apply_qat_to_model(model)
+        student = build_from_config(config)
 
-            # fit handles both (x, y) and dataset
-            history = train_single_model(
-                model, config, train_data, val_data, experiment_dir=str(experiment_dir)
-            )
-            model_to_save = model
-            is_qat_model = qat_enabled
+        # Apply QAT (Quantization-Aware Training) to the student model.
+        # apply_qat_to_model raises on failure: QAD requires fake-quant nodes
+        # from epoch 1, so a silent float fallback must not be possible.
+        qat_enabled = config.get("qat_enabled", True)
+        if qat_enabled:
+            print("Applying Quantization-Aware Training (QAT) to student model...")
+            student = apply_qat_to_model(student)
 
-        # Restore best weights before saving if they exist
-        temp_checkpoint = str(models_dir / "temp_model.h5")
-        if os.path.exists(temp_checkpoint):
-            print(f"Loading best weights from {temp_checkpoint} for final save...")
-            model_to_save.load_weights(temp_checkpoint)
+        # Distillation can now correctly handle tf.data.Dataset transparently
+        history = train_with_distillation(
+            student, teacher, config, train_data, val_data, experiment_dir=str(experiment_dir)
+        )
+        model_to_save = student
+        is_qat_model = qat_enabled
+    else:
+        model = build_from_config(config)
 
-        models_dir.mkdir(parents=True, exist_ok=True)
-        model_name = config.get("model_name", "model")
-        model_path = models_dir / f"{model_name}.h5"
+        # Apply QAT only to nanou (the student / deployment model).
+        # TFMOT requires a Sequential or Functional model; bu_net and other
+        # custom subclasses are not compatible and must skip QAT.
+        model_name = config.get("model_name", "nanou")
+        qat_enabled = config.get("qat_enabled", True) and model_name == "nanou"
+        if qat_enabled:
+            print("Applying Quantization-Aware Training (QAT) to model...")
+            model = apply_qat_to_model(model)
 
-        # Save the trained model. QAT models are saved with their quantization
-        # wrappers intact; the TFLite converter in quantize_model.py then applies
-        # PTQ on top of the QAT-trained weights to produce the final INT8 model.
-        model_to_save.save(model_path)
-        if is_qat_model:
-            print(f"QAT model saved to {model_path}")
+        # fit handles both (x, y) and dataset
+        history = train_single_model(
+            model, config, train_data, val_data, experiment_dir=str(experiment_dir)
+        )
+        model_to_save = model
+        is_qat_model = qat_enabled
 
-        if os.path.exists(temp_checkpoint):
-            os.remove(temp_checkpoint)
+    # Restore best weights before saving if they exist
+    temp_checkpoint = str(models_dir / "temp_model.h5")
+    if os.path.exists(temp_checkpoint):
+        print(f"Loading best weights from {temp_checkpoint} for final save...")
+        model_to_save.load_weights(temp_checkpoint)
 
-        history_path = experiment_dir / "history.json"
-        history_dict = history.history if hasattr(history, "history") else history
+    models_dir.mkdir(parents=True, exist_ok=True)
+    model_name = config.get("model_name", "model")
+    model_path = models_dir / f"{model_name}.h5"
 
-        # Ensure all values are standard Python floats for JSON serialization
-        serializable_history = {}
-        for key, values in history_dict.items():
-            serializable_history[key] = [float(v) for v in values]
+    # Save the trained model. QAT models are saved with their quantization
+    # wrappers intact; the TFLite converter in quantize_model.py then applies
+    # PTQ on top of the QAT-trained weights to produce the final INT8 model.
+    model_to_save.save(model_path)
+    if is_qat_model:
+        print(f"QAT model saved to {model_path}")
 
-        with open(history_path, "w") as f:
-            json.dump(serializable_history, f, indent=2, cls=NumpyEncoder)
+    if os.path.exists(temp_checkpoint):
+        os.remove(temp_checkpoint)
 
-        with open(experiment_dir / "config.yaml", "w") as f:
-            yaml.dump(config, f)
+    history_path = experiment_dir / "history.json"
+    history_dict = history.history if hasattr(history, "history") else history
 
-        return {
-            "status": "success",
-            "final_metrics": serializable_history,
-            "model_path": str(model_path),
-            "model_name": config.get("model_name", "model"),
-            "experiment_dir": str(experiment_dir),
-            # Recorded so results.json states whether the saved .h5 actually
-            # carries fake-quantization wrappers, rather than leaving it to be
-            # inferred from the config.
-            "qat_applied": bool(is_qat_model),
-        }
-    except Exception as e:
-        return {
-            "status": "failed",
-            "error": str(e),
-            "traceback": traceback.format_exc(),
-        }
+    # Ensure all values are standard Python floats for JSON serialization
+    serializable_history = {}
+    for key, values in history_dict.items():
+        serializable_history[key] = [float(v) for v in values]
+
+    with open(history_path, "w") as f:
+        json.dump(serializable_history, f, indent=2, cls=NumpyEncoder)
+
+    with open(experiment_dir / "config.yaml", "w") as f:
+        yaml.dump(config, f)
+
+    return {
+        "final_metrics": serializable_history,
+        "model_path": str(model_path),
+        "model_name": config.get("model_name", "model"),
+        "experiment_dir": str(experiment_dir),
+        # Recorded so results.json states whether the saved .h5 actually
+        # carries fake-quantization wrappers, rather than leaving it to be
+        # inferred from the config.
+        "qat_applied": bool(is_qat_model),
+    }

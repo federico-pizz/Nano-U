@@ -233,79 +233,81 @@ def benchmark_tflite_inference(
 def run_benchmarks(
     model_name: str, config_path: str = "config/presets/tinyagri.yaml"
 ) -> dict[str, Any]:
-    """Run full benchmark suite on a saved model."""
-    try:
-        config = load_config(config_path)
-        models_dir = Path(config.get("data", {}).get("paths", {}).get("models_dir", "models"))
+    """Run full benchmark suite on a saved model.
 
-        # Handle model_name as a full path or a name
-        input_path = Path(model_name)
-        if input_path.exists() and input_path.is_file():
-            model_path = input_path
-            is_tflite = model_path.suffix.lower() == ".tflite"
+    Returns:
+        ``{"inference": ...}``, the latency figures for the model.
+
+    Raises:
+        FileNotFoundError: if no saved model matches ``model_name``.
+    """
+    config = load_config(config_path)
+    models_dir = Path(config.get("data", {}).get("paths", {}).get("models_dir", "models"))
+
+    # Handle model_name as a full path or a name
+    input_path = Path(model_name)
+    if input_path.exists() and input_path.is_file():
+        model_path = input_path
+        is_tflite = model_path.suffix.lower() == ".tflite"
+    else:
+        if model_name == "nanou":
+            model_path = models_dir / f"{model_name}.tflite"
+            is_tflite = True
         else:
-            if model_name == "nanou":
-                model_path = models_dir / f"{model_name}.tflite"
-                is_tflite = True
+            model_path = models_dir / f"{model_name}.h5"
+            is_tflite = False
+
+        if not model_path.exists():
+            # Try fallback .keras if .h5 doesnt exist for keras
+            if not is_tflite and (models_dir / f"{model_name}.keras").exists():
+                model_path = models_dir / f"{model_name}.keras"
             else:
-                model_path = models_dir / f"{model_name}.h5"
-                is_tflite = False
+                raise FileNotFoundError(f"Model file not found: {model_path}")
 
-            if not model_path.exists():
-                # Try fallback .keras if .h5 doesnt exist for keras
-                if not is_tflite and (models_dir / f"{model_name}.keras").exists():
-                    model_path = models_dir / f"{model_name}.keras"
-                else:
-                    raise FileNotFoundError(f"Model file not found: {model_path}")
+    print(f"Benchmarking model: {model_path}")
 
-        print(f"Benchmarking model: {model_path}")
+    actual_shape = tuple(config.get("data", {}).get("input_shape", (60, 80, 3)))
 
-        actual_shape = tuple(config.get("data", {}).get("input_shape", (60, 80, 3)))
+    # Try to load test dataset
+    test_ds = None
+    try:
+        data_paths = config.get("data", {}).get("paths", {})
+        test_cfg = data_paths.get("processed", {}).get("test", {})
+        print(f"Loading test dataset for {model_name}...")
 
-        # Try to load test dataset
-        test_ds = None
-        try:
-            data_paths = config.get("data", {}).get("paths", {})
-            test_cfg = data_paths.get("processed", {}).get("test", {})
-            print(f"Loading test dataset for {model_name}...")
+        t_img_dir = Path(test_cfg.get("img", ""))
+        t_mask_dir = Path(test_cfg.get("mask", ""))
 
-            t_img_dir = Path(test_cfg.get("img", ""))
-            t_mask_dir = Path(test_cfg.get("mask", ""))
+        if t_img_dir.exists() and t_mask_dir.exists():
+            test_img_files = sorted([str(f) for f in t_img_dir.glob("*.png")])
+            test_mask_files = sorted([str(f) for f in t_mask_dir.glob("*.png")])
 
-            if t_img_dir.exists() and t_mask_dir.exists():
-                test_img_files = sorted([str(f) for f in t_img_dir.glob("*.png")])
-                test_mask_files = sorted([str(f) for f in t_mask_dir.glob("*.png")])
-
-                norm_cfg = config.get("data", {}).get("normalization", {})
-                norm_mean = norm_cfg.get("mean", [0.5, 0.5, 0.5])
-                norm_std = norm_cfg.get("std", [0.5, 0.5, 0.5])
-                if test_img_files and len(test_img_files) == len(test_mask_files):
-                    print(f"Found {len(test_img_files)} test pairs for benchmarking.")
-                    test_ds = make_dataset(
-                        test_img_files,
-                        test_mask_files,
-                        batch_size=1,
-                        augment=False,  # Batch size 1 for accurate latency
-                        target_size=(actual_shape[0], actual_shape[1]),
-                        mean=norm_mean,
-                        std=norm_std,
-                    )
-        except Exception as e:
-            print(f"Could not load test dataset for benchmarking: {e}")
-
-        if is_tflite:
-            inf_metrics = benchmark_tflite_inference(
-                str(model_path), dataset=test_ds, input_shape=actual_shape
-            )
-        else:
-            inf_metrics = benchmark_keras_inference(
-                str(model_path), dataset=test_ds, input_shape=actual_shape
-            )
-
-        return {
-            "inference": inf_metrics,
-        }
+            norm_cfg = config.get("data", {}).get("normalization", {})
+            norm_mean = norm_cfg.get("mean", [0.5, 0.5, 0.5])
+            norm_std = norm_cfg.get("std", [0.5, 0.5, 0.5])
+            if test_img_files and len(test_img_files) == len(test_mask_files):
+                print(f"Found {len(test_img_files)} test pairs for benchmarking.")
+                test_ds = make_dataset(
+                    test_img_files,
+                    test_mask_files,
+                    batch_size=1,
+                    augment=False,  # Batch size 1 for accurate latency
+                    target_size=(actual_shape[0], actual_shape[1]),
+                    mean=norm_mean,
+                    std=norm_std,
+                )
     except Exception as e:
-        import traceback
+        print(f"Could not load test dataset for benchmarking: {e}")
 
-        return {"error": str(e), "traceback": traceback.format_exc()}
+    if is_tflite:
+        inf_metrics = benchmark_tflite_inference(
+            str(model_path), dataset=test_ds, input_shape=actual_shape
+        )
+    else:
+        inf_metrics = benchmark_keras_inference(
+            str(model_path), dataset=test_ds, input_shape=actual_shape
+        )
+
+    return {
+        "inference": inf_metrics,
+    }
