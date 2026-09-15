@@ -11,11 +11,10 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
-from src.data import make_dataset
-from src.train import discover_processed_pairs
-
+from nanou.data import discover_processed_pairs, make_dataset
 
 # -- helpers ------------------------------------------------------------------
+
 
 def _write_solid_png(path, value, channels=3):
     shape = (60, 80, 3) if channels == 3 else (60, 80)
@@ -28,22 +27,21 @@ def _make_split(root, split, names, ids):
     mask_dir = root / split / "mask"
     img_dir.mkdir(parents=True)
     mask_dir.mkdir(parents=True)
-    for name, id_ in zip(names, ids):
+    for name, id_ in zip(names, ids, strict=True):
         _write_solid_png(img_dir / f"{name}.png", id_, channels=3)
         _write_solid_png(mask_dir / f"{name}.png", id_, channels=1)
     return img_dir, mask_dir
 
 
 def _processed_cfg(root, with_val=True):
-    cfg = {"train": {"img": str(root / "train" / "img"),
-                     "mask": str(root / "train" / "mask")}}
+    cfg = {"train": {"img": str(root / "train" / "img"), "mask": str(root / "train" / "mask")}}
     if with_val:
-        cfg["val"] = {"img": str(root / "val" / "img"),
-                      "mask": str(root / "val" / "mask")}
+        cfg["val"] = {"img": str(root / "val" / "img"), "mask": str(root / "val" / "mask")}
     return cfg
 
 
 # -- discover_processed_pairs: happy paths ------------------------------------
+
 
 def test_discover_happy_path(tmp_path):
     _make_split(tmp_path, "train", [f"f{k}" for k in range(5)], list(range(5)))
@@ -71,14 +69,16 @@ def test_discover_val_count_mismatch_skips_val(tmp_path):
 
 # -- discover_processed_pairs: error paths ------------------------------------
 
+
 def test_discover_missing_train_key_raises():
     with pytest.raises(ValueError, match="processed.train"):
         discover_processed_pairs({"val": {}})
 
 
 def test_discover_missing_train_dirs_raises(tmp_path):
-    cfg = {"train": {"img": str(tmp_path / "nope" / "img"),
-                     "mask": str(tmp_path / "nope" / "mask")}}
+    cfg = {
+        "train": {"img": str(tmp_path / "nope" / "img"), "mask": str(tmp_path / "nope" / "mask")}
+    }
     with pytest.raises(FileNotFoundError, match="Training directories not found"):
         discover_processed_pairs(cfg)
 
@@ -100,6 +100,7 @@ def test_discover_train_count_mismatch_raises(tmp_path):
 
 # -- end-to-end: discovery -> make_dataset alignment ---------------------------
 
+
 def test_discovery_to_make_dataset_alignment(tmp_path):
     """The real path - train.py discovery feeding make_dataset - must pair the
     right image with the right mask even when frame numbers collide across
@@ -109,8 +110,9 @@ def test_discovery_to_make_dataset_alignment(tmp_path):
     _make_split(tmp_path, "train", names, ids)
 
     ti, tm, _, _ = discover_processed_pairs(_processed_cfg(tmp_path, with_val=False))
-    ds = make_dataset(ti, tm, batch_size=3, shuffle=False, augment=False,
-                      mean=[0, 0, 0], std=[1, 1, 1])
+    ds = make_dataset(
+        ti, tm, batch_size=3, shuffle=False, augment=False, mean=[0, 0, 0], std=[1, 1, 1]
+    )
 
     pairs = []
     for img_b, mask_b in ds:

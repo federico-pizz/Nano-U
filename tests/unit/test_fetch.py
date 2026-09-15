@@ -16,8 +16,8 @@ from nanou.fetch import (
     verify,
 )
 
-
 # -- the split, which is the part that can leak ----------------------------------
+
 
 def test_split_is_sequential_not_random():
     """Consecutive frames are near-duplicates, so the split must be contiguous."""
@@ -40,8 +40,12 @@ def test_split_parts_do_not_overlap():
 
 def test_split_reproduces_the_shipped_tinyagri_sizes():
     """The four TinyAgri sequences, as released, split to the shipped counts."""
-    per_sequence = {"Crops_scene1": 274, "Crops_scene2": 380,
-                    "Tomatoes_scene1": 692, "Tomatoes_scene2": 464}
+    per_sequence = {
+        "Crops_scene1": 274,
+        "Crops_scene2": 380,
+        "Tomatoes_scene1": 692,
+        "Tomatoes_scene2": 464,
+    }
     totals = [0, 0, 0]
     for n in per_sequence.values():
         for i, part in enumerate(sequential_split(list(range(n)), 0.70, 0.20)):
@@ -50,6 +54,7 @@ def test_split_reproduces_the_shipped_tinyagri_sizes():
 
 
 # -- dataset registry ------------------------------------------------------------
+
 
 def test_spec_is_found_by_the_data_root_directory_name():
     assert spec_for("data/TinyAgri") is TINYAGRI
@@ -72,8 +77,9 @@ def test_every_registered_spec_is_keyed_by_its_own_name():
 
 # -- layout verification ---------------------------------------------------------
 
+
 def _dataset(root, counts=(2, 2, 2)):
-    for split, n in zip(("train", "val", "test"), counts):
+    for split, n in zip(("train", "val", "test"), counts, strict=True):
         (root / split / "img").mkdir(parents=True)
         (root / split / "mask").mkdir(parents=True)
         for i in range(n):

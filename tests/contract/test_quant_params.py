@@ -60,15 +60,15 @@ def test_agrees_with_the_exported_graph(dataset, artifacts):
     for side in ("input", "output"):
         assert params[side]["dtype"] == io[side]["dtype"], f"{dataset}: {side} dtype"
         assert params[side]["shape"] == io[side]["shape"], f"{dataset}: {side} shape"
-        assert params[side]["scale"] == pytest.approx(io[side]["scale"], rel=0, abs=0), \
+        assert params[side]["scale"] == pytest.approx(io[side]["scale"], rel=0, abs=0), (
             f"{dataset}: {side} scale differs from the graph it describes"
-        assert params[side]["zero_point"] == io[side]["zero_point"], \
-            f"{dataset}: {side} zero point"
+        )
+        assert params[side]["zero_point"] == io[side]["zero_point"], f"{dataset}: {side} zero point"
 
 
 def test_normalization_matches_the_preset(dataset, artifacts):
     """The constants baked into the firmware are the ones training used."""
-    from src.utils.config import load_config
+    from nanou.config import load_config
 
     config = load_config(oracle.DATASETS[dataset])
     params = oracle.load_json(artifacts["quant_params"])

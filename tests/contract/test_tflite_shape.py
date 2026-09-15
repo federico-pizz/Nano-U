@@ -14,8 +14,15 @@ pytestmark = pytest.mark.contract
 
 # What the ESP32-S3 kernel set can execute. Anything outside it does not run
 # on the device, whatever the host interpreter says.
-ALLOWED_OPS = {"CONV_2D", "DEPTHWISE_CONV_2D", "MAX_POOL_2D",
-               "RESIZE_NEAREST_NEIGHBOR", "PAD", "ADD", "CONCATENATION"}
+ALLOWED_OPS = {
+    "CONV_2D",
+    "DEPTHWISE_CONV_2D",
+    "MAX_POOL_2D",
+    "RESIZE_NEAREST_NEIGHBOR",
+    "PAD",
+    "ADD",
+    "CONCATENATION",
+}
 
 
 def test_io_is_int8_end_to_end(dataset, artifacts):

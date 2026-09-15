@@ -4,6 +4,7 @@ No TensorFlow here: the resolver is plain YAML and dataclasses, and keeping the
 import list short is what makes these runnable in a second.
 """
 
+import dataclasses
 from dataclasses import fields
 
 import pytest
@@ -26,6 +27,7 @@ SHIPPED = ["tinyagri", "tinyagri-paper", "botanicgarden", "botanicgarden-paper"]
 
 
 # -- base.yaml and the dataclass must agree ------------------------------------
+
 
 def test_base_yaml_has_no_key_outside_the_schema():
     training = yaml.safe_load(BASE_YAML.read_text())["training"]
@@ -55,6 +57,7 @@ def test_base_yaml_values_match_the_dataclass_defaults():
 
 
 # -- the shipped presets --------------------------------------------------------
+
 
 def test_the_four_presets_are_present():
     assert available_presets() == sorted(SHIPPED)
@@ -104,6 +107,7 @@ def test_overrides_win_over_the_file():
 
 # -- rejection ------------------------------------------------------------------
 
+
 def test_unknown_key_in_a_model_block_raises(tmp_path):
     preset = tmp_path / "typo.yaml"
     preset.write_text("extends: base\ndata_root: data/x\nnanou:\n  epocs: 5\n")
@@ -151,13 +155,15 @@ def test_asking_for_a_model_the_preset_lacks_raises():
 
 # -- frozen ---------------------------------------------------------------------
 
+
 def test_trainconfig_is_frozen():
     cfg = resolve("tinyagri").for_model("nanou")
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         cfg.epochs = 1
 
 
 # -- paths ----------------------------------------------------------------------
+
 
 def test_relative_paths_resolve_against_the_project_root():
     assert resolve_path("models/TinyAgri") == str(ROOT / "models" / "TinyAgri")
@@ -184,6 +190,7 @@ def test_non_strings_pass_through():
 
 # -- preset detection -----------------------------------------------------------
 
+
 @pytest.mark.parametrize("name", SHIPPED)
 def test_shipped_files_are_recognised_as_presets(name):
     assert is_preset_file(preset_path(name))
@@ -201,6 +208,7 @@ def test_a_missing_file_is_not_a_preset(tmp_path):
 
 # -- the legacy bridge ----------------------------------------------------------
 
+
 @pytest.mark.parametrize("name", SHIPPED)
 def test_legacy_dict_has_the_shape_src_still_expects(name):
     legacy = resolve(name).to_legacy_dict()
@@ -210,19 +218,19 @@ def test_legacy_dict_has_the_shape_src_still_expects(name):
     assert paths["models_dir"] and paths["results_dir"]
     for model_name in ("nanou", "bu_net"):
         block = legacy["training"][model_name]
-        # The old spellings survive only here, and only until src/ takes a
-        # TrainConfig directly.
-        assert set(block) >= {"use_nas", "nas_frequency", "layers_to_monitor"}
+        # The redundancy keys reach src/ under their v2 names, not the pre-v2 ones.
+        assert set(block) >= {
+            "track_redundancy",
+            "redundancy_every_epochs",
+            "redundancy_layers",
+        }
         assert legacy["models"][model_name]["filters"]
 
 
 def test_a_model_block_that_moves_a_dataset_key_is_rejected(tmp_path):
     preset = tmp_path / "split-root.yaml"
     preset.write_text(
-        "extends: base\n"
-        "data_root: data/x\n"
-        "nanou:\n  epochs: 5\n"
-        "bu_net:\n  data_root: data/y\n"
+        "extends: base\ndata_root: data/x\nnanou:\n  epochs: 5\nbu_net:\n  data_root: data/y\n"
     )
     with pytest.raises(ValueError, match="different 'data_root'"):
         resolve(path=preset).to_legacy_dict()

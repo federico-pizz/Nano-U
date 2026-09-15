@@ -27,6 +27,7 @@ def require_gpu():
 
 # -- basic GPU availability ----------------------------------------------------
 
+
 def test_gpu_is_visible():
     gpus = tf.config.list_physical_devices("GPU")
     assert len(gpus) > 0, "TensorFlow sees no GPU devices"
@@ -61,6 +62,7 @@ def test_gpu_result_matches_cpu():
 
 
 # -- model forward pass on GPU -------------------------------------------------
+
 
 def test_nano_u_forward_pass_shape_on_gpu(nano_u_model):
     """Full forward pass through Nano-U on GPU must produce (1, H, W, 1) output."""
@@ -112,6 +114,7 @@ def test_nano_u_gpu_cpu_outputs_agree(nano_u_model):
 
 # -- training step on GPU ------------------------------------------------------
 
+
 def test_nano_u_training_step_on_gpu(nano_u_model):
     """One gradient update on GPU must produce a finite loss."""
     import tf_keras as keras
@@ -123,11 +126,9 @@ def test_nano_u_training_step_on_gpu(nano_u_model):
     with tf.device("/GPU:0"):
         with tf.GradientTape() as tape:
             logits = nano_u_model(x, training=True)
-            loss = tf.reduce_mean(
-                tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=logits)
-            )
+            loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=logits))
         grads = tape.gradient(loss, nano_u_model.trainable_variables)
-        optimizer.apply_gradients(zip(grads, nano_u_model.trainable_variables))
+        optimizer.apply_gradients(zip(grads, nano_u_model.trainable_variables, strict=True))
 
     assert np.isfinite(loss.numpy()), f"Loss is not finite: {loss.numpy()}"
     assert loss.numpy() > 0.0
@@ -141,10 +142,10 @@ def test_nano_u_gradients_not_none_on_gpu(nano_u_model):
     with tf.device("/GPU:0"):
         with tf.GradientTape() as tape:
             logits = nano_u_model(x, training=True)
-            loss = tf.reduce_mean(
-                tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=logits)
-            )
+            loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=logits))
         grads = tape.gradient(loss, nano_u_model.trainable_variables)
 
-    none_grads = [v.name for v, g in zip(nano_u_model.trainable_variables, grads) if g is None]
+    none_grads = [
+        v.name for v, g in zip(nano_u_model.trainable_variables, grads, strict=True) if g is None
+    ]
     assert len(none_grads) == 0, f"None gradients for: {none_grads}"

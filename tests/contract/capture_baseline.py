@@ -23,15 +23,16 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from tests.contract import oracle
 
 
 def git_revision(root):
     try:
-        out = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"],
-                             capture_output=True, text=True, check=True)
+        out = subprocess.run(
+            ["git", "-C", root, "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        )
         return out.stdout.strip()
     except (subprocess.CalledProcessError, OSError):
         return "unknown"
@@ -71,9 +72,11 @@ def capture_dataset(dataset, preset, out_dir, skip_metrics=False):
         "qat": oracle.keras_param_count(paths["keras"]) if os.path.exists(paths["keras"]) else None,
         "int8": oracle.tflite_param_counts(paths["tflite"]),
     }
-    print(f"[{dataset}] params float={record['param_counts']['float']} "
-          f"qat={record['param_counts']['qat']} "
-          f"int8={record['param_counts']['int8']['total']}")
+    print(
+        f"[{dataset}] params float={record['param_counts']['float']} "
+        f"qat={record['param_counts']['qat']} "
+        f"int8={record['param_counts']['int8']['total']}"
+    )
 
     if not skip_metrics:
         record["metrics"] = {}
@@ -84,8 +87,10 @@ def capture_dataset(dataset, preset, out_dir, skip_metrics=False):
             with open(os.path.join(out_dir, f"metrics_{tag}.json"), "w") as fh:
                 json.dump(metrics, fh, indent=2)
             record["metrics"][tag] = oracle.flat_metrics(metrics)
-            print(f"[{dataset}] {tag}: " + "  ".join(
-                f"{k}={v:.6f}" for k, v in record["metrics"][tag].items()))
+            print(
+                f"[{dataset}] {tag}: "
+                + "  ".join(f"{k}={v:.6f}" for k, v in record["metrics"][tag].items())
+            )
 
     with open(os.path.join(out_dir, "record.json"), "w") as fh:
         json.dump(record, fh, indent=2)
@@ -94,12 +99,18 @@ def capture_dataset(dataset, preset, out_dir, skip_metrics=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--dataset", action="append", choices=sorted(oracle.DATASETS),
-                        help="dataset to capture (repeatable; default: all)")
-    parser.add_argument("--out", default="baseline",
-                        help="output directory (default: baseline)")
-    parser.add_argument("--skip-metrics", action="store_true",
-                        help="artefacts and parameter counts only, no scoring")
+    parser.add_argument(
+        "--dataset",
+        action="append",
+        choices=sorted(oracle.DATASETS),
+        help="dataset to capture (repeatable; default: all)",
+    )
+    parser.add_argument("--out", default="baseline", help="output directory (default: baseline)")
+    parser.add_argument(
+        "--skip-metrics",
+        action="store_true",
+        help="artefacts and parameter counts only, no scoring",
+    )
     args = parser.parse_args(argv)
 
     root = oracle.project_root()
@@ -110,11 +121,14 @@ def main(argv=None):
     records = {}
     for dataset in datasets:
         records[dataset] = capture_dataset(
-            dataset, oracle.DATASETS[dataset],
-            os.path.join(out_root, dataset), skip_metrics=args.skip_metrics)
+            dataset,
+            oracle.DATASETS[dataset],
+            os.path.join(out_root, dataset),
+            skip_metrics=args.skip_metrics,
+        )
 
     manifest = {
-        "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "captured_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "git_revision": git_revision(root),
         "python": sys.version.split()[0],
         "datasets": {name: rec["preset"] for name, rec in records.items()},

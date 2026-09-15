@@ -25,9 +25,9 @@ DATASETS = {
 MODEL_NAME = "nanou"
 
 # The three parameter counts the README quotes, and section 8.1 pins.
-FLOAT_PARAMS = 4212      # plain float32 architecture
-QAT_PARAMS = 4688        # after tfmot wraps it in fake-quant nodes
-INT8_PARAMS = 3357       # stored constants in the exported INT8 graph
+FLOAT_PARAMS = 4212  # plain float32 architecture
+QAT_PARAMS = 4688  # after tfmot wraps it in fake-quant nodes
+INT8_PARAMS = 3357  # stored constants in the exported INT8 graph
 
 
 def project_root():
@@ -56,8 +56,10 @@ def sha256_file(path):
 
 # -- TFLite introspection, flatbuffer level (no interpreter needed) ------------
 
+
 def _read_flatbuffer(tflite_path):
     from tensorflow.lite.tools import flatbuffer_utils
+
     return flatbuffer_utils.read_model(tflite_path)
 
 
@@ -70,8 +72,7 @@ def tflite_param_counts(tflite_path):
     """
     from tensorflow.lite.python import schema_py_generated as schema
 
-    type_names = {v: k for k, v in vars(schema.TensorType).items()
-                  if isinstance(v, int)}
+    type_names = {v: k for k, v in vars(schema.TensorType).items() if isinstance(v, int)}
     model = _read_flatbuffer(tflite_path)
     counts = {}
     for subgraph in model.subgraphs:
@@ -96,13 +97,13 @@ def tflite_op_codes(tflite_path):
     """
     from tensorflow.lite.python import schema_py_generated as schema
 
-    names = {v: k for k, v in vars(schema.BuiltinOperator).items()
-             if isinstance(v, int)}
+    names = {v: k for k, v in vars(schema.BuiltinOperator).items() if isinstance(v, int)}
     model = _read_flatbuffer(tflite_path)
     out = []
     for code in model.operatorCodes:
-        builtin = max(getattr(code, "builtinCode", 0) or 0,
-                      getattr(code, "deprecatedBuiltinCode", 0) or 0)
+        builtin = max(
+            getattr(code, "builtinCode", 0) or 0, getattr(code, "deprecatedBuiltinCode", 0) or 0
+        )
         if builtin:
             out.append(names.get(builtin, str(builtin)))
         elif code.customCode:
@@ -141,10 +142,23 @@ def tflite_io(tflite_path):
 
 # -- Parameter counts, Keras side ---------------------------------------------
 
-def float_param_count():
-    """Parameters of the plain float32 architecture, built from defaults."""
-    from src.models.builders import create_nano_u
-    return int(create_nano_u().count_params())
+
+def float_param_count(preset="tinyagri", model_name=MODEL_NAME):
+    """Parameters of the plain float32 student, built from the shipped preset.
+
+    The builders take no default architecture any more, so the preset is the
+    only statement of what the shipped model is - which is the right source for
+    a contract test anyway. This mirrors how ``train_model`` assembles the
+    architecture keys: the preset's ``models`` block plus the shared input shape.
+    """
+    from nanou.architectures import build_from_config
+    from nanou.config import load_config
+
+    full = load_config(preset)
+    config = dict(full["models"][model_name])
+    config["model_name"] = model_name
+    config["input_shape"] = full["data"].get("input_shape", [60, 80, 3])
+    return int(build_from_config(config).count_params())
 
 
 def keras_param_count(h5_path):
@@ -152,17 +166,17 @@ def keras_param_count(h5_path):
     import tensorflow_model_optimization as tfmot
     from tf_keras import models, utils
 
-    from src.models import PadToMatch
-    from src.utils.metrics import BinaryIoU
+    from nanou.architectures import PadToMatch
+    from nanou.metrics import BinaryIoU
 
     with tfmot.quantization.keras.quantize_scope():
-        with utils.custom_object_scope({"BinaryIoU": BinaryIoU,
-                                        "PadToMatch": PadToMatch}):
+        with utils.custom_object_scope({"BinaryIoU": BinaryIoU, "PadToMatch": PadToMatch}):
             model = models.load_model(h5_path, compile=False)
     return int(model.count_params())
 
 
 # -- Metrics on the held-out split --------------------------------------------
+
 
 def score_split(preset, model_path, split="test", batch_size=8):
     """Score one on-disk model over one split and return the metrics dict.
@@ -172,26 +186,36 @@ def score_split(preset, model_path, split="test", batch_size=8):
     here without the plotting and report writing, so the oracle does not depend
     on where those artefacts get written.
     """
-    from src.data import make_dataset, sorted_by_frame
-    from src.evaluate import compute_segmentation_metrics, run_inference
-    from src.utils.config import load_config
+    from nanou.config import load_config
+    from nanou.data import make_dataset, sorted_by_frame
+    from nanou.metrics import compute_segmentation_metrics
+    from nanou.predictor import run_inference
 
     config = load_config(preset)
     split_cfg = config["data"]["paths"]["processed"][split]
     img_dir, mask_dir = split_cfg["img"], split_cfg["mask"]
 
-    imgs = sorted_by_frame([os.path.join(img_dir, f)
-                            for f in sorted(os.listdir(img_dir)) if f.endswith(".png")])
-    masks = sorted_by_frame([os.path.join(mask_dir, f)
-                             for f in sorted(os.listdir(mask_dir)) if f.endswith(".png")])
+    imgs = sorted_by_frame(
+        [os.path.join(img_dir, f) for f in sorted(os.listdir(img_dir)) if f.endswith(".png")]
+    )
+    masks = sorted_by_frame(
+        [os.path.join(mask_dir, f) for f in sorted(os.listdir(mask_dir)) if f.endswith(".png")]
+    )
     if not imgs:
         raise RuntimeError(f"no images for split={split} under {img_dir}")
 
     norm = config["data"]["normalization"]
     shape = config["data"].get("input_shape", [60, 80, 3])
-    dataset = make_dataset(imgs, masks, batch_size=batch_size, shuffle=False,
-                           augment=False, target_size=(shape[0], shape[1]),
-                           mean=norm["mean"], std=norm["std"])
+    dataset = make_dataset(
+        imgs,
+        masks,
+        batch_size=batch_size,
+        shuffle=False,
+        augment=False,
+        target_size=(shape[0], shape[1]),
+        mean=norm["mean"],
+        std=norm["std"],
+    )
 
     probs, gt, _ = run_inference(model_path, dataset)
     return compute_segmentation_metrics(probs, gt)

@@ -24,6 +24,7 @@ get_frame_num = _et.get_frame_num
 
 # -- sequential_split ---------------------------------------------------------
 
+
 def test_sequential_split_fractions():
     train, val, test = sequential_split(list(range(10)), 0.70, 0.20)
     assert train == list(range(7))
@@ -47,6 +48,7 @@ def test_sequential_split_tiny_input():
 
 # -- frame_key (numeric ordering, the lexicographic-sort fix) -----------------
 
+
 def test_frame_key_numeric_not_lexicographic():
     files = ["seq_2.tif", "seq_10.tif", "seq_9.tif"]
     assert sorted(files, key=frame_key) == ["seq_2.tif", "seq_9.tif", "seq_10.tif"]
@@ -64,12 +66,13 @@ def test_frame_key_no_digits_is_zero():
 
 # -- extract_binary_road ------------------------------------------------------
 
+
 def test_extract_binary_road_matches_only_target_color(tmp_path):
     h, w = 4, 6
     arr = np.zeros((h, w, 3), dtype=np.uint8)
-    arr[0, 0] = ROAD_COLOR            # road
-    arr[1, 1] = ROAD_COLOR            # road
-    arr[2, 2] = (248, 249, 173)       # off-by-one in B -> must NOT match
+    arr[0, 0] = ROAD_COLOR  # road
+    arr[1, 1] = ROAD_COLOR  # road
+    arr[2, 2] = (248, 249, 173)  # off-by-one in B -> must NOT match
     p = tmp_path / "mask.png"
     Image.fromarray(arr, "RGB").save(p)
 
@@ -83,6 +86,7 @@ def test_extract_binary_road_matches_only_target_color(tmp_path):
 
 
 # -- TinyAgri get_frame_num ---------------------------------------------------
+
 
 def test_get_frame_num_image_and_mask():
     assert get_frame_num("d6_s1_frame100.png") == 100

@@ -25,7 +25,7 @@ from nanou.preflight import (
 def make_dataset(root: Path, counts=(2, 2, 2), masks=None):
     """Build a dataset skeleton of empty PNGs and return its root."""
     masks = counts if masks is None else masks
-    for split, n_img, n_mask in zip(("train", "val", "test"), counts, masks):
+    for split, n_img, n_mask in zip(("train", "val", "test"), counts, masks, strict=True):
         (root / split / "img").mkdir(parents=True)
         (root / split / "mask").mkdir(parents=True)
         for i in range(n_img):
@@ -36,6 +36,7 @@ def make_dataset(root: Path, counts=(2, 2, 2), masks=None):
 
 
 # -- every error names its fix ---------------------------------------------------
+
 
 def test_missing_dataset_names_get_data(tmp_path):
     with pytest.raises(PreflightError, match="scripts/get_data.py --preset tinyagri"):
@@ -77,6 +78,7 @@ def test_absent_serial_port_names_the_listing_command(tmp_path):
 
 # -- dataset layout --------------------------------------------------------------
 
+
 def test_a_complete_dataset_passes(tmp_path):
     require_dataset(make_dataset(tmp_path / "ds"))
 
@@ -115,6 +117,7 @@ def test_a_half_present_val_split_raises(tmp_path):
 
 # -- model resolution ------------------------------------------------------------
 
+
 def test_require_model_prefers_the_int8_file(tmp_path):
     (tmp_path / "nanou.h5").touch()
     (tmp_path / "nanou.tflite").touch()
@@ -127,6 +130,7 @@ def test_require_keras_model_accepts_either_keras_format(tmp_path):
 
 
 # -- quant params ----------------------------------------------------------------
+
 
 def test_absent_quant_params_are_stale(tmp_path):
     assert quant_params_are_stale(tmp_path, "nanou")

@@ -24,9 +24,8 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
-from src.models import create_nano_u
-from src.models.utils import convert_to_tflite_quantized
-from src.quantize_model import extract_quant_params
+from nanou.architectures import create_nano_u
+from nanou.quantize import convert_to_tflite_quantized, extract_quant_params
 
 H, W = 60, 80
 
@@ -88,8 +87,7 @@ def test_firmware_lut_dequantizes_to_normalized_value(quant):
             dequant = (q - zp) * scale
             target = (j / 255.0 - mean[c]) / std[c]
             assert abs(dequant - target) <= scale + 1e-6, (
-                f"ch{c} byte{j}: dequant {dequant} vs normalized target {target} "
-                f"(scale {scale})"
+                f"ch{c} byte{j}: dequant {dequant} vs normalized target {target} (scale {scale})"
             )
 
 

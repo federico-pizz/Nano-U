@@ -65,8 +65,10 @@ def scored():
                 pytest.skip(f"{dataset}: no {fmt} model on disk")
             split_dir = os.path.join(oracle.project_root(), "data", dataset, "test")
             if not os.path.isdir(split_dir):
-                pytest.skip(f"{dataset}: no test split. Fix it with:  "
-                            f"python scripts/get_data.py --preset {oracle.DATASETS[dataset]}")
+                pytest.skip(
+                    f"{dataset}: no test split. Fix it with:  "
+                    f"python scripts/get_data.py --preset {oracle.DATASETS[dataset]}"
+                )
             cache[key] = oracle.score_split(oracle.DATASETS[dataset], model, split="test")
         return cache[key]
 
