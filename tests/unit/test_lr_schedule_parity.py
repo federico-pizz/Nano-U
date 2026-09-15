@@ -1,11 +1,10 @@
-"""ARCHITECTURE.md section 7.1: stock callbacks must schedule exactly as the removed code did.
+"""Stock callbacks must schedule exactly as the removed code did.
 
 `train.update_plateau_and_early_stopping` was a hand-written
 ReduceLROnPlateau + EarlyStopping, needed only because distillation ran its own
 epoch loop. `DistillModel` moved that loop into `fit`, so the stock callbacks
-took over. The semantics are close but not trivially identical, and section 7.1
-lists the differences that would matter, so this replays one val_loss sequence
-through both and asserts they agree epoch by epoch.
+took over. The semantics are close but not trivially identical, so this replays
+one val_loss sequence through both and asserts they agree epoch by epoch.
 
 `_removed_scheduler` below is a frozen copy of the deleted function's behaviour.
 It exists only as the reference for this comparison; it is not called by

@@ -169,11 +169,10 @@ def quantize_model(
     data_paths = config.get("data", {}).get("paths", {})
     data_cfg = data_paths.get("processed", {})
 
-    # Which split calibrates the INT8 scales/zero-points. Defaults to "val" -
-    # the split used for the published results - but note that val also drives
-    # checkpoint selection, so the calibration set is not independent of model
-    # selection. Set quantization.calibration_split: train for a strictly
-    # independent calibration (the test split is deliberately not accepted).
+    # Which split calibrates the INT8 scales and zero points. "val" reproduces
+    # the published results, but val also picks the checkpoint, so calibration
+    # is not independent of model selection. "train" is the strictly
+    # independent choice. The test split is deliberately not accepted.
     calib_split = str(config.get("quantization", {}).get("calibration_split", "val")).lower()
     if calib_split not in ("val", "train"):
         raise ValueError(

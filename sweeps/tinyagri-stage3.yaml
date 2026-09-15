@@ -1,0 +1,24 @@
+# TinyAgri, CV stage 3: how much of the Tversky term, at the stage-2 winner.
+# Produced tinyagri.yaml's tversky_weight (0.7).
+#
+#   python scripts/sweep.py sweeps/tinyagri-stage3.yaml --preset tinyagri
+#
+# Rebuilt from the run directories under results/TinyAgri/cv_tversky/ (the
+# table there was overwritten by stage 3b). The fold seed is not recorded;
+# 37 is sweep.py's default.
+k: 4
+epochs: 100
+seed: 37
+threshold: 0.5
+select: f0.5
+min_miou: 0.0
+grid:
+  temperature: [0.7]
+  alpha: [0.3]
+  regime: [photometric]
+  ce: [on]
+  tversky:              # (weight, alpha_fp, beta_fn) triples
+    - [0.0, 0.7, 0.3]
+    - [0.3, 0.7, 0.3]
+    - [0.5, 0.7, 0.3]
+    - [0.7, 0.7, 0.3]

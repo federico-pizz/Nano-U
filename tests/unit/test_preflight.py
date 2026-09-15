@@ -18,6 +18,7 @@ from nanou.preflight import (
     require_keras_model,
     require_model,
     require_serial_port,
+    require_teacher,
     require_tflite_model,
 )
 
@@ -150,3 +151,18 @@ def test_quant_params_newer_than_the_tflite_are_current(tmp_path):
     params.write_text("{}")
     os.utime(params, None)
     assert not quant_params_are_stale(tmp_path, "nanou")
+
+
+# -- the teacher a student distils from ------------------------------------------
+
+
+def test_require_teacher_returns_the_checkpoint(tmp_path):
+    teacher = tmp_path / "bu_net.h5"
+    teacher.write_bytes(b"")
+    assert require_teacher(str(teacher)) == teacher
+
+
+@pytest.mark.parametrize("weights", [None, "missing/bu_net.h5"])
+def test_require_teacher_names_the_training_command(weights):
+    with pytest.raises(PreflightError, match="--no-distill --model bu_net --preset tinyagri"):
+        require_teacher(weights, preset="tinyagri")

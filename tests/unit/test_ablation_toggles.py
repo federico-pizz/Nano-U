@@ -62,7 +62,7 @@ def test_ce_on_contributes_to_total(img_tensor, mask_tensor):
     assert abs(out["loss"] - out["distillation_loss"]) > 1e-6
 
 
-# -- the T^2 factor on the distillation term (PAPER_QUESTIONS B2) ---------------
+# -- the T^2 factor on the distillation term ------------------------------------
 
 
 def test_distillation_term_carries_the_t_squared_factor(img_tensor, mask_tensor):

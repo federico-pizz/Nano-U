@@ -16,8 +16,8 @@ def apply_qat_to_model(model: keras.Model, strict: bool = True) -> keras.Model:
         model: A compiled or uncompiled Keras Functional model.
         strict: When True (the default) a wrapping failure raises. QAD depends
             on fake-quantization being present from epoch 1, so a silent
-            fallback would produce a run that *looks* like QAD, trains in pure
-            float, and only reveals the damage after INT8 export. Pass
+            fallback would produce a run that looks like QAD, trains in pure
+            float, and only shows the damage after INT8 export. Pass
             strict=False to opt into the legacy fail-soft behavior.
 
     Returns:

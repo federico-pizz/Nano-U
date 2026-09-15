@@ -99,8 +99,8 @@ The numbers above are **not** the ones in the [TAROS 2026 paper](#citation); the
 | | Paper (arXiv:2605.10210) | This repo (current) |
 |:---|:---|:---|
 | Preset | `botanicgarden-paper`, `tinyagri-paper` | `botanicgarden`, `tinyagri` |
-| Distillation ($T$, $\alpha$) | BG 8.0 / 0.3 | TinyAgri 4.0 / 0.5 | BG 4.0 / 0.3 | TinyAgri 0.7 / 0.3 |
-| Supervised loss | BCE only | BG: BCE | TinyAgri: 0.3*BCE + 0.7*Tversky (0.8/0.2) |
+| Distillation ($T$, $\alpha$) | BG 8.0 / 0.3; TinyAgri 4.0 / 0.5 | BG 4.0 / 0.3; TinyAgri 0.7 / 0.3 |
+| Supervised loss | BCE only | BG: BCE; TinyAgri: 0.3*BCE + 0.7*Tversky (0.8/0.2) |
 | Botanic Garden mIoU (FP32 / INT8) | 0.870 / 0.870 | 0.876 / 0.876 |
 | TinyAgri mIoU (FP32 / INT8) | 0.883 / **0.700** | 0.884 / 0.884 |
 | Inference latency | 845 ms (1.2 FPS) | 581 ms (~1.7 FPS), 426 ms on `multicore` |
@@ -110,8 +110,10 @@ The numbers above are **not** the ones in the [TAROS 2026 paper](#citation); the
 Three changes account for the gaps:
 
 - **The TinyAgri INT8 collapse (0.883 -> 0.700) is attributable to a calibration plumbing bug rather than to QAD itself.** `export_int8` did not forward `--config` to the quantizer, so INT8 calibration always read whatever the single template config happened to contain, regardless of which config trained the model - calibrating on another domain's images, or on random noise when the paths were placeholders. Botanic Garden was unaffected because it was the domain that template was filled in for. The config is now threaded through, and missing calibration images raise instead of silently degrading to noise.
-- **The tuned configs** come from the leakage-safe grouped CV sweep (`scripts/sweep.py`) run after submission; TinyAgri in particular moved to a precision-favoring Tversky blend and a sharpening $T<1$.
+- **The tuned configs** come from the leakage-safe grouped CV sweep (`scripts/sweep.py`) run after submission; TinyAgri in particular moved to a precision-favoring Tversky blend and a sharpening $T<1$. The sweep file for each stage is in `sweeps/`.
 - **Latency and RAM** reflect the buffer-reuse work in the inference engine: faster (845 -> 581 ms) at the cost of a slightly larger static arena (257 -> 281 KB).
+
+How much of the 0.700 -> 0.884 move is the bug fix alone and how much is the tuning, and whether 0.870 vs 0.876 is outside run-to-run noise, are open; `experiments/seed_variance.py` gives the error bars.
 
 ---
 
@@ -231,13 +233,14 @@ Reports mIoU, Dice, precision/recall and the F0.5/F1/F2 family, plus a precision
 Grouped k-fold sweep over distillation temperature/alpha, augmentation regime, the CE-loss ablation, and the conservative Tversky term, with each whole capture sequence kept inside one fold. Selects by mIoU with F0.5 as the safety tiebreak.
 
 ```bash
-python scripts/sweep.py --preset tinyagri --k 4 --epochs 200 \
-    --temperatures 2 4 8 --alphas 0.3 0.5 0.7 \
-    --regimes none geometric photometric full --ce on off \
-    --tversky 0.0 0.5 --jobs 3
+python scripts/sweep.py sweeps/tinyagri-stage3.yaml --preset tinyagri --jobs 3
 ```
 
-`--ce on off` toggles the CE term (off == `alpha=1.0`); `--tversky` sweeps the precision-favoring loss `(1-w)*BCE + w*Tversky` (default `0.0` = pure BCE). `--jobs N` runs N **student** pipelines concurrently; the heavy BU-Net teacher has its own `--teacher-jobs` (default 1). `--k` must be <= the number of distinct sequences.
+The sweep file holds the folds, the epochs and the grid: temperature, alpha, augmentation regime, the CE-loss ablation (`ce: [on, off]`, off == `alpha=1.0`) and the precision-favoring loss `(1-w)*BCE + w*Tversky` as `[w, alpha_fp, beta_fn]` triples. The files in `sweeps/` are the stages that produced the tuned presets; each one says what it picked, and the preset comments carry the numbers. The command line only describes the machine: `--jobs N` runs N **student** pipelines concurrently, the heavy BU-Net teacher has its own `--teacher-jobs` (default 1), and `--output` moves the table from `results/<dataset>/cv/<sweep name>/`. `k` must be <= the number of distinct sequences, and a `min_miou` floor that no config clears is an error, not a warning.
+
+### Experiments
+
+Claims that need a training run to settle - QAD against QAT-only, KD-only and PTQ, the distillation temperature with and without the $T^2$ factor, and seed-to-seed variance - live in [`experiments/`](experiments/README.md), one table each.
 
 ### On-Device Evaluation
 
@@ -258,6 +261,8 @@ Nano-U/
 |-- config/
 |   |-- base.yaml               # Every default, in one place
 |   +-- presets/                # One file per dataset x (tuned | as submitted)
+|-- sweeps/                     # CV sweep files, one per search stage
+|-- experiments/                # Ablations and seed variance, one table each
 |-- src/nanou/                 # The library; nothing in it is executable
 |   |-- architectures.py        # Nano-U and BU-Net
 |   |-- blocks.py               # Layer builders shared by both architectures
@@ -277,7 +282,7 @@ Nano-U/
 |   |-- evaluate.py             # Host evaluation (--info for model stats)
 |   |-- export.py               # INT8 TFLite + quant_params.json
 |   |-- bench.py                # Host-side latency benchmark
-|   |-- sweep.py                # Leakage-safe grouped-CV hyperparameter search
+|   |-- sweep.py                # Leakage-safe grouped-CV search, grid from a sweep file
 |   |-- device_eval.py          # On-device inference and evaluation
 |   |-- capture.py              # Decode live-camera frame dumps (capture bin) to PNG
 |   +-- profile.py              # Stack painting and energy profiling

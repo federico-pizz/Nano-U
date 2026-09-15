@@ -66,6 +66,23 @@ def test_a_broken_config_raises_instead_of_returning_a_status(tmp_path):
         pipeline.run_training("no_such_experiment", PRESET, str(tmp_path))
 
 
+@pytest.mark.parametrize("overrides, seed", [(None, 98), ({"seed": 7}, 7)])
+def test_the_run_seed_reaches_the_rngs(monkeypatch, tmp_path, overrides, seed):
+    """seed_variance.py depends on this: an override used to lose to the file's seed."""
+    import nanou.train
+
+    class Seeded(Exception):
+        pass
+
+    def record(value):
+        raise Seeded(value)
+
+    monkeypatch.setattr(nanou.train, "set_global_seed", record)
+    with pytest.raises(Seeded) as caught:
+        pipeline.run_training(pipeline.STUDENT, PRESET, str(tmp_path), overrides)
+    assert caught.value.args == (seed,)
+
+
 def test_quantize_raises_on_a_missing_model(tmp_path):
     from nanou.quantize import quantize_model
 

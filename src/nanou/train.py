@@ -451,10 +451,11 @@ def train_model(
     if "data" in full_config and "input_shape" in full_config["data"]:
         config.setdefault("input_shape", full_config["data"]["input_shape"])
 
-    # Seed all RNGs up front so the run is reproducible. `seed` lives in the
-    # `training` block alongside the experiment hyperparameter sets.
-    seed = full_config.get("training", {}).get("seed")
-    config.setdefault("seed", seed)
+    # Seed all RNGs up front so the run is reproducible. The run's own seed
+    # comes first, so a caller's override reaches the RNGs (it used to be
+    # dropped for the file's); `training.seed` is the fallback for flat configs.
+    seed = config.get("seed", full_config.get("training", {}).get("seed"))
+    config["seed"] = seed
     set_global_seed(seed)
 
     if output_dir is not None:

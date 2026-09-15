@@ -19,11 +19,12 @@ def tversky_loss(
     Tversky index T = TP / (TP + alpha_fp*FP + beta_fn*FN); loss = 1 - T. With
     ``alpha_fp > beta_fn`` (default 0.7 vs 0.3) false *positives* are penalized
     harder than false negatives. For path segmentation a false positive labels a
-    non-traversable pixel as path -> potential collision, while a false negative
-    merely shrinks the navigable region -> over-cautious but safe. So this dial
-    bakes Nano-U's *conservative* (precision-favoring) behavior into the gradient
-    rather than manufacturing it via model selection. ``alpha_fp=beta_fn=0.5``
-    recovers the symmetric Dice loss.
+    non-traversable pixel as path, a potential collision, while a false negative
+    only shrinks the navigable region: over-cautious but safe. So this dial puts
+    Nano-U's conservative (precision-favoring) behaviour into the gradient
+    instead of manufacturing it through model selection, which is also why the
+    CV sweep selects on mIoU and keeps F0.5 as the tiebreak.
+    ``alpha_fp=beta_fn=0.5`` recovers the symmetric Dice loss.
 
     Computed from sigmoid probabilities (the student emits logits), pooled over
     the whole batch (soft TP/FP/FN), so it is differentiable end-to-end.

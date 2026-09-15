@@ -129,6 +129,26 @@ def require_model(models_dir, model_name: str, preset: str | None = None) -> Pat
     )
 
 
+def require_teacher(teacher_weights, preset: str | None = None) -> Path:
+    """Return the teacher checkpoint a distilling student reads, or raise.
+
+    Needed wherever a student distils from a teacher it did not just train.
+    Training itself only prints a line and goes on with a randomly initialised
+    teacher, which is a distillation run in name only.
+
+    Raises:
+        PreflightError: naming the command that trains the teacher.
+    """
+    if teacher_weights and Path(teacher_weights).exists():
+        return Path(teacher_weights)
+    raise _fix(
+        f"No teacher checkpoint at {teacher_weights}"
+        if teacher_weights
+        else "The preset sets no teacher_weights for the student",
+        f"python scripts/train.py --no-distill --model bu_net{_preset_flag(preset)}",
+    )
+
+
 def quant_params_path(models_dir, model_name: str) -> Path:
     """Where `firmware/build.rs` looks for the calibration parameters."""
     return Path(models_dir) / f"{model_name}_quant_params.json"

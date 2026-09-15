@@ -1,0 +1,19 @@
+# TinyAgri, CV stage 1: which augmentation regime, and does the CE term help.
+# Picked the "photometric" regime with CE on.
+#
+#   python scripts/sweep.py sweeps/tinyagri-stage1.yaml --preset tinyagri
+#
+# Rebuilt from results/TinyAgri/cv_stage1/: the grid, k and epochs are what
+# ran there. The saved table does not record the fold seed; 37 is sweep.py's
+# default.
+k: 4
+epochs: 100
+seed: 37
+threshold: 0.5
+select: f0.5            # these stages selected on F0.5, with mIoU as tiebreak
+min_miou: 0.0           # raises if nothing clears it
+grid:
+  temperature: [4.0]
+  alpha: [0.5]
+  regime: [none, geometric, photometric, full]
+  ce: [on, off]         # off means alpha = 1.0: the teacher term only

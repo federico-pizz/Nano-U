@@ -121,6 +121,61 @@ def run_training(
     return {**result, "results_path": str(results_path)}
 
 
+def train_and_score(
+    model: str,
+    config_path: str,
+    output_dir: str,
+    overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Train one model, export it to INT8 unless it is the teacher, and score each format.
+
+    One entry of `run_pipeline`'s summary, and what the tables in
+    ``experiments/`` are built from. Each format is scored from its own file
+    on the test split, so the quantization gap is measured rather than assumed.
+
+    Args:
+        model: The preset's model block to train.
+        config_path: Preset the model is trained, calibrated and scored with.
+        output_dir: The run goes to ``<output_dir>/<model>/``.
+        overrides: Keys applied on top of the preset, as in `run_training`.
+            Set ``models_dir`` to keep the weights out of the preset's own
+            models directory.
+
+    Returns:
+        ``model_path``, ``run_dir``, ``qat_applied``, ``tflite_path``,
+        ``tflite_size_kb``, ``quant_params_path``, ``eval_fp32`` and
+        ``eval_int8``. The INT8 fields are None for the teacher.
+    """
+    from nanou.evaluate import evaluate
+
+    res = run_training(model, config_path, output_dir, overrides)
+    entry: dict[str, Any] = {
+        "model_path": res["model_path"],
+        "run_dir": res["experiment_dir"],
+        "qat_applied": res["qat_applied"],
+        "tflite_path": None,
+        "tflite_size_kb": None,
+        "quant_params_path": None,
+        "eval_fp32": None,
+        "eval_int8": None,
+    }
+
+    if model != TEACHER:
+        print(f"\nQuantizing {model} to INT8 TFLite")
+        keras_path = Path(entry["model_path"])
+        exported = export_int8(keras_path, models_dir=keras_path.parent, config_path=config_path)
+        entry["tflite_path"] = exported["tflite_path"]
+        entry["tflite_size_kb"] = exported["size_kb"]
+        entry["quant_params_path"] = exported["quant_params_path"]
+
+    print(f"\nEvaluating {model} FP32 Keras on the test split...")
+    entry["eval_fp32"] = evaluate(entry["model_path"], config_path, out_dir=entry["run_dir"])
+    if entry["tflite_path"]:
+        print(f"\nEvaluating {model} INT8 TFLite on the test split...")
+        entry["eval_int8"] = evaluate(entry["tflite_path"], config_path, out_dir=entry["run_dir"])
+    return entry
+
+
 def _banner(title: str) -> None:
     print(f"\n{'=' * 55}\n{title}\n{'=' * 55}")
 
@@ -156,66 +211,24 @@ def run_pipeline(
     if not distil and model is None:
         raise ValueError("without distil, name the model to train (e.g. bu_net)")
 
+    models: dict[str, dict[str, Any]] = {}
     if distil:
         _banner("TEACHER -> STUDENT DISTILLATION PIPELINE")
-        print("\nPhase 1: Training Teacher")
-        teacher = run_training(TEACHER, config_path, output_dir)
-        print(f"Teacher trained  ->  {teacher['model_path']}")
+        print("\nPhase 1: Teacher")
+        models[TEACHER] = train_and_score(TEACHER, config_path, output_dir)
+        print(f"Teacher trained  ->  {models[TEACHER]['model_path']}")
 
-        print("\nPhase 2: Training Student")
+        print("\nPhase 2: Student")
         # Inject the teacher path resolved at runtime so the student always distils
         # from the model trained in Phase 1, regardless of what is in the YAML.
-        student = run_training(
-            STUDENT,
-            config_path,
-            output_dir,
-            config_overrides={"teacher_weights": teacher["model_path"]},
+        models[STUDENT] = train_and_score(
+            STUDENT, config_path, output_dir, {"teacher_weights": models[TEACHER]["model_path"]}
         )
-        print(f"Student trained  ->  {student['model_path']}")
-        trained = [teacher, student]
+        print(f"Student trained  ->  {models[STUDENT]['model_path']}")
     else:
         _banner(f"STANDARD TRAINING: {model.upper()} (No KD)")
-        print("\nPhase 1: Training")
-        trained = [
-            run_training(model, config_path, output_dir, {"use_distillation": False}),
-        ]
-        print(f"Training complete  ->  {trained[0]['model_path']}")
-
-    models: dict[str, dict[str, Any]] = {}
-    for res in trained:
-        models[res["model_name"]] = {
-            "model_path": res["model_path"],
-            "run_dir": res["experiment_dir"],
-            "qat_applied": res["qat_applied"],
-            "tflite_path": None,
-            "tflite_size_kb": None,
-            "quant_params_path": None,
-            "eval_fp32": None,
-            "eval_int8": None,
-        }
-
-    print("\nPhase: Quantize to INT8 TFLite")
-    for name, entry in models.items():
-        if name == TEACHER:
-            continue
-        keras_path = Path(entry["model_path"])
-        exported = export_int8(keras_path, models_dir=keras_path.parent, config_path=config_path)
-        entry["tflite_path"] = exported["tflite_path"]
-        entry["tflite_size_kb"] = exported["size_kb"]
-        entry["quant_params_path"] = exported["quant_params_path"]
-
-    print("\nPhase: Evaluation on the test split")
-    from nanou.evaluate import evaluate
-
-    # The file passed decides the format, so each row is scored from its own file.
-    for name, entry in models.items():
-        print(f"\nEvaluating {name} FP32 Keras...")
-        entry["eval_fp32"] = evaluate(entry["model_path"], config_path, out_dir=entry["run_dir"])
-        if entry["tflite_path"]:
-            print(f"\nEvaluating {name} INT8 TFLite...")
-            entry["eval_int8"] = evaluate(
-                entry["tflite_path"], config_path, out_dir=entry["run_dir"]
-            )
+        models[model] = train_and_score(model, config_path, output_dir, {"use_distillation": False})
+        print(f"Training complete  ->  {models[model]['model_path']}")
 
     summary = {"config_path": config_path, "distil": distil, "models": models}
     summary_path = Path(output_dir) / SUMMARY_FILE

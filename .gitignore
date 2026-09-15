@@ -22,7 +22,13 @@ ENV/
 Thumbs.db
 
 # -- Run outputs and local state ----------------------------------------------
-results/
+# Runs stay local; the summary each experiment writes for a reader is tracked.
+# Git cannot re-include a file inside an ignored directory, so these ignore the
+# contents rather than the directory, and their order matters.
+results/*
+!results/experiments/
+results/experiments/*/*
+!results/experiments/*/summary.json
 baseline/
 capture_out/
 

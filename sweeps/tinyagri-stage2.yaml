@@ -1,0 +1,19 @@
+# TinyAgri, CV stage 2: distillation temperature x alpha, on the stage-1 regime.
+# Produced tinyagri.yaml's temperature (0.7) and alpha (0.3).
+#
+#   python scripts/sweep.py sweeps/tinyagri-stage2.yaml --preset tinyagri
+#
+# Rebuilt from results/TinyAgri/cv_stage2/: the grid, k and epochs are what
+# ran there. The saved table does not record the fold seed; 37 is sweep.py's
+# default.
+k: 4
+epochs: 100
+seed: 37
+threshold: 0.5
+select: f0.5
+min_miou: 0.0
+grid:
+  temperature: [0.3, 0.5, 0.7]
+  alpha: [0.3, 0.5, 0.7]
+  regime: [photometric]
+  ce: [on]

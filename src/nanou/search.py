@@ -16,13 +16,12 @@ the config choice is not circular with Nano-U's conservative (precision-favoring
 objective: conservatism is designed into the *loss*, not manufactured by the
 selector. The precision-weighted **F0.5** is the tiebreaker and is reported as the
 safety axis; all of F0.5/F1/F2/precision/recall/mIoU/Dice are logged per fold and
-aggregated (mean +/- std) into ``results/<dataset>/cv_results.{csv,json}``.
+aggregated (mean +/- std) into ``cv_results.{csv,json}`` in the output directory.
 
+The grid comes from a sweep file (``sweeps/*.yaml``, read by `load_sweep`).
 This is built to run unattended for hours. Example:
 
-    python scripts/sweep.py --preset tinyagri --k 5 --epochs 50 \
-        --temperatures 2 4 8 --alphas 0.3 0.5 0.7 \
-        --regimes none geometric photometric full --ce on off
+    python scripts/sweep.py sweeps/tinyagri-stage3.yaml --preset tinyagri --jobs 3
 """
 
 import itertools
@@ -33,8 +32,9 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import yaml
 
-from nanou.config import get_project_root, load_config
+from nanou.config import get_project_root, load_config, resolve_path
 from nanou.data import grouped_kfold, make_dataset, sequence_group, sorted_by_frame
 from nanou.metrics import compute_segmentation_metrics
 from nanou.pipeline import run_training
@@ -214,15 +214,117 @@ def select_best(
     Default is mIoU-primary with F0.5 as the tiebreak: keep the best-overlap
     config, and among equal-overlap configs prefer the more precision-favoring
     one. With ``min_miou > 0`` the choice is restricted to configs whose mean mIoU
-    clears the floor (useful only when a non-mIoU ``primary`` is requested). If no
-    config clears the floor the selection falls back to the full set; the caller
-    is expected to log that the floor was infeasible.
+    clears the floor (useful only when a non-mIoU ``primary`` is requested).
+
+    Raises:
+        ValueError: if there are no rows, or if no row clears ``min_miou``. The
+            floor used to fall back to the full set with a warning - a filter
+            that silently stopped filtering in a sweep nobody watches.
     """
     if not rows:
         raise ValueError("no rows to select from")
     eligible = [r for r in rows if r.get("miou_mean", 0.0) >= min_miou]
-    pool = eligible or rows
-    return max(pool, key=lambda r: (r[primary], r[secondary]))
+    if not eligible:
+        best = max(r.get("miou_mean", 0.0) for r in rows)
+        raise ValueError(
+            f"no config reaches the mIoU floor {min_miou:.3f} (the best mean mIoU is "
+            f"{best:.4f}); lower min_miou in the sweep file or widen the grid"
+        )
+    return max(eligible, key=lambda r: (r[primary], r[secondary]))
+
+
+# -- Sweep files ---------------------------------------------------------------
+
+# Optional top-level keys of a sweep file, with their defaults. `k`, `epochs`
+# and `grid` have none: they are what makes one sweep different from another.
+SWEEP_DEFAULTS: dict[str, Any] = {
+    "seed": 37,
+    "threshold": 0.5,
+    "select": "miou",
+    "min_miou": 0.0,
+    "fixed_teacher": None,
+}
+SWEEP_REQUIRED = ("k", "epochs", "grid")
+GRID_AXES = ("temperature", "alpha", "regime", "ce", "tversky")
+SELECT_METRICS = ("f0.5", "f1", "f2", "miou")
+
+
+def load_sweep(path) -> dict[str, Any]:
+    """Read a sweep file into the keyword arguments `run_cv` takes.
+
+    The file sets the folds, the epochs and one list per grid axis; see
+    ``sweeps/`` for the shape. The grid is expanded here, so the result can be
+    passed straight on. ``ce`` takes on/off quoted or not: unquoted, YAML
+    reads them as booleans.
+
+    Returns:
+        ``k``, ``epochs``, ``grid``, ``seed``, ``threshold``, ``select_primary``,
+        ``min_miou`` and ``fixed_teacher``.
+
+    Raises:
+        ValueError: on an unknown or missing key or axis, or a value outside
+            its choices - a typo in a sweep file is an error, as in a preset.
+    """
+    with open(path) as f:
+        raw = yaml.safe_load(f) or {}
+
+    unknown = sorted(set(raw) - set(SWEEP_DEFAULTS) - set(SWEEP_REQUIRED))
+    if unknown:
+        raise ValueError(f"{path}: unknown key(s) {unknown}")
+    missing = [key for key in SWEEP_REQUIRED if key not in raw]
+    if missing:
+        raise ValueError(f"{path}: missing required key(s) {missing}")
+    spec = {**SWEEP_DEFAULTS, **raw}
+
+    grid = spec["grid"]
+    if not isinstance(grid, dict):
+        raise ValueError(f"{path}: 'grid' must be a mapping of axis -> list of values")
+    unknown = sorted(set(grid) - set(GRID_AXES))
+    if unknown:
+        raise ValueError(f"{path}: unknown grid axis {unknown}; axes are {list(GRID_AXES)}")
+    # Tversky is the one optional axis: leaving it out means plain BCE.
+    grid = {"tversky": [[0.0, 0.7, 0.3]], **grid}
+    for axis in GRID_AXES:
+        if not isinstance(grid.get(axis), list) or not grid[axis]:
+            raise ValueError(f"{path}: grid axis '{axis}' must be a non-empty list")
+
+    ce = []
+    for value in grid["ce"]:
+        if not (isinstance(value, bool) or value in ("on", "off")):
+            raise ValueError(f"{path}: ce takes on/off, got {value!r}")
+        ce.append(value if isinstance(value, bool) else value == "on")
+
+    tversky = []
+    for entry in grid["tversky"]:
+        if isinstance(entry, (int, float)) and not isinstance(entry, bool):
+            tversky.append(float(entry))
+        elif isinstance(entry, list) and len(entry) == 3:
+            tversky.append(tuple(float(x) for x in entry))
+        else:
+            raise ValueError(
+                f"{path}: a tversky entry is a weight or a [weight, alpha_fp, beta_fn] "
+                f"triple, got {entry!r}"
+            )
+
+    if spec["select"] not in SELECT_METRICS:
+        raise ValueError(f"{path}: select must be one of {list(SELECT_METRICS)}")
+
+    return {
+        "k": int(spec["k"]),
+        "epochs": int(spec["epochs"]),
+        "grid": expand_grid(
+            [float(t) for t in grid["temperature"]],
+            [float(a) for a in grid["alpha"]],
+            [str(r) for r in grid["regime"]],
+            ce,
+            tversky,
+        ),
+        "seed": int(spec["seed"]),
+        "threshold": float(spec["threshold"]),
+        "select_primary": f"{spec['select']}_mean",
+        "min_miou": float(spec["min_miou"]),
+        "fixed_teacher": resolve_path(spec["fixed_teacher"]),
+    }
 
 
 # -----------------------------------------------------------------------------
@@ -475,22 +577,16 @@ def run_cv(
             f"miou={agg['miou_mean']:.4f}+/-{agg['miou_std']:.4f}"
         )
 
-    n_eligible = sum(1 for r in rows if r["miou_mean"] >= min_miou)
-    if min_miou > 0.0 and n_eligible == 0:
-        print(
-            f"[CV] WARNING: no config reached the mIoU floor {min_miou:.3f}; "
-            f"falling back to the highest-mIoU config (F0.5 floor infeasible)."
-        )
-    elif min_miou > 0.0:
-        print(
-            f"[CV] {n_eligible}/{len(rows)} configs clear the mIoU floor "
-            f"{min_miou:.3f}; selecting among those."
-        )
+    # The table goes to disk before selecting: an infeasible mIoU floor raises
+    # below, and hours of results must not go down with it.
+    _write_table(rows, out)
+    if min_miou > 0.0:
+        n_eligible = sum(1 for r in rows if r["miou_mean"] >= min_miou)
+        print(f"[CV] {n_eligible}/{len(rows)} configs clear the mIoU floor {min_miou:.3f}.")
     # mIoU-primary breaks ties on the F0.5 safety axis; any other primary breaks
     # ties on mIoU.
     select_secondary = "f0.5_mean" if select_primary == "miou_mean" else "miou_mean"
     best = select_best(rows, primary=select_primary, secondary=select_secondary, min_miou=min_miou)
-    _write_table(rows, out)
     print(
         f"\n[CV] BEST by {select_primary} ({select_secondary} tiebreak, "
         f"floor={min_miou:.3f}): "
