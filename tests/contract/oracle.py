@@ -181,15 +181,15 @@ def keras_param_count(h5_path):
 def score_split(preset, model_path, split="test", batch_size=8):
     """Score one on-disk model over one split and return the metrics dict.
 
-    This is the same forward path ``evaluate_and_plot`` uses - ``make_dataset``
-    then ``run_inference`` then ``compute_segmentation_metrics`` - reproduced
-    here without the plotting and report writing, so the oracle does not depend
-    on where those artefacts get written.
+    This is the same forward path ``nanou.evaluate.evaluate`` uses -
+    ``make_dataset`` then ``Predictor.run`` then ``compute_segmentation_metrics``
+    - reproduced here without the plotting and report writing, so the oracle
+    does not depend on where those artefacts get written.
     """
     from nanou.config import load_config
     from nanou.data import make_dataset, sorted_by_frame
     from nanou.metrics import compute_segmentation_metrics
-    from nanou.predictor import run_inference
+    from nanou.predictor import load_predictor
 
     config = load_config(preset)
     split_cfg = config["data"]["paths"]["processed"][split]
@@ -217,7 +217,7 @@ def score_split(preset, model_path, split="test", batch_size=8):
         std=norm["std"],
     )
 
-    probs, gt, _ = run_inference(model_path, dataset)
+    probs, gt, _ = load_predictor(model_path).run(dataset)
     return compute_segmentation_metrics(probs, gt)
 
 

@@ -111,4 +111,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Ctrl-C is how a profiling run is normally stopped at the multimeter
+    # prompt, so it gets a clean exit rather than a traceback.
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
+        sys.exit(130)

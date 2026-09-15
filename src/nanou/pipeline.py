@@ -205,27 +205,16 @@ def run_pipeline(
         entry["quant_params_path"] = exported["quant_params_path"]
 
     print("\nPhase: Evaluation on the test split")
-    from nanou.evaluate import evaluate_and_plot
+    from nanou.evaluate import evaluate
 
+    # The file passed decides the format, so each row is scored from its own file.
     for name, entry in models.items():
-        stem = Path(entry["model_path"]).stem
-        run_dir = Path(entry["run_dir"])
-        # prefer is forced both ways: the resolver otherwise picks .tflite
-        # whenever one exists, which would make the "fp32" row the INT8 model.
         print(f"\nEvaluating {name} FP32 Keras...")
-        entry["eval_fp32"] = evaluate_and_plot(
-            model_name=stem,
-            config_path=config_path,
-            out_path=str(run_dir / "eval_predictions_fp32.png"),
-            prefer="float",
-        )
+        entry["eval_fp32"] = evaluate(entry["model_path"], config_path, out_dir=entry["run_dir"])
         if entry["tflite_path"]:
             print(f"\nEvaluating {name} INT8 TFLite...")
-            entry["eval_int8"] = evaluate_and_plot(
-                model_name=stem,
-                config_path=config_path,
-                out_path=str(run_dir / "eval_predictions_int8.png"),
-                prefer="tflite",
+            entry["eval_int8"] = evaluate(
+                entry["tflite_path"], config_path, out_dir=entry["run_dir"]
             )
 
     summary = {"config_path": config_path, "distil": distil, "models": models}

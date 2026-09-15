@@ -1,8 +1,6 @@
 """On-device evaluation: flash the eval binary, read the serial output, score it."""
 
 import argparse
-import sys
-from pathlib import Path
 
 from nanou.config import load_config, preset_path
 from nanou.device.evaluate import evaluate_esp_outputs, run_inference_on_device
@@ -34,20 +32,14 @@ def main():
     except PreflightError as e:
         raise SystemExit(f"\n{e}") from e
 
-    repo_root = Path(__file__).parent.parent.resolve()
     print("==========================================")
     print(f"ESP32 Benchmarking Pipeline ({args.model})")
     print("==========================================")
 
-    device_result = run_inference_on_device(
-        repo_root, model_name=args.model, config_path=config_path
-    )
-    if not device_result or not device_result.get("img_data"):
-        print("Failed to collect inference data from ESP32.")
-        sys.exit(1)
+    device_result = run_inference_on_device(model_name=args.model, config_path=config_path)
 
     print("\n[3/3] Evaluating ESP32 outputs and calculating metrics...")
-    evaluate_esp_outputs(device_result, repo_root, model_name=args.model, config_path=config_path)
+    evaluate_esp_outputs(device_result, model_name=args.model, config_path=config_path)
 
 
 if __name__ == "__main__":

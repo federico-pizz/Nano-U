@@ -1,137 +1,77 @@
 """Stack-usage and power profiling over the device serial log."""
 
-import os
-import pty
-import select
-import subprocess
-import sys
-import time
-
 import matplotlib.pyplot as plt
 
-from nanou.device.session import drain_pty
+from nanou.device.session import DeviceSession
 
 TIMEOUT_SECONDS = 300
 
 
-def run_analysis_on_device(cmd, log_file, cwd=None, preset_voltage=None, preset_current=None):
-    """Run a flash-and-monitor command under a pty and tee the board's output to a log file.
+def _read_power(preset_voltage, preset_current):
+    """Supply voltage and current: the presets when given, otherwise asked for at the terminal."""
+    print("\n" + "=" * 60)
+    print("DEVICE IS NOW UNDER 100% CONTINUOUS NEURAL NETWORK LOAD")
+    print("=" * 60)
+    print("The ESP32 is running a silent infinite loop.")
 
-    A pty is needed because the cargo runner only streams the monitor output
-    when it believes it is attached to a terminal.
+    current_ma = None
+    if preset_voltage is not None:
+        voltage_v = preset_voltage
+        print(f"Using preset voltage: {voltage_v} V")
+    else:
+        print("Look at your multimeter and wait for the reading to stabilize.\n")
+        raw = input("Enter the measured voltage in V (or press Enter to use 5.0V): ").strip()
+        voltage_v = 5.0
+        if raw:
+            try:
+                voltage_v = float(raw)
+            except ValueError:
+                print("Invalid input, defaulting to 5.0V.")
+
+    if preset_current is not None:
+        current_ma = preset_current
+        print(f"Using preset current: {current_ma} mA")
+    elif preset_voltage is None:
+        raw = input(
+            "Enter the stable current draw in mA (or press Enter to skip energy calc): "
+        ).strip()
+        if raw:
+            try:
+                current_ma = float(raw)
+            except ValueError:
+                print("Invalid input. Skipping energy calculation.")
+    else:
+        print("No current provided - skipping energy calculation.")
+    return voltage_v, current_ma
+
+
+def run_analysis_on_device(cmd, log_file, cwd=None, preset_voltage=None, preset_current=None):
+    """Run the analysis binary until it starts its power loop, teeing its output to a log file.
 
     Args:
         cmd: Command to run, as an argv list.
-        log_file: Path the combined output is written to.
+        log_file: Path the combined output is written to; `parse_log_output` reads it.
         cwd: Working directory for the command.
         preset_voltage: Supply voltage in volts, when measured externally.
         preset_current: Supply current in milliamps, when measured externally.
 
     Returns:
-        Tuple of (success, current_ma, voltage_v).
+        Tuple of (success, current_ma, voltage_v). False means the board never
+        reached POWER_MEASUREMENT_START; the caller decides whether to retry.
     """
     print(f"Executing: {' '.join(cmd)}")
-    master, slave = pty.openpty()
-    p = subprocess.Popen(
-        cmd, stdin=slave, stdout=slave, stderr=subprocess.STDOUT, close_fds=True, cwd=cwd
-    )
-    os.close(slave)
-
-    current_ma = None
-    voltage_v = None
-    success = False
-
-    with open(log_file, "wb") as f_log:
-        buffer = b""
-        start_time = time.time()
-
-        try:
-            while True:
-                if time.time() - start_time > TIMEOUT_SECONDS:
-                    print(
-                        f"\nTimeout: device did not reach POWER_MEASUREMENT_START within {TIMEOUT_SECONDS}s."
-                    )
-                    break
-
-                if p.poll() is not None:
-                    drain_pty(master, f_log)
-                    print("\nProcess exited before POWER_MEASUREMENT_START.")
-                    break
-
-                r, _, _ = select.select([master], [], [], 0.1)
-                if master not in r:
-                    continue
-
-                try:
-                    data = os.read(master, 1024)
-                except OSError:
-                    break
-                if not data:
-                    break
-
-                try:
-                    sys.stdout.buffer.write(data)
-                    sys.stdout.buffer.flush()
-                except Exception:
-                    pass
-
-                f_log.write(data)
-                f_log.flush()
-                buffer += data
-
-                if b"POWER_MEASUREMENT_START" in buffer:
-                    print("\n" + "=" * 60)
-                    print("DEVICE IS NOW UNDER 100% CONTINUOUS NEURAL NETWORK LOAD")
-                    print("=" * 60)
-                    print("The ESP32 is running a silent infinite loop.")
-
-                    if preset_voltage is not None:
-                        voltage_v = preset_voltage
-                        print(f"Using preset voltage: {voltage_v} V")
-                    else:
-                        print("Look at your multimeter and wait for the reading to stabilize.\n")
-                        raw = input(
-                            "Enter the measured voltage in V (or press Enter to use 5.0V): "
-                        ).strip()
-                        if raw:
-                            try:
-                                voltage_v = float(raw)
-                            except ValueError:
-                                print("Invalid input, defaulting to 5.0V.")
-                                voltage_v = 5.0
-                        else:
-                            voltage_v = 5.0
-
-                    if preset_current is not None:
-                        current_ma = preset_current
-                        print(f"Using preset current: {current_ma} mA")
-                    elif preset_voltage is None:
-                        raw = input(
-                            "Enter the stable current draw in mA (or press Enter to skip energy calc): "
-                        ).strip()
-                        if raw:
-                            try:
-                                current_ma = float(raw)
-                            except ValueError:
-                                print("Invalid input. Skipping energy calculation.")
-                    else:
-                        print("No current provided - skipping energy calculation.")
-
-                    success = True
-                    break
-
-        except KeyboardInterrupt:
-            print("\nInterrupted.")
-            sys.exit(130)
-        finally:
-            if p.poll() is None:
-                p.terminate()
-                time.sleep(0.5)
-                if p.poll() is None:
-                    p.kill()
-            os.close(master)
-
-    return success, current_ma, voltage_v
+    with DeviceSession(cmd, cwd=cwd, log_path=log_file, timeout=TIMEOUT_SECONDS) as session:
+        for line in session.lines():
+            if "POWER_MEASUREMENT_START" in line:
+                voltage_v, current_ma = _read_power(preset_voltage, preset_current)
+                return True, current_ma, voltage_v
+        if session.timed_out:
+            print(
+                f"\nTimeout: device did not reach POWER_MEASUREMENT_START within {TIMEOUT_SECONDS}s."
+            )
+        else:
+            print("\nProcess exited before POWER_MEASUREMENT_START.")
+    return False, None, None
 
 
 def plot_stack_usage(peaks, total_stack, output_file="stack_usage.png"):

@@ -138,7 +138,7 @@ def test_int8_output_tracks_float_source(tmp_path):
 
     from nanou.data import make_dataset
     from nanou.metrics import compute_segmentation_metrics
-    from nanou.predictor import run_inference
+    from nanou.predictor import KerasPredictor, TFLitePredictor
     from nanou.train import set_global_seed
 
     set_global_seed(0)
@@ -176,15 +176,15 @@ def test_int8_output_tracks_float_source(tmp_path):
     tflite_path = str(tmp_path / "nanou.tflite")
     convert_to_tflite_quantized(model, tflite_path, representative_gen)
 
-    float_probs, gt, _ = run_inference(model, dataset)
-    int8_probs, int8_gt, _ = run_inference(tflite_path, dataset)
+    float_probs, gt, _ = KerasPredictor(model).run(dataset)
+    int8_probs, int8_gt, _ = TFLitePredictor(tflite_path).run(dataset)
 
     assert float_probs.shape == int8_probs.shape
     assert np.array_equal(gt, int8_gt)
     # Preconditions, so a degenerate model cannot make this test pass for free:
     # the float model must produce a range of probabilities, and the two paths
-    # must not return the same array (`run_inference` falls back to a Keras
-    # sibling when a .tflite cannot be allocated).
+    # must not return the same array (which is what a silent fallback from the
+    # .tflite to the Keras model would look like).
     assert float_probs.max() - float_probs.min() > 0.5, "the float model output is near-constant"
     assert not np.array_equal(float_probs, int8_probs), "the INT8 path did not actually run"
 

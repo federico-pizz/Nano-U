@@ -115,14 +115,20 @@ fn main() {
             })
             .collect();
             
+        // Frame number first, file name second. Frame numbers repeat across
+        // sequences, and without the name the order among those ties is the
+        // directory listing's. nanou.data.sorted_by_frame sorts the same way,
+        // which is what lets the host pair device output i with test image i.
         entries.sort_by_key(|p| {
-            p.file_stem()
+            let frame = p
+                .file_stem()
                 .and_then(|s| s.to_str())
                 .and_then(|s| s.split('_').last())
                 // strip leading non-digits so "frame500" -> "500", bare numbers pass through
                 .map(|s| s.trim_start_matches(|c: char| !c.is_ascii_digit()))
                 .and_then(|s| s.parse::<u32>().ok())
-                .unwrap_or(0)
+                .unwrap_or(0);
+            (frame, p.file_name().map(|n| n.to_string_lossy().into_owned()))
         });
         
         for path in entries {

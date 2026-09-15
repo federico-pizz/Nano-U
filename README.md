@@ -219,11 +219,12 @@ python scripts/train.py --no-distill --model nanou --preset tinyagri   # Student
 
 ```bash
 python scripts/evaluate.py nanou --preset tinyagri            # held-out test split
+python scripts/evaluate.py nanou --preset tinyagri --format fp32   # the Keras model, not the .tflite
 python scripts/evaluate.py nanou --preset tinyagri --split val --threshold 0.6
 python scripts/evaluate.py nanou --preset tinyagri --info     # parameter counts, layers, summary
 ```
 
-Reports mIoU, Dice, precision/recall and the F0.5/F1/F2 family, plus a precision-recall curve and a metric-vs-threshold sweep. When frames carry sequence ids it adds a per-sequence variance breakdown (plot + `*_report.json`). Outputs land in `results/<dataset>/<model>/`. INT8 TFLite and float Keras models go through the same forward path.
+Reports mIoU, Dice, precision/recall and the F0.5/F1/F2 family, plus a precision-recall curve and a metric-vs-threshold sweep. When frames carry sequence ids it adds a per-sequence variance breakdown. Everything lands in `results/<dataset>/<model>/`: two figures and one report, `eval_<format>_<split>.json`. `--format int8|fp32` picks the file that is scored (default: the INT8 `.tflite` when it has been exported); both formats go through the same forward path, and `scripts/device_eval.py` scores the board's output through it too.
 
 ### Hyperparameter search (leakage-safe CV)
 

@@ -1,6 +1,16 @@
-"""Host-side evaluation: score a named model on a split and write the report."""
+"""Host-side evaluation, in steps a caller can use separately.
 
+`score` turns probabilities and masks into the metrics dict, `plot` draws the
+qualitative panels and the threshold report, `write_report` writes the one JSON
+file. `evaluate` chains them for a saved model on a dataset split. The device
+evaluator (`nanou.device.evaluate`) calls the same split loading, `score`,
+`plot` and `write_report` on what the board sends back - which is what makes
+host and device numbers comparable by construction.
+"""
+
+import json
 import os
+from pathlib import Path
 
 import matplotlib
 import numpy as np
@@ -13,138 +23,93 @@ from nanou.config import get_project_root, load_config
 from nanou.data import make_dataset, sequence_group, sorted_by_frame
 from nanou.metrics import (
     EPS,
+    NumpyEncoder,
     bce_loss_from_logits,
     compute_segmentation_metrics,
     focal_loss_from_logits,
 )
-from nanou.predictor import run_inference
+from nanou.predictor import load_predictor
+
+SPLITS = ("train", "val", "test")
+HEADLINE = ("miou", "dice", "precision", "recall", "f0.5", "f1", "f2", "bce", "focal")
 
 
-def evaluate_and_plot(
-    model_name,
-    config_path,
-    batch_size=8,
-    threshold=0.5,
-    samples_to_plot=6,
-    out_path=None,
-    split="test",
-    prefer="tflite",
-):
-    """Evaluate a model by name and write metric artefacts + plots.
+def project_path(path) -> str:
+    """A config path made absolute, relative paths being relative to the repository."""
+    path = str(path)
+    return path if os.path.isabs(path) else os.path.join(str(get_project_root()), path)
 
-    ``prefer`` controls which on-disk format is scored when several siblings
-    (``.tflite`` / ``.h5`` / ``.keras``) exist for ``model_name``:
 
-      - ``"tflite"`` (default): score the INT8 ``.tflite`` - the device format.
-      - ``"float"``:  score the FP32 Keras ``.h5`` / ``.keras`` instead.
+def split_files(config, split: str = "test") -> tuple[list[str], list[str]]:
+    """The (images, masks) of one split, in frame order - the order build.rs embeds them.
 
-    This matters because the resolver would otherwise *always* pick ``.tflite``,
-    so the "float" metrics would silently be the quantised model. The flat
-    metrics are written both to ``eval_results.json`` (back-compat) and to a
-    format-tagged ``eval_results_{fp32,int8}.json`` so downstream tooling can
-    tell the two apart.
+    Raises:
+        ValueError: for a split other than train, val or test.
+        RuntimeError: if the split has no images.
     """
-    config = load_config(config_path)
-    root_dir = str(get_project_root())
-
-    def resolve_path(p):
-        return p if os.path.isabs(p) else os.path.join(root_dir, p)
-
-    # Split-aware: evaluate on the held-out test set OR the validation set
-    # (val is what model selection is allowed to look at; test is touched once).
-    if split not in ("train", "val", "test"):
+    if split not in SPLITS:
         raise ValueError(f"split must be 'train'|'val'|'test', got {split!r}")
     split_cfg = config["data"]["paths"]["processed"][split]
-    test_img_dir = resolve_path(split_cfg["img"])
-    test_mask_dir = resolve_path(split_cfg["mask"])
+    img_dir, mask_dir = project_path(split_cfg["img"]), project_path(split_cfg["mask"])
+    imgs = sorted_by_frame(
+        [os.path.join(img_dir, f) for f in os.listdir(img_dir) if f.endswith(".png")]
+    )
+    masks = sorted_by_frame(
+        [os.path.join(mask_dir, f) for f in os.listdir(mask_dir) if f.endswith(".png")]
+    )
+    if not imgs:
+        raise RuntimeError(f"No images found for split={split} in {img_dir}")
+    return imgs, masks
 
-    test_imgs = [
-        os.path.join(test_img_dir, f)
-        for f in sorted(os.listdir(test_img_dir))
-        if f.endswith(".png")
-    ]
-    test_masks = [
-        os.path.join(test_mask_dir, f)
-        for f in sorted(os.listdir(test_mask_dir))
-        if f.endswith(".png")
-    ]
 
-    # make_dataset pairs images to masks by basename, so no manual alignment here.
-    test_imgs = sorted_by_frame(test_imgs)
-    test_masks = sorted_by_frame(test_masks)
-
-    if len(test_imgs) == 0:
-        raise RuntimeError(f"No images found for split={split} in {test_img_dir}")
-
-    mean = config["data"]["normalization"]["mean"]
-    std = config["data"]["normalization"]["std"]
-    input_shape = config.get("data", {}).get("input_shape", [60, 80, 3])
-
-    test_ds = make_dataset(
-        test_imgs,
-        test_masks,
+def split_dataset(config, imgs, masks, batch_size: int = 8):
+    """The evaluation view of a split: normalised, unshuffled, unaugmented, in `imgs` order."""
+    norm = config["data"]["normalization"]
+    shape = config.get("data", {}).get("input_shape", [60, 80, 3])
+    return make_dataset(
+        imgs,
+        masks,
         batch_size=batch_size,
         shuffle=False,
         augment=False,
-        target_size=(input_shape[0], input_shape[1]),
-        mean=mean,
-        std=std,
+        target_size=(shape[0], shape[1]),
+        mean=norm["mean"],
+        std=norm["std"],
     )
 
-    # Resolve model by name. ``prefer`` decides whether the INT8 .tflite or the
-    # FP32 Keras file wins when both exist (see docstring).
-    if prefer not in ("tflite", "float"):
-        raise ValueError(f"prefer must be 'tflite'|'float', got {prefer!r}")
-    models_dir = resolve_path(config["data"]["paths"]["models_dir"])
-    tflite_c = [os.path.join(models_dir, f"{model_name}.tflite")]
-    float_c = [
-        os.path.join(models_dir, f"{model_name}.h5"),
-        os.path.join(models_dir, f"{model_name}.keras"),
-    ]
-    candidates = (tflite_c + float_c) if prefer == "tflite" else (float_c + tflite_c)
 
-    model_path = None
-    for c in candidates:
-        if os.path.exists(c):
-            model_path = c
-            break
+def frame_groups(imgs, n_rows: int) -> list[str] | None:
+    """The capture sequence of each row, or None if the rows no longer line up with `imgs`.
 
-    if model_path is None:
-        raise FileNotFoundError(f"Model not found. Checked: {candidates}")
+    make_dataset drops unpaired frames; labelling rows by position after that
+    would assign them to the wrong sequence, so the breakdown is skipped instead.
+    """
+    groups = [sequence_group(p) for p in imgs]
+    return groups if len(groups) == n_rows else None
 
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model not found: {model_path}")
 
-    print(f"[eval] split={split}  model={model_path}  images={len(test_imgs)}")
+def score(probs, masks, groups=None, threshold: float = 0.5) -> dict:
+    """The metrics dict for probabilities in [0, 1] against binary masks.
 
-    # Single shared forward path (INT8 TFLite + Keras), probabilities in [0,1].
-    all_probs, all_masks, all_imgs = run_inference(model_path, test_ds)
-
-    # Per-sequence groups: make_dataset re-orders by frame and pairs by basename,
-    # so the row order equals sorted_by_frame(test_imgs). Guard against any
-    # mismatch (e.g. dropped unpaired frames) by skipping groups rather than
-    # mislabeling rows.
-    ordered = sorted_by_frame(test_imgs)
-    groups = [sequence_group(p) for p in ordered]
-    if len(groups) != all_probs.shape[0]:
-        groups = None
-
+    `compute_segmentation_metrics` plus the BCE and focal losses, which are
+    computed from logits recovered from the probabilities so that every caller
+    - a Keras model, a TFLite file, the board - is scored by the same formula.
+    """
     results = compute_segmentation_metrics(
-        all_probs,
-        all_masks,
-        groups=groups,
-        operating_threshold=threshold,
+        probs, masks, groups=groups, operating_threshold=threshold
     )
+    logits = np.log(probs + EPS) - np.log(1.0 - probs + EPS)
+    masks_t = tf.convert_to_tensor(masks, dtype=tf.float32)
+    logits_t = tf.convert_to_tensor(logits, dtype=tf.float32)
+    results["bce"] = float(bce_loss_from_logits(masks_t, logits_t).numpy())
+    results["focal"] = float(focal_loss_from_logits(masks_t, logits_t).numpy())
+    return results
 
-    # Backward-compatible loss metrics (bce/focal) for existing consumers.
-    _logits = np.log(all_probs + EPS) - np.log(1.0 - all_probs + EPS)
-    _masks_t = tf.convert_to_tensor(all_masks, dtype=tf.float32)
-    _logits_t = tf.convert_to_tensor(_logits, dtype=tf.float32)
-    results["bce"] = float(bce_loss_from_logits(_masks_t, _logits_t).numpy())
-    results["focal"] = float(focal_loss_from_logits(_masks_t, _logits_t).numpy())
 
-    print(f"Evaluation results (operating threshold = {threshold}):")
-    for k in ("miou", "dice", "precision", "recall", "f0.5", "f1", "f2", "bce", "focal"):
+def print_headline(results: dict, title: str) -> None:
+    """Print the headline metrics and, when present, the per-sequence spread."""
+    print(f"{title} (operating threshold = {results['threshold']}):")
+    for k in HEADLINE:
         print(f"  {k}: {results[k]:.4f}")
     if "per_sequence" in results:
         ps = results["per_sequence"]
@@ -153,35 +118,46 @@ def evaluate_and_plot(
             f"over {ps['n_groups']} sequences"
         )
 
-    # -- Output paths --
-    if out_path is None:
-        config_results_dir = config.get("data", {}).get("paths", {}).get("results_dir", "results")
-        results_dir = os.path.join(root_dir, config_results_dir, model_name)
-        os.makedirs(results_dir, exist_ok=True)
-        out_path = os.path.join(results_dir, f"eval_predictions_{split}.png")
-    out_dir = os.path.dirname(out_path) or "."
-    os.makedirs(out_dir, exist_ok=True)
-    base = os.path.splitext(os.path.basename(out_path))[0]
 
+def plot(
+    probs,
+    masks,
+    imgs,
+    results: dict,
+    out_dir,
+    name: str,
+    mean=(0.5, 0.5, 0.5),
+    std=(0.5, 0.5, 0.5),
+    samples: int = 6,
+) -> list[str]:
+    """Write ``<name>.png`` (input / GT / prob / pred panels) and ``<name>_metrics.png``.
+
+    The second figure holds the PR curve, the metric-vs-threshold sweep and,
+    when the results carry sequence groups, the per-sequence mIoU spread.
+
+    Returns:
+        The paths of the two figures.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    threshold = results["threshold"]
     mean_arr = np.array(mean, dtype=np.float32)
     std_arr = np.array(std, dtype=np.float32)
-    preds_bin = (all_probs > threshold).astype(np.uint8)
+    preds_bin = (probs > threshold).astype(np.uint8)
 
-    # -- Qualitative panels: input / GT / prob / pred --
-    n_total = all_probs.shape[0]
-    samples = max(1, min(samples_to_plot, n_total))
+    n_total = probs.shape[0]
+    samples = max(1, min(samples, n_total))
     sample_indices = np.linspace(0, n_total - 1, samples, dtype=int)
     fig, axes = plt.subplots(samples, 4, figsize=(12, 3 * samples))
     for idx, i in enumerate(sample_indices):
-        img = np.clip(all_imgs[i, ...] * std_arr + mean_arr, 0.0, 1.0)
+        img = np.clip(imgs[i, ...] * std_arr + mean_arr, 0.0, 1.0)
         row = axes[idx] if samples > 1 else axes
         row[0].imshow(img)
-        row[0].set_title("Input")
+        row[0].set_title(f"Input {i}")
         row[0].axis("off")
-        row[1].imshow(all_masks[i, ..., 0], cmap="gray")
+        row[1].imshow(masks[i, ..., 0], cmap="gray")
         row[1].set_title("Ground Truth")
         row[1].axis("off")
-        im = row[2].imshow(all_probs[i, ..., 0], cmap="viridis", vmin=0, vmax=1)
+        im = row[2].imshow(probs[i, ..., 0], cmap="viridis", vmin=0, vmax=1)
         row[2].set_title("Predicted Prob")
         row[2].axis("off")
         fig.colorbar(im, ax=row[2], fraction=0.046, pad=0.04)
@@ -189,12 +165,11 @@ def evaluate_and_plot(
         row[3].set_title(f"Pred (thr={threshold})")
         row[3].axis("off")
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    panels_png = os.path.join(out_dir, f"{name}.png")
+    plt.savefig(panels_png, dpi=150)
     plt.close(fig)
-    print(f"Qualitative plot saved to {out_path}")
+    print(f"Qualitative plot saved to {panels_png}")
 
-    # -- Statistical report: PR curve, metric-vs-threshold, and (only when
-    # sequence groups exist) a per-sequence mIoU variance panel --
     sweep = results["threshold_sweep"]
     has_seq = "per_sequence" in results
     ncols = 3 if has_seq else 2
@@ -206,8 +181,8 @@ def evaluate_and_plot(
     ax[0].set_xlim(0, 1)
     ax[0].set_ylim(0, 1)
     ax[0].grid(True, alpha=0.3)
-    for name in ("precision", "recall", "f0.5", "f1", "miou"):
-        ax[1].plot(sweep["thresholds"], sweep[name], label=name)
+    for metric in ("precision", "recall", "f0.5", "f1", "miou"):
+        ax[1].plot(sweep["thresholds"], sweep[metric], label=metric)
     ax[1].axvline(threshold, color="k", ls="--", alpha=0.6, label=f"op={threshold}")
     ax[1].set_xlabel("Decision threshold")
     ax[1].set_ylabel("Score")
@@ -225,34 +200,67 @@ def evaluate_and_plot(
         ax[2].set_title("Per-sequence mIoU (variance)")
         ax[2].legend(fontsize=8)
     plt.tight_layout()
-    report_png = os.path.join(out_dir, f"{base}_metrics.png")
+    report_png = os.path.join(out_dir, f"{name}_metrics.png")
     plt.savefig(report_png, dpi=150)
     plt.close(fig2)
     print(f"Statistical report saved to {report_png}")
+    return [panels_png, report_png]
 
-    # -- JSON reports --
-    import json as _json
 
-    # Back-compat flat metrics (keys existing tools read) next to the plot.
-    flat = {
-        k: results[k]
-        for k in ("bce", "dice", "focal", "miou", "precision", "recall", "f0.5", "f1", "f2")
-    }
-    with open(os.path.join(out_dir, "eval_results.json"), "w") as _f:
-        _json.dump(flat, _f, indent=2)
-    # Format-tagged copy so tooling never confuses FP32 with INT8 metrics.
-    fmt = "int8" if model_path.lower().endswith(".tflite") else "fp32"
-    with open(os.path.join(out_dir, f"eval_results_{fmt}.json"), "w") as _f:
-        _json.dump(flat, _f, indent=2)
-    print(f"Metrics saved to {os.path.join(out_dir, 'eval_results.json')}")
-    # Full rich report (sweep + per-sequence) - only when it carries the
-    # per-sequence variance that the flat metrics don't already cover.
-    if has_seq:
-        report = dict(results)
-        report["split"] = split
-        report["model"] = model_path
-        with open(os.path.join(out_dir, f"{base}_report.json"), "w") as _f:
-            _json.dump(report, _f, indent=2)
-        print(f"Full report saved to {base}_report.json")
+def write_report(results: dict, path, **context) -> str:
+    """Write the metrics, and what produced them, to one JSON file.
 
+    `context` (split, model, format, ...) goes first so the file says what it
+    describes before the numbers start.
+    """
+    path = str(path)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({**context, **results}, f, indent=2, cls=NumpyEncoder)
+    print(f"Report saved to {path}")
+    return path
+
+
+def evaluate(
+    model_path,
+    config_path,
+    split: str = "test",
+    threshold: float = 0.5,
+    out_dir=None,
+    batch_size: int = 8,
+    samples: int = 6,
+) -> dict:
+    """Score a saved model on one split and write its figures and report.
+
+    The file decides the format: a ``.tflite`` is scored through the TFLite
+    interpreter, a ``.h5``/``.keras`` as FP32 Keras. Outputs go to `out_dir`
+    (default ``<results_dir>/<model stem>/``) as ``eval_<fmt>_<split>.png``,
+    ``eval_<fmt>_<split>_metrics.png`` and ``eval_<fmt>_<split>.json``.
+
+    Returns:
+        The metrics dict.
+    """
+    config = load_config(config_path)
+    imgs, masks = split_files(config, split)
+    dataset = split_dataset(config, imgs, masks, batch_size)
+    predictor = load_predictor(str(model_path))
+    print(f"[eval] split={split}  model={model_path}  images={len(imgs)}")
+
+    probs, gt, inputs = predictor.run(dataset)
+    results = score(probs, gt, frame_groups(imgs, probs.shape[0]), threshold)
+    print_headline(results, f"Evaluation results, {predictor.fmt}")
+
+    if out_dir is None:
+        results_dir = config.get("data", {}).get("paths", {}).get("results_dir", "results")
+        out_dir = project_path(os.path.join(results_dir, Path(model_path).stem))
+    name = f"eval_{predictor.fmt}_{split}"
+    norm = config["data"]["normalization"]
+    plot(probs, gt, inputs, results, out_dir, name, norm["mean"], norm["std"], samples)
+    write_report(
+        results,
+        os.path.join(out_dir, f"{name}.json"),
+        split=split,
+        model=str(model_path),
+        format=predictor.fmt,
+    )
     return results

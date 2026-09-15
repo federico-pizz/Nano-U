@@ -6,7 +6,7 @@ Selects distillation/augmentation hyperparameters:
     :func:`nanou.data.grouped_kfold`, so no scene is split across the train and
     validation side of a fold - adjacent near-duplicate frames cannot leak.
   * The search runs over the **pooled train+val** frames only. The test split is
-    never touched here; it is measured once, afterwards, by ``evaluate_and_plot``.
+    never touched here; it is measured once, afterwards, by ``nanou.evaluate.evaluate``.
   * Each (fold, config) trains through the normal ``run_training`` code path
     (QAT + distillation), with a **per-fold teacher** so the teacher never sees
     its fold's validation frames either.
@@ -38,7 +38,7 @@ from nanou.config import get_project_root, load_config
 from nanou.data import grouped_kfold, make_dataset, sequence_group, sorted_by_frame
 from nanou.metrics import compute_segmentation_metrics
 from nanou.pipeline import run_training
-from nanou.predictor import run_inference
+from nanou.predictor import load_predictor
 
 # -----------------------------------------------------------------------------
 # Pure, unit-testable search logic (no training, no TF state)
@@ -274,7 +274,7 @@ def evaluate_on_files(
         mean=norm["mean"],
         std=norm["std"],
     )
-    probs, masks, _ = run_inference(model_path, ds)
+    probs, masks, _ = load_predictor(model_path).run(ds)
     groups = [sequence_group(p) for p in sorted_by_frame(img_files)]
     if len(groups) != probs.shape[0]:
         groups = None

@@ -106,6 +106,26 @@ def test_sorted_by_frame_with_path_prefix():
     assert result[1].endswith("020.png")
 
 
+def test_sorted_by_frame_breaks_ties_by_name():
+    """Frame numbers repeat across sequences; the name decides, whatever the listing order.
+
+    build.rs sorts the same way. If the two disagree on a tie, device output i
+    gets scored against the wrong mask.
+    """
+    files = [
+        "Tomatoes_scene2_frame490.png",
+        "Crops_scene1_frame490.png",
+        "Crops_scene1_frame12.png",
+    ]
+    expected = [
+        "Crops_scene1_frame12.png",
+        "Crops_scene1_frame490.png",
+        "Tomatoes_scene2_frame490.png",
+    ]
+    assert sorted_by_frame(files) == expected
+    assert sorted_by_frame(list(reversed(files))) == expected
+
+
 # -- make_dataset -------------------------------------------------------------
 
 

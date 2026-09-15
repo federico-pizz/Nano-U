@@ -14,7 +14,14 @@ layers = keras.layers
 
 
 def sorted_by_frame(files: list[str]) -> list[str]:
-    """Sort files by frame number. Matches build.rs logic: extracts the last underscore-separated integer."""
+    """Sort files by frame number, then by file name - the order build.rs embeds the test images in.
+
+    The frame number is the last underscore-separated integer. It is not unique:
+    sequences reuse frame numbers (``Crops_scene1_frame490`` and
+    ``Tomatoes_scene2_frame490``), so the file name breaks ties. Without it the
+    order among tied frames is whatever the directory listing gave, and the
+    firmware's image i is no longer the host's image i.
+    """
 
     def get_frame_number(filename: str) -> int:
         # Ignore directory path and extension
@@ -32,7 +39,7 @@ def sorted_by_frame(files: list[str]) -> list[str]:
                     return int(digits[-1])
         return 0
 
-    return sorted(files, key=get_frame_number)
+    return sorted(files, key=lambda f: (get_frame_number(f), os.path.basename(f)))
 
 
 def sequence_group(path: str) -> str:

@@ -2,9 +2,14 @@
 
 Two modes:
 
-  default   Score the model on a split and write the metric artefacts:
-            eval_results.json, a format-tagged eval_results_{fp32,int8}.json,
-            a prediction montage and a threshold-sweep report.
+  default   Score the model on a split and write, under
+            results/<dataset>/<model>/, a prediction montage
+            eval_<fmt>_<split>.png, a threshold-sweep figure
+            eval_<fmt>_<split>_metrics.png and one report eval_<fmt>_<split>.json.
+            --format picks the file scored: int8 is the exported .tflite, fp32
+            the Keras checkpoint. Without it, the .tflite is scored if it has
+            been exported and the Keras model otherwise - the line starting
+            [eval] says which.
 
   --info    Do not evaluate. Load the FP32 Keras model and print parameter
             counts, layer counts, the Keras summary and a serialization
@@ -13,6 +18,7 @@ Two modes:
 
 Usage:
     python scripts/evaluate.py                                     # nanou, test split
+    python scripts/evaluate.py nanou --format fp32
     python scripts/evaluate.py bu_net --preset botanicgarden
     python scripts/evaluate.py nanou --split val --threshold 0.6
     python scripts/evaluate.py nanou --info
@@ -21,38 +27,33 @@ Usage:
 import argparse
 import os
 
-from nanou.config import get_project_root, load_config, preset_path
-from nanou.evaluate import evaluate_and_plot
-from nanou.preflight import PreflightError, require_keras_model, require_model
+from nanou.config import load_config, preset_path
+from nanou.evaluate import evaluate, project_path
+from nanou.preflight import (
+    PreflightError,
+    require_keras_model,
+    require_model,
+    require_tflite_model,
+)
 
 
-def show_info(model_name, config_path):
+def show_info(model_path, model_name, models_dir):
     """Print parameter counts, layer counts, summary and serialization check."""
     import tensorflow_model_optimization as tfmot
     import tf_keras as keras
 
-    from nanou.architectures import PadToMatch
     from nanou.introspect import (
         count_parameters,
         get_model_config,
         get_model_summary,
         validate_model_serialization,
     )
-    from nanou.metrics import BinaryIoU
-
-    config = load_config(config_path)
-    root_dir = str(get_project_root())
-    models_dir = config["data"]["paths"]["models_dir"]
-    if not os.path.isabs(models_dir):
-        models_dir = os.path.join(root_dir, models_dir)
-
-    model_path = str(require_keras_model(models_dir, model_name))
+    from nanou.predictor import CUSTOM_OBJECTS
 
     # quantize_scope + PadToMatch are both required: a QAT-wrapped checkpoint
     # carries tfmot wrapper layers, and every architecture here carries PadToMatch.
-    custom_objects = {"PadToMatch": PadToMatch, "BinaryIoU": BinaryIoU}
     with tfmot.quantization.keras.quantize_scope():
-        with keras.utils.custom_object_scope(custom_objects):
+        with keras.utils.custom_object_scope(CUSTOM_OBJECTS):
             model = keras.models.load_model(model_path, compile=False)
 
     info = get_model_config(model)
@@ -91,6 +92,13 @@ def main():
         "--config", default=None, help="explicit config file, used instead of --preset"
     )
     parser.add_argument(
+        "--format",
+        choices=["int8", "fp32"],
+        default=None,
+        help="Score the exported INT8 .tflite or the FP32 Keras model "
+        "(default: INT8 if it has been exported, FP32 otherwise)",
+    )
+    parser.add_argument(
         "--split",
         default="test",
         choices=["train", "val", "test"],
@@ -109,26 +117,23 @@ def main():
     )
     args = parser.parse_args()
     config_path = args.config or str(preset_path(args.preset))
+    models_dir = project_path(load_config(config_path)["data"]["paths"]["models_dir"])
 
     try:
-        require_model(
-            load_config(config_path)["data"]["paths"]["models_dir"], args.model, preset=args.preset
-        )
+        if args.info or args.format == "fp32":
+            model_path = require_keras_model(models_dir, args.model, preset=args.preset)
+        elif args.format == "int8":
+            model_path = require_tflite_model(models_dir, args.model, preset=args.preset)
+        else:
+            model_path = require_model(models_dir, args.model, preset=args.preset)
     except PreflightError as e:
         raise SystemExit(f"\n{e}") from e
 
     if args.info:
-        show_info(args.model, config_path)
+        show_info(model_path, args.model, models_dir)
         return
 
-    evaluate_and_plot(
-        args.model,
-        config_path,
-        batch_size=8,
-        threshold=args.threshold,
-        samples_to_plot=6,
-        split=args.split,
-    )
+    evaluate(model_path, config_path, split=args.split, threshold=args.threshold)
 
 
 if __name__ == "__main__":

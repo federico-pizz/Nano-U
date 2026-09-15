@@ -5,6 +5,7 @@ only: what is called, with what, and what lands on disk.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -48,13 +49,14 @@ def stubs(monkeypatch):
             "size_kb": 12.5,
         }
 
-    def fake_eval(model_name, config_path, out_path, prefer):
-        calls["eval"].append((model_name, prefer))
-        return {"miou": 0.9 if prefer == "float" else 0.8}
+    def fake_evaluate(model_path, config_path, out_dir):
+        fmt = "int8" if str(model_path).endswith(".tflite") else "fp32"
+        calls["eval"].append((Path(model_path).stem, fmt))
+        return {"miou": 0.8 if fmt == "int8" else 0.9}
 
     monkeypatch.setattr(pipeline, "run_training", fake_run_training)
     monkeypatch.setattr(pipeline, "export_int8", fake_export)
-    monkeypatch.setattr(nanou.evaluate, "evaluate_and_plot", fake_eval)
+    monkeypatch.setattr(nanou.evaluate, "evaluate", fake_evaluate)
     return calls
 
 
@@ -82,9 +84,9 @@ def test_qad_exports_and_int8_scores_the_student_only(stubs, tmp_path):
     summary = pipeline.run_pipeline(PRESET, str(tmp_path))
     assert stubs["export"] == [pipeline.STUDENT]
     assert sorted(stubs["eval"]) == [
-        (pipeline.TEACHER, "float"),
-        (pipeline.STUDENT, "float"),
-        (pipeline.STUDENT, "tflite"),
+        (pipeline.TEACHER, "fp32"),
+        (pipeline.STUDENT, "fp32"),
+        (pipeline.STUDENT, "int8"),
     ]
     teacher = summary["models"][pipeline.TEACHER]
     assert teacher["tflite_path"] is None and teacher["eval_int8"] is None
