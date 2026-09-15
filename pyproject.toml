@@ -12,26 +12,47 @@ license = { file = "LICENSE" }
 # rather than leaving it to a runtime check.
 requires-python = ">=3.12,<3.13"
 
+# The TensorFlow stack is deliberately NOT here. It ships under two distribution
+# names - `tensorflow` on a normal machine, `tf-nightly` on a Blackwell-class GPU -
+# and a hard requirement on either one makes the package uninstallable in the other
+# environment. It lives in the extras below instead; everything here is name-stable.
+#
+# Patch-level ranges, not `==`: an environment one patch ahead should satisfy this
+# file rather than be downgraded by it. The minor stays pinned, so a fresh clone
+# still gets the stack this was developed against.
 dependencies = [
-  "tensorflow==2.20.0",
-  "tf_keras==2.20.1",
-  # Builds its quantization wrappers against Keras 2 internals; this single pin is
-  # what holds the whole stack on tf_keras
-  "tensorflow-model-optimization==0.8.0",
-  "numpy==1.26.4",
-  "pandas==2.3.3",
-  "matplotlib==3.10.8",
-  "opencv-python==4.11.0.86",
+  "numpy~=1.26.4",
+  "pandas~=2.3.3",
+  "matplotlib~=3.10.8",
+  "opencv-python>=4.11.0.86,<5",
   # Direct import in scripts/capture.py; matplotlib pulls it in too, but a
   # direct import earns a direct pin.
-  "pillow==12.3.0",
-  "PyYAML==6.0.3",
+  "pillow~=12.3.0",
+  "PyYAML~=6.0.3",
   # Host-side serial reads for the device scripts.
-  "pyserial==3.5",
+  "pyserial~=3.5",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==9.0.2", "ruff==0.14.5"]
+# The documented install is `pip install -e ".[cpu]"` - stable TensorFlow, CPU-only,
+# which is what README.md's Installation section walks through.
+cpu = [
+  "tensorflow==2.20.0",
+  "tf_keras==2.20.1",
+]
+# RTX 50-series / Blackwell (sm_120) is covered by no stable TensorFlow build, so
+# that environment runs nightlies, which carry different distribution names.
+# Unpinned on purpose: a nightly pin is stale the week after it is written, and the
+# pin that actually holds the stack together is the one below.
+gpu = [
+  "tf-nightly",
+  "tf-keras-nightly",
+]
+# Same distribution name under both flavours, so it needs no extra of its own.
+# Builds its quantization wrappers against Keras 2 internals; this single pin is
+# what holds the whole stack on tf_keras.
+qat = ["tensorflow-model-optimization==0.8.0"]
+dev = ["pytest~=9.0.2", "ruff>=0.16.5,<0.17"]
 
 # No [project.scripts]: the scripts are run with `python scripts/<name>.py`, so the
 # command a reader sees in the README is the file they can open.

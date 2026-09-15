@@ -1,8 +1,12 @@
 # Dependency pins live in pyproject.toml; this file only forwards to it, so the
-# two can no longer drift.
--e .
+# two can no longer drift. The `cpu` extra is the stable, CPU-only TensorFlow
+# stack - the TensorFlow requirement is an extra because the package ships under
+# two distribution names and no single pin covers both. `qat` is the
+# tensorflow-model-optimization pin, needed by every flavour.
+-e .[cpu,qat]
 
 # NVIDIA GPU (optional, not pinned)
 # pip install "tensorflow[and-cuda]==2.20.0"
-# Very new cards (RTX 50-series / Blackwell, sm_120) need CUDA 12.8+ and a matching
-# cuDNN - see "GPU (optional)" in README.md.
+# Very new cards (RTX 50-series / Blackwell, sm_120) need CUDA 12.8+, a matching
+# cuDNN and a TensorFlow nightly:  pip install -e ".[gpu,qat]"
+# See "GPU (optional)" in README.md.

@@ -199,8 +199,7 @@ class ResolvedConfig:
         A bridge, not a design: it exists so `--preset` works end to end while
         the library beneath still takes a config path and re-reads keys itself.
         It goes away once those modules take a `TrainConfig` directly, and it is
-        the single place where the old key spellings (`use_nas`,
-        `nas_frequency`, `layers_to_monitor`, `results_dir`) survive.
+        the single place where the old `results_dir` spelling survives.
         """
         # The legacy shape has one `data.paths` block for the whole file, so
         # the dataset-level keys have to agree across the model blocks. They do
@@ -266,9 +265,9 @@ class ResolvedConfig:
                 "tversky_weight": cfg.tversky_weight,
                 "tversky_alpha": cfg.tversky_alpha,
                 "tversky_beta": cfg.tversky_beta,
-                "use_nas": cfg.track_redundancy,
-                "nas_frequency": cfg.redundancy_every_epochs,
-                "layers_to_monitor": list(cfg.redundancy_layers),
+                "track_redundancy": cfg.track_redundancy,
+                "redundancy_every_epochs": cfg.redundancy_every_epochs,
+                "redundancy_layers": list(cfg.redundancy_layers),
                 "tensorboard": cfg.tensorboard,
                 "seed": cfg.seed,
                 "input_shape": list(cfg.input_shape),

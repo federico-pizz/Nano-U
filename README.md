@@ -82,7 +82,7 @@ The asymmetric 3x2 MaxPool at Stage 3 reduces 15x20 cleanly to 5x10 with no spat
 
 Parameter count is reported at three stages: the plain Float32 architecture has **4,212** weights; QAT wraps these in fake-quant nodes for a saved-checkpoint count of **4,688**; and at TFLite export the batch-norm statistics fold into the preceding convolutions, leaving **3,357** stored INT8 parameters with no accuracy loss.
 
-SVD-based redundancy scores (`src/nas.py`) track layer utilization during training. They empirically confirm that encoder layers generalize across domains while decoder layers are domain-specific - motivating the decoder-only re-distillation strategy in [Limitations](#limitations).
+SVD-based redundancy scores (`src/nanou/redundancy.py`) track layer utilization during training. They empirically confirm that encoder layers generalize across domains while decoder layers are domain-specific - motivating the decoder-only re-distillation strategy in [Limitations](#limitations).
 
 ### Quantization-Aware Distillation
 
@@ -165,7 +165,7 @@ The pinned install is CPU-only so it works everywhere; the test suite runs on CP
 pip install "tensorflow[and-cuda]==2.20.0"
 ```
 
-> Very new GPUs (RTX 50-series / Blackwell, sm_120) aren't covered by stock TensorFlow builds yet - they need a CUDA 12.8+ toolkit and a TensorFlow nightly, typically in a separate conda environment. See NVIDIA's Blackwell compatibility guide.
+> Very new GPUs (RTX 50-series / Blackwell, sm_120) aren't covered by stock TensorFlow builds yet - they need a CUDA 12.8+ toolkit and a TensorFlow nightly, typically in a separate conda environment. Install the package there with `pip install -e ".[gpu,qat]"`, which takes the nightly distribution names instead of the pinned stable ones. See NVIDIA's Blackwell compatibility guide.
 
 For Rust firmware build and deployment, see [`firmware/README.md`](firmware/README.md).
 
@@ -257,14 +257,20 @@ Nano-U/
 |-- config/
 |   |-- base.yaml               # Every default, in one place
 |   +-- presets/                # One file per dataset x (tuned | as submitted)
-|-- src/
-|   |-- models/                 # Nano-U and BU-Net builders
-|   |-- utils/                  # Metrics, QAT wrappers, config loader
+|-- src/nanou/                 # The library; nothing in it is executable
+|   |-- architectures.py        # Nano-U and BU-Net
+|   |-- blocks.py               # Layer builders shared by both architectures
+|   |-- config.py               # Preset resolver and TrainConfig
 |   |-- data.py                 # tf.data pipelines and augmentation
+|   |-- distill.py              # DistillModel - the QAD objective
+|   |-- losses.py               # Tversky loss
+|   |-- qat.py                  # Fake-quantization wrappers
+|   |-- train.py                # Training loops (standard + distillation)
+|   |-- quantize.py             # INT8 TFLite export and calibration
+|   |-- metrics.py              # mIoU and the segmentation metrics
 |   |-- evaluate.py             # Evaluation and visualization
-|   |-- nas.py                  # SVD-based redundancy monitoring
-|   |-- quantize_model.py       # INT8 TFLite export and calibration
-|   +-- train.py                # Training loops (standard + distillation)
+|   |-- redundancy.py           # SVD channel-redundancy monitoring
+|   +-- device/                 # Serial protocol, flashing, on-device eval
 |-- scripts/
 |   |-- train.py                # QAD pipeline (--no-distill for the plain path)
 |   |-- evaluate.py             # Host evaluation (--info for model stats)

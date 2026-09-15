@@ -1,4 +1,4 @@
-"""Core pipeline functions: single training run, NAS search, quantize+benchmark helper."""
+"""Core pipeline functions: a single training run and the quantize+benchmark helper."""
 
 import json
 import shutil
