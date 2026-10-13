@@ -32,6 +32,10 @@ path = "./src/bin/online.rs"
 name = "capture"
 path = "./src/bin/capture.rs"
 
+[[bin]]
+name = "analysis_prof"
+path = "./src/bin/analysis_prof.rs"
+
 [dependencies]
 # Core ESP32-S3 HAL. `psram` maps external RAM so the live-camera framebuffer
 # (online bin) can live there; the inference path stays heap-free.
@@ -59,8 +63,7 @@ nalgebra = { version = "0.32.6", default-features = false, features = [
   "libm",
 ] }
 libm = "0.2"
-microflow = { git = "https://github.com/federico-pizz/microflow-rs", branch = "buffer-reuse", features = ["buffer-reuse"] }
-# microflow = { path = "/home/fefe/Projects/microflow-rs-buffer-reuse", features = ["buffer-reuse"] }
+microflow = { git = "https://github.com/federico-pizz/microflow-rs", branch = "multicore", features = ["buffer-reuse", "multicore", "profiling"] }
 
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

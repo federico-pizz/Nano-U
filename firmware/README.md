@@ -9,15 +9,16 @@ matching MicroFlow branch:
 
 | Pipeline | nano-u branch | MicroFlow branch | features |
 |:---|:---|:---|:---|
-| **Single-core** (this branch) | `main` | `buffer-reuse` | `["buffer-reuse"]` |
-| Multicore | `multicore` | `multicore` | `["buffer-reuse", "multicore", "profiling"]` |
+| Single-core | `main` | `buffer-reuse` | `["buffer-reuse"]` |
+| **Multicore** (this branch) | `multicore` | `multicore` | `["buffer-reuse", "multicore", "profiling"]` |
 
-This `main` branch is the single-core pipeline: every binary runs the whole
-operator graph on the PRO core (core 0). The `buffer-reuse` MicroFlow feature
-ping-pongs intermediate tensors through two reused buffers, collapsing peak
-inference stack without changing the output. For the dual-core variant - which
-brings the APP core (core 1) up to split heavy conv/depthwise layers across both
-cores for lower latency - see the `multicore` branch.
+This `multicore` branch is the dual-core pipeline. Each inference binary calls
+`nanou_esp::start_dual_core!(peripherals.CPU_CTRL)` at boot: the macro (in
+`src/lib.rs`) starts the APP core (core 1) on a 32 KB stack inside MicroFlow's
+`multicore::worker_loop`, waits until the worker is polling and prints
+`WORKER_READY:1`. MicroFlow then splits the output rows of each heavy
+conv/depthwise layer across both cores. The output is bit-identical to the
+single-core pipeline on `main`; only the latency changes.
 
 ## Requirements
 
@@ -37,8 +38,9 @@ source $HOME/export-esp.sh
 | `run` | Continuous inference loop over baked-in images (default `cargo run` target); prints per-frame summary |
 | `inference` | One-shot benchmark over all packed test images; per-image timing, stats, and hex dump |
 | `single_inference` | Single-image inference; streams the output mask over serial for host-side capture |
-| `analysis` | Stack painting + power profiling for Nano-U |
-| `analysis_person_detect` | Same profiling pipeline for the MobileNet-based person-detect baseline |
+| `analysis` | Stack painting + power profiling for Nano-U (dual-core) |
+| `analysis_prof` | Per-layer latency profile (MicroFlow `profiling` feature) |
+| `analysis_person_detect` | Same profiling pipeline for the MobileNet-based person-detect baseline (single-core) |
 
 ## Live camera (`online`)
 
@@ -49,7 +51,7 @@ into the 60x80 model input, run through the network, and reduced to a navigation
 decision printed over serial:
 
 ```text
-FRAME:7 infer=581ms cover L=0.62 C=0.81 R=0.40 -> GO steer=CENTER
+FRAME:7 infer=426ms cover L=0.62 C=0.81 R=0.40 -> GO steer=CENTER
 ```
 
 ```bash
@@ -140,10 +142,11 @@ firmware/
 |   |   |-- inference.rs              # One-shot benchmark over all test images
 |   |   |-- single_inference.rs       # Single-image + serial output
 |   |   |-- analysis.rs               # Stack painting + power profiling
+|   |   |-- analysis_prof.rs          # Per-layer latency profile
 |   |   +-- analysis_person_detect.rs # MobileNet baseline profiling
 |   |-- camera.rs                     # OV2640 live-capture driver (hardware-only)
 |   |-- control.rs                    # Pure navigation policy (host-testable)
-|   +-- lib.rs                        # Shared helpers (quant constants, preprocess, stack utils)
+|   +-- lib.rs                        # Shared helpers (quant constants, preprocess, stack utils, start_dual_core!)
 |-- models/                           # Copied here by build.rs at compile time
 |-- build.rs                          # Quantization param extraction + image packing
 +-- Cargo.toml

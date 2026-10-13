@@ -58,7 +58,12 @@ fn main() -> ! {
     let mut timg1 = TimerGroup::new(peripherals.TIMG1);
     timg1.wdt.disable();
 
-    println!("System Init. Clock: Max. WDT Disabled. Starting ONLINE inference...");
+    // Core 1 starts before the camera; capture and DMA stay on core 0.
+    nanou_esp::start_dual_core!(peripherals.CPU_CTRL);
+
+    println!(
+        "System Init. Clock: Max. WDT Disabled. Dual-core worker up. Starting ONLINE inference..."
+    );
 
     let luts = build_quant_luts();
 

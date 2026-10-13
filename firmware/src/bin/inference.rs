@@ -32,7 +32,9 @@ fn main() -> ! {
     let mut timg1 = TimerGroup::new(peripherals.TIMG1);
     timg1.wdt.disable();
 
-    println!("System Init. Clock: Max. WDT Disabled. Starting Inference...");
+    nanou_esp::start_dual_core!(peripherals.CPU_CTRL);
+
+    println!("System Init. Clock: Max. WDT Disabled. Dual-core worker up. Starting Inference...");
     println!(
         "Quant params: input(scale={}, zp={}) img={}x{}",
         INPUT_SCALE, INPUT_ZERO_POINT, IMG_W, IMG_H

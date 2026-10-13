@@ -163,3 +163,34 @@ pub unsafe fn stack_total() -> usize {
     let stack_start = core::ptr::addr_of!(_stack_start) as usize;
     stack_start - stack_end
 }
+
+/// Starts the ESP32-S3 APP core (core 1) into microflow's dual-core `worker_loop`
+/// and blocks until it is polling, so the very first inference layer already runs
+/// split across both cores. Emits the `WORKER_READY:1` marker once core 1 is up.
+///
+/// A macro, not a fn, because it expands into the **caller's** scope: the
+/// `CpuControl` and returned `AppCoreGuard` are bound there and must outlive every
+/// `predict_quantized` call (dropping the guard parks core 1). Invoke once near the
+/// top of a `-> !` `main`, after `esp_hal::init`. Needs microflow's `multicore`
+/// feature.
+#[macro_export]
+macro_rules! start_dual_core {
+    ($cpu_ctrl:expr) => {
+        // APP-core stack (core 1): sized for one op's row-fill call depth, not the
+        // whole layer chain, so it stays far smaller than core 0's predict() stack.
+        static mut APP_CORE_STACK: ::esp_hal::system::Stack<32768> =
+            ::esp_hal::system::Stack::new();
+        let mut __mc_cpu_control = ::esp_hal::system::CpuControl::new($cpu_ctrl);
+        // Guard must stay alive for the whole run; dropping it parks core 1.
+        let __mc_app_guard = __mc_cpu_control
+            .start_app_core(
+                unsafe { &mut *::core::ptr::addr_of_mut!(APP_CORE_STACK) },
+                || ::microflow::multicore::worker_loop(),
+            )
+            .unwrap();
+        while !::microflow::multicore::worker_ready() {
+            ::core::hint::spin_loop();
+        }
+        ::esp_println::println!("WORKER_READY:1");
+    };
+}

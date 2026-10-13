@@ -31,6 +31,7 @@ BINARIES = [
     "single_inference",
     "online",
     "analysis",
+    "analysis_prof",
     "analysis_person_detect",
     "capture",
 ]

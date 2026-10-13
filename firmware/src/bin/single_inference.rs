@@ -34,7 +34,11 @@ fn main() -> ! {
     let mut timg1 = TimerGroup::new(peripherals.TIMG1);
     timg1.wdt.disable();
 
-    println!("System Init. Clock: Max. WDT Disabled. Starting Single Inference...");
+    nanou_esp::start_dual_core!(peripherals.CPU_CTRL);
+
+    println!(
+        "System Init. Clock: Max. WDT Disabled. Dual-core worker up. Starting Single Inference..."
+    );
     println!("Target Image Index: {}", TARGET_IDX);
 
     const RAW_IMAGES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/input_images.bin"));
