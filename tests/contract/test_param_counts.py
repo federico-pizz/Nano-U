@@ -1,4 +1,4 @@
-"""Section 8.1: the three parameter counts the README quotes.
+"""The three parameter counts the README quotes.
 
 4,212 float32 -> 4,688 once QAT wraps the graph in fake-quant nodes -> 3,357
 stored constants after batch-norm folds into the preceding convolutions at

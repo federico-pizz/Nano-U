@@ -1,4 +1,4 @@
-"""Section 8.1: exported size, INT8 input/output types, and the operator set.
+"""Exported size, INT8 input/output types, and the operator set.
 
 The operator set is read from the flatbuffer's operator table rather than from
 a successful host interpretation: a Flex (SELECT_TF_OPS) fallback runs fine on

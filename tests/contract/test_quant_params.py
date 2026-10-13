@@ -1,4 +1,4 @@
-"""Section 8.1: ``nanou_quant_params.json`` must not change, byte for byte.
+"""``nanou_quant_params.json`` must not change, byte for byte.
 
 ``firmware/build.rs`` reads this file at compile time and bakes the scales,
 zero-points and normalisation constants into the binary as ``f32::from_bits``

@@ -44,10 +44,23 @@ def baseline_dir(baseline_root, dataset):
 
 @pytest.fixture
 def artifacts(dataset):
-    """Shipped artefact paths, skipping the dataset when the model is absent."""
+    """Shipped artefact paths, skipping the dataset when the model is absent.
+
+    The quant-params JSON is not committed, so it is regenerated from the tracked
+    .tflite when missing or older than it, exactly as scripts/flash.py does.
+    """
+    from nanou.config import preset_path
+    from nanou.device.flash import regenerate_quant_params
+    from nanou.preflight import quant_params_are_stale
+
     paths = oracle.artifact_paths(dataset)
     if not os.path.exists(paths["tflite"]):
         pytest.skip(f"{dataset}: no exported model at {paths['tflite']}")
+    models_dir = os.path.dirname(paths["tflite"])
+    if quant_params_are_stale(models_dir, oracle.MODEL_NAME):
+        regenerate_quant_params(
+            paths["tflite"], models_dir, oracle.MODEL_NAME, preset_path(oracle.DATASETS[dataset])
+        )
     return paths
 
 

@@ -1,4 +1,4 @@
-"""Section 8.1: segmentation metrics on the held-out split must not move.
+"""Segmentation metrics on the held-out split must not move.
 
 The models and the split are fixed, so this is not a statistical comparison -
 the same weights over the same 181 frames should give the same numbers. The
@@ -22,7 +22,7 @@ INT8_TOL = 1e-9
 # baseline is captured on whichever device is free, so the tolerance has to
 # clear that. Real evaluation drift is orders of magnitude larger.
 FP32_TOL = 1e-3
-# Section 8.1's headline claim: quantisation is free. 1 mIoU point is the bound
+# The README's headline claim: quantisation is free. 1 mIoU point is the bound
 # the README's "no accuracy loss" wording has to clear.
 QUANT_GAP = 0.01
 

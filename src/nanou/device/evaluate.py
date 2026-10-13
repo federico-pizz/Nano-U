@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from nanou.config import get_project_root, resolve
+from nanou.device.flash import firmware_env
 from nanou.device.protocol import decode_hex_row, parse_idx_us_line, parse_stats_line
 from nanou.device.session import DeviceSession
 from nanou.evaluate import (
@@ -89,12 +90,9 @@ def run_inference_on_device(model_name="nanou", config_path="config/presets/tiny
     """
     config = resolve(path=config_path)
     firmware = get_project_root() / "firmware"
-    env = dict(
-        os.environ,
-        MODEL_NAME=model_name,
-        MODELS_DIR=project_path(config.models_dir or "models"),
-        TEST_IMG_DIR=project_path(config.split_paths["test"]["img"]),
-    )
+    # The same quant-params refresh as scripts/flash.py: build.rs needs the JSON,
+    # which is not committed, and a stale one would bake in another model's scales.
+    env = firmware_env(model=model_name, config_path=config_path)
 
     print(f"[1/3] Building inference binary for {model_name}...")
     subprocess.run(

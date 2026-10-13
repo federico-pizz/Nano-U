@@ -144,7 +144,7 @@ def test_select_best_min_miou_floor_restricts_pool():
 
 
 def test_select_best_raises_when_floor_infeasible():
-    """Section 8.5: the floor used to fall back to the full set, i.e. stop filtering."""
+    """The floor used to fall back to the full set, i.e. stop filtering."""
     rows = [
         {"f0.5_mean": 0.90, "miou_mean": 0.55, "tag": "a"},
         {"f0.5_mean": 0.60, "miou_mean": 0.68, "tag": "b"},

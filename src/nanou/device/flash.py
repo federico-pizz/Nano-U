@@ -44,18 +44,18 @@ def regenerate_quant_params(tflite_path, models_dir, model_name, config_path):
     return out_path
 
 
-def firmware_env(preset="tinyagri", model="nanou", target_img=None):
+def firmware_env(preset="tinyagri", model="nanou", target_img=None, config_path=None):
     """Refresh the quant params and return the environment cargo builds with.
 
-    Sets `MODELS_DIR`, `MODEL_NAME` and `TEST_IMG_DIR` from the preset, on top
-    of the current environment.
+    Sets `MODELS_DIR`, `MODEL_NAME` and `TEST_IMG_DIR` from the preset (or from
+    `config_path`, when given), on top of the current environment.
 
     Raises:
         PreflightError: the preset's model has no exported .tflite.
     """
-    resolved = resolve(preset)
+    resolved = resolve(path=config_path) if config_path else resolve(preset)
     cfg = resolved.for_model(model)
-    tflite = require_tflite_model(cfg.models_dir, cfg.model_name, preset=preset)
+    tflite = require_tflite_model(cfg.models_dir, cfg.model_name, preset=resolved.name)
 
     if quant_params_are_stale(cfg.models_dir, cfg.model_name):
         print(f"Regenerating quant params from {tflite}")

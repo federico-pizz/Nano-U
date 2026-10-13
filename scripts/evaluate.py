@@ -52,9 +52,11 @@ def show_info(model_path, model_name, models_dir):
 
     # quantize_scope + PadToMatch are both required: a QAT-wrapped checkpoint
     # carries tfmot wrapper layers, and every architecture here carries PadToMatch.
+    # The serialization check reloads the model, so it needs them too.
     with tfmot.quantization.keras.quantize_scope():
         with keras.utils.custom_object_scope(CUSTOM_OBJECTS):
             model = keras.models.load_model(model_path, compile=False)
+            serializable = validate_model_serialization(model)
 
     info = get_model_config(model)
     print(f"\n{'=' * 55}")
@@ -64,7 +66,7 @@ def show_info(model_path, model_name, models_dir):
     print(f"   Input shape:     {info['input_shape']}")
     print(f"   Parameters:      {count_parameters(model):,}")
     print(f"   Layers:          {info['layer_count']}")
-    print(f"   Serializable:    {validate_model_serialization(model)}")
+    print(f"   Serializable:    {serializable}")
 
     tflite_path = os.path.join(models_dir, f"{model_name}.tflite")
     if os.path.exists(tflite_path):
