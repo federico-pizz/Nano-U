@@ -525,7 +525,7 @@ def train_model(
     model_path = models_dir / f"{config.model_name}.h5"
 
     # Save the trained model. QAT models are saved with their quantization
-    # wrappers intact; the TFLite converter in quantize_model.py then applies
+    # wrappers intact; the TFLite converter in nanou.quantize then applies
     # PTQ on top of the QAT-trained weights to produce the final INT8 model.
     model_to_save.save(model_path)
     if is_qat_model:

@@ -11,11 +11,9 @@ Selects distillation/augmentation hyperparameters:
     (QAT + distillation), with a **per-fold teacher** so the teacher never sees
     its fold's validation frames either.
 
-Primary selection criterion is **mIoU** - a neutral, balanced overlap metric, so
-the config choice is not circular with Nano-U's conservative (precision-favoring)
-objective: conservatism is designed into the *loss*, not manufactured by the
-selector. The precision-weighted **F0.5** is the tiebreaker and is reported as the
-safety axis; all of F0.5/F1/F2/precision/recall/mIoU/Dice are logged per fold and
+The selection metric is the sweep file's ``select``: mIoU by default, with F0.5
+as the tiebreak, or F0.5/F1/F2 with mIoU as the tiebreak. The shipped sweeps all
+select on F0.5. F0.5/F1/F2/precision/recall/mIoU/Dice are logged per fold and
 aggregated (mean +/- std) into ``cv_results.{csv,json}`` in the output directory.
 
 The grid comes from a sweep file (``sweeps/*.yaml``, read by `load_sweep`).
@@ -48,7 +46,7 @@ from nanou.predictor import load_predictor
 # Pure, unit-testable search logic (no training, no TF state)
 # -----------------------------------------------------------------------------
 
-# Named augmentation regimes -> make_dataset kwargs (the #8 ablation axis).
+# Named augmentation regimes -> make_dataset kwargs.
 AUGMENT_REGIMES: dict[str, dict[str, Any]] = {
     "none": {"augment": False, "augment_params": {}},
     "geometric": {
@@ -104,7 +102,7 @@ def make_config_overrides(
 ) -> dict[str, Any]:
     """Map one grid point to the config_overrides train_model understands.
 
-    CE on/off (#7) is expressed through the existing KD weighting: with the loss
+    CE on/off is expressed through the existing KD weighting: with the loss
     ``(1-alpha)*CE + alpha*distill``, disabling CE is exactly ``alpha = 1.0``.
     The requested alpha is kept (as ``requested_alpha``) for traceability.
 

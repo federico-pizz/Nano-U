@@ -11,7 +11,7 @@
 //! cover the whole pipeline.
 //!
 //! Each frame is emitted as base64 framed by markers consumed by
-//! `../scripts/capture_view.py`:
+//! `../scripts/capture.py`:
 //!
 //! ```text
 //! <TAG>_BEGIN idx=<n> w=<w> h=<h> bytes=<len> fmt=<rgb565|rgb888>

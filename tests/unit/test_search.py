@@ -12,7 +12,7 @@ import pytest
 from nanou import search as cv
 from nanou.config import get_project_root
 
-# -- make_config_overrides / CE->alpha mapping (#7) -----------------------------
+# -- make_config_overrides / CE->alpha mapping ----------------------------------
 
 
 def test_ce_off_forces_alpha_one():

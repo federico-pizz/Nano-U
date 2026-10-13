@@ -1,4 +1,4 @@
-"""Failures raise, and both pipeline paths write one summary schema (section 14, B3).
+"""Failures raise, and both pipeline paths write one summary schema.
 
 Training, export and evaluation are stubbed, so these check the orchestration
 only: what is called, with what, and what lands on disk.

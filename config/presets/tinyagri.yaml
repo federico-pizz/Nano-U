@@ -30,26 +30,23 @@ nanou:
   use_distillation: true
   teacher_model_name: bu_net
   teacher_weights: models/TinyAgri/bu_net.h5
-  # CV stage-2 winner (sweeps/tinyagri-stage2.yaml): best mIoU (0.8609) and
-  # F0.5 (0.9143) over the T x alpha grid. alpha sat at the low edge of the grid
-  # (lower means more weight on the supervised term, the precision-favoring
-  # side); T=0.7 was the mild mIoU pick.
+  # Hyperparameters picked by the CV sweeps in sweeps/. A full rerun put every
+  # pick within run-to-run noise of its alternatives (README, "What the search
+  # found"): good settings, not measurably better ones.
+
+  # Stage 2 (tinyagri-stage2.yaml): mIoU 0.8609, F0.5 0.9143 on the T x alpha grid.
   alpha: 0.3
   temperature: 0.7
 
-  # CV stage-3 winner (sweeps/tinyagri-stage3.yaml): tversky_weight=0.7. F0.5
-  # climbed monotonically with the weight (0.9085 -> 0.9161 over
-  # {0.0, 0.3, 0.5, 0.7}), every weight beating pure BCE. Stage-3b winner
-  # (sweeps/tinyagri-stage3b.yaml): alpha_fp/beta_fn = 0.8/0.2, which led on
-  # both F0.5 (0.9258) and precision (0.9230), with mIoU tied against 0.6/0.4.
-  # F0.5 was still rising at the 0.8 edge, so 0.9/0.1 is the next probe.
+  # Stage 3 (tinyagri-stage3.yaml): F0.5 0.9085 -> 0.9161 over weights
+  # {0.0, 0.3, 0.5, 0.7}. Stage 3b (tinyagri-stage3b.yaml): alpha_fp/beta_fn
+  # 0.8/0.2, F0.5 0.9258. The rerun did not reproduce either gap.
   tversky_weight: 0.7
   tversky_alpha: 0.8
   tversky_beta: 0.2
 
-  # CV stage-1 winner (sweeps/tinyagri-stage1.yaml): the "photometric" regime,
-  # colour jitter only, which held through the stage-2 grid. Spelled out
-  # because an empty augment_params falls back to the "full" regime.
+  # Stage 1 (tinyagri-stage1.yaml): the "photometric" regime, colour jitter
+  # only. Spelled out because an empty augment_params means the "full" regime.
   augment_params:
     flip_prob: 0.0
     max_rotation_deg: 0.0

@@ -1,7 +1,7 @@
 """Unit tests for nanou.redundancy.
 
 The first five also carry the three cases that used to live in the library as a
-self-check returning True/False (section 7.4): the 4-D conv case, the rank-1
+self-check returning True/False: the 4-D conv case, the rank-1
 case and the independent-channels case. Here a failure is reported instead of
 swallowed.
 """

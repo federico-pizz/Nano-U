@@ -15,7 +15,7 @@ The layering is:
 Presets look like this::
 
     extends: base
-    data_root: data/TinyAgri     # the five split paths are derived from it
+    data_root: data/TinyAgri     # the split directories are derived from it
     models_dir: models/TinyAgri
     output_dir: results/TinyAgri
     seed: 98
@@ -44,7 +44,7 @@ import yaml
 RESERVED_KEYS = ("extends", "data", "quantization")
 
 # Split directory layout derived from `data_root`. Changing this changes what a
-# preset means, so it lives here rather than being spelled out in five places.
+# preset means, so it lives here rather than being spelled out at every call site.
 SPLITS = ("train", "val", "test")
 
 # Keys that describe the dataset rather than one model's run. They must agree

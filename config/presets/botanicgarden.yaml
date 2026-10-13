@@ -28,25 +28,23 @@ nanou:
   use_distillation: true
   teacher_model_name: bu_net
   teacher_weights: models/BotanicGarden/bu_net.h5
-  # CV stage-2 winner (sweeps/botanicgarden-stage2.yaml): F0.5 leader (0.9041)
-  # and co-best mIoU (0.8692) over the T x alpha grid. T=4.0 was the interior
-  # peak on both.
+  # Hyperparameters picked by the CV sweeps in sweeps/. A full rerun put every
+  # pick within run-to-run noise of its alternatives (README, "What the search
+  # found"): good settings, not measurably better ones.
+
+  # Stage 2 (botanicgarden-stage2.yaml): F0.5 0.9041, mIoU 0.8692 on the
+  # T x alpha x augmentation grid.
   alpha: 0.3
   temperature: 4.0
 
-  # CV stage-3 winner (sweeps/botanicgarden-stage3.yaml): plain BCE. At T=4.0
-  # every Tversky weight did worse than BCE on both axes (weights
-  # 0.0/0.3/0.5/0.7 -> F0.5 0.9013/0.8959/0.8843/0.8978, mIoU
-  # 0.8672/0.8658/0.8560/0.8574). Unlike TinyAgri, this domain gets nothing
-  # from the precision-favoring blend. alpha/beta are inert at weight 0.0 and
-  # were not swept.
+  # Stage 3 (botanicgarden-stage3.yaml): plain BCE. Weights 0.0/0.3/0.5/0.7
+  # scored F0.5 0.9013/0.8959/0.8843/0.8978. alpha/beta are inert at weight 0.0.
   tversky_weight: 0.0
   tversky_alpha: 0.7
   tversky_beta: 0.3
 
-  # CV stage-2 winner: the "full" regime, geometric flip and rotation plus
-  # colour jitter. Spelled out so the selected regime does not depend on
-  # make_dataset's defaults.
+  # Stage 2: the "full" regime, flip and rotation plus colour jitter. Spelled
+  # out so the regime does not depend on augment_pair's defaults.
   augment_params:
     flip_prob: 0.5
     max_rotation_deg: 20.0

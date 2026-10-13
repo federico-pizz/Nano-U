@@ -115,14 +115,12 @@ The model and quantization parameters are embedded at compile time via `build.rs
 `build.rs` embeds the model's INT8 quantization scales, zero-points, and input
 normalization from a `<MODEL_NAME>_quant_params.json` file sitting next to the `.tflite`
 in `MODELS_DIR`. This JSON is a **generated artifact and is not committed** - without it
-`build.rs` panics. Regenerate it for whichever dataset you're building (run from the repo
-root, inside the Python env), substituting your dataset name for `<dataset>` and the
-matching preset for `<preset>`:
+`build.rs` panics. `scripts/flash.py` regenerates it whenever it is missing or older than
+the `.tflite`, then runs cargo (run from the repo root, inside the Python env):
 
 ```bash
-python -c "import json; from src.quantize_model import extract_quant_params; \
-p = extract_quant_params('models/<dataset>/nanou.tflite', 'config/presets/<preset>.yaml'); \
-json.dump(p, open('models/<dataset>/nanou_quant_params.json', 'w'), indent=2)"
+python scripts/flash.py <binary> --preset <preset>
+python scripts/flash.py <binary> --preset <preset> --build-only
 ```
 
 For the models shipped in this repo the pairs are `BotanicGarden`/`botanicgarden` and

@@ -47,6 +47,7 @@ def export_int8(
     keras_path: str | Path,
     models_dir: str | Path = "models/",
     config_path: str = "config/presets/tinyagri.yaml",
+    calibration: str | None = None,
 ) -> dict[str, Any]:
     """Convert a Keras model to a calibrated INT8 TFLite file.
 
@@ -57,6 +58,10 @@ def export_int8(
     the calibration image directory, the input shape and the normalization
     mean/std. Pointing it at a different config silently calibrates on the wrong
     (or missing) data, which quietly wrecks the INT8 scales.
+
+    calibration overrides the configured calibration source for this export:
+    "images" or "noise". The calibration ablation exports the same model both
+    ways; nothing else should ask for noise.
 
     Returns:
         ``tflite_path``, ``quant_params_path`` and ``size_kb``.
@@ -75,7 +80,9 @@ def export_int8(
         print(f"Copied {keras_path.name} -> {model_dest}")
 
     print(f"Quantizing {keras_path.stem} -> INT8 TFLite...")
-    quant_params_path = quantize_model(str(model_dest), str(tflite_path), config_path=config_path)
+    quant_params_path = quantize_model(
+        str(model_dest), str(tflite_path), config_path=config_path, calibration=calibration
+    )
     size_kb = round(tflite_path.stat().st_size / 1024, 2)
     print(f"TFLite export complete: {tflite_path} ({size_kb} KB)")
     print(f"Quant params saved:     {quant_params_path}")

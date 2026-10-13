@@ -24,7 +24,7 @@ DATASETS = {
 
 MODEL_NAME = "nanou"
 
-# The three parameter counts the README quotes, and section 8.1 pins.
+# The three parameter counts the README quotes.
 FLOAT_PARAMS = 4212  # plain float32 architecture
 QAT_PARAMS = 4688  # after tfmot wraps it in fake-quant nodes
 INT8_PARAMS = 3357  # stored constants in the exported INT8 graph
@@ -35,7 +35,7 @@ def project_root():
 
 
 def artifact_paths(dataset):
-    """The three files section 8.1 talks about, for one dataset."""
+    """The shipped Keras, TFLite and quant-params files for one dataset."""
     root = project_root()
     models_dir = os.path.join(root, "models", dataset)
     return {

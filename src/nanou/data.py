@@ -50,7 +50,7 @@ def sequence_group(path: str) -> str:
     and evaluation reports per-sequence variance. This parses the grouping key
     from the basename for the two dataset naming conventions in use:
 
-      TinyAgri:      ``d6_s1_frame100.png``                       -> ``d6_s1``
+      TinyAgri:      ``Crops_scene1_frame100.png``                -> ``Crops_scene1``
       BotanicGarden: ``img_c54d7a_22290063136_seq_000000_000301`` -> ``seq_000000``
 
     The key is everything up to (and excluding) the trailing frame number. If no
@@ -137,7 +137,7 @@ def augment_pair(
     # tf.data's parallel `map` calls is safe; the alternative - rebuilding layers
     # per element - would be far slower. The rotation layer bakes in
     # `max_rotation_deg`, so it is cached per angle: an in-process sweep over
-    # augmentation regimes (e.g. cv_search with --jobs <= 1) would otherwise
+    # augmentation regimes (e.g. a sweep with --jobs 1) would otherwise
     # silently reuse the first regime's rotation for every later regime.
     if not hasattr(augment_pair, "_flip"):
         augment_pair._flip = layers.RandomFlip("horizontal")

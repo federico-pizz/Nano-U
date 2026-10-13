@@ -1,4 +1,4 @@
-"""Capture the section 8 regression oracle into ``baseline/``.
+"""Capture the regression oracle into ``baseline/``.
 
 Not a test - pytest does not collect it. Run it once, on the code as it stands
 *before* anything moves:
@@ -10,10 +10,9 @@ held-out split with the current code. ``tests/contract/`` then compares the
 repository against what this wrote. ``baseline/`` is gitignored: it is a local
 oracle, not a deliverable.
 
-Section 8 describes the baseline as the output of a fresh low-epoch pipeline
-run. That is not what this does, and deliberately: the numbers section 8.1
-pins are the ones the README quotes, which come from the *shipped* models, and
-a fresh short run would both miss them and overwrite ``models/``. The shipped
+The baseline is not a fresh low-epoch pipeline run, deliberately: the numbers
+it pins are the ones the README quotes, which come from the *shipped* models,
+and a fresh short run would both miss them and overwrite ``models/``. The shipped
 artefacts are the stronger oracle, and capturing them cannot destroy anything.
 """
 
@@ -132,7 +131,7 @@ def main(argv=None):
         "git_revision": git_revision(root),
         "python": sys.version.split()[0],
         "datasets": {name: rec["preset"] for name, rec in records.items()},
-        "note": "section 8 regression oracle; regenerate only on purpose",
+        "note": "regression oracle; regenerate only on purpose",
     }
     with open(os.path.join(out_root, "MANIFEST.json"), "w") as fh:
         json.dump(manifest, fh, indent=2)

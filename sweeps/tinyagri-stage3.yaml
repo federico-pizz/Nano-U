@@ -1,4 +1,4 @@
-# TinyAgri, CV stage 3: how much of the Tversky term, at the stage-2 winner.
+# TinyAgri, CV stage 3: how much of the Tversky term, at the stage-2 pick.
 # Produced tinyagri.yaml's tversky_weight (0.7).
 #
 #   python scripts/sweep.py sweeps/tinyagri-stage3.yaml --preset tinyagri

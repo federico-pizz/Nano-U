@@ -18,8 +18,6 @@ from nanou.architectures import PadToMatch
 from nanou.config import resolve
 from nanou.metrics import BinaryIoU
 
-_custom_objects = {"BinaryIoU": BinaryIoU}
-
 
 def convert_to_tflite_quantized(
     model: keras.Model,
@@ -120,39 +118,28 @@ def extract_quant_params(
     return params
 
 
-def quantize_model(
-    model_path: str,
-    output_path: str,
-    input_shape: tuple[int, ...] | None = None,
-    config_path: str = "config/presets/tinyagri.yaml",
-) -> str:
-    """Load a Keras model, convert it to a quantized TFLite model, and record its scales.
+def calibration_images(config, calibration: str | None = None) -> tuple[list[str], str]:
+    """The images the INT8 scales are calibrated on, and where they came from.
 
-    The quantization parameters are read back out of the produced .tflite and
-    written to a companion JSON file, so the Rust firmware picks up the real
-    values rather than hardcoded ones.
+    `calibration` overrides `quantization.calibration_source` for one export,
+    which is what the calibration ablation varies. "noise" returns no images on
+    purpose: the caller then calibrates on random noise, which is how a model
+    exported without usable calibration data behaves.
 
     Returns:
-        The path of the companion ``_quant_params.json``.
+        The image paths (empty for a noise calibration) and the source name.
 
     Raises:
-        FileNotFoundError: if ``model_path`` does not exist, or if there are no
-            calibration images and noise calibration was not asked for.
-        ValueError: if ``quantization.calibration_split`` is not val or train.
+        ValueError: `calibration` or the configured source is not images/noise,
+            or `quantization.calibration_split` is not val or train.
+        FileNotFoundError: images were asked for and the split holds none, and
+            `quantization.allow_noise_calibration` was not set.
     """
-    config = resolve(path=config_path)
-    if input_shape is None:
-        input_shape = (1, *config.input_shape)
-
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"No model to quantize at {model_path}")
-
-    # QAT models carry tfmot wrappers, so they only load inside quantize_scope.
-    custom_objects = {"BinaryIoU": BinaryIoU, "PadToMatch": PadToMatch}
-    with tfmot.quantization.keras.quantize_scope():
-        with keras.utils.custom_object_scope(custom_objects):
-            model = keras.models.load_model(model_path, compile=False)
-    print(f"Model loaded successfully from {model_path}")
+    source = str(calibration or config.quantization.get("calibration_source", "images")).lower()
+    if source not in ("images", "noise"):
+        raise ValueError(f"calibration source must be 'images' or 'noise', got {source!r}")
+    if source == "noise":
+        return [], "noise"
 
     # Which split calibrates the INT8 scales and zero points. "val" reproduces
     # the published results, but val also picks the checkpoint, so calibration
@@ -164,9 +151,6 @@ def quantize_model(
             f"quantization.calibration_split must be 'val' or 'train', got {calib_split!r}"
         )
     calib_img_dir = config.split_paths[calib_split]["img"]
-
-    mean = np.array(config.normalization["mean"], dtype=np.float32)
-    std = np.array(config.normalization["std"], dtype=np.float32)
 
     img_files = []
     if calib_img_dir and os.path.isdir(calib_img_dir):
@@ -187,6 +171,49 @@ def quantize_model(
             "quantization.allow_noise_calibration: true to calibrate on random "
             "noise anyway (debug only - the resulting INT8 model is not usable)."
         )
+    return img_files, "noise" if not img_files else calib_split
+
+
+def quantize_model(
+    model_path: str,
+    output_path: str,
+    input_shape: tuple[int, ...] | None = None,
+    config_path: str = "config/presets/tinyagri.yaml",
+    calibration: str | None = None,
+) -> str:
+    """Load a Keras model, convert it to a quantized TFLite model, and record its scales.
+
+    The quantization parameters are read back out of the produced .tflite and
+    written to a companion JSON file, so the Rust firmware picks up the real
+    values rather than hardcoded ones.
+
+    Returns:
+        The path of the companion ``_quant_params.json``.
+
+    Raises:
+        FileNotFoundError: if ``model_path`` does not exist, or if there are no
+            calibration images and noise calibration was not asked for.
+        ValueError: if ``calibration`` or ``quantization.calibration_split``
+            holds a value the exporter does not know.
+    """
+    config = resolve(path=config_path)
+    if input_shape is None:
+        input_shape = (1, *config.input_shape)
+
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"No model to quantize at {model_path}")
+
+    # QAT models carry tfmot wrappers, so they only load inside quantize_scope.
+    custom_objects = {"BinaryIoU": BinaryIoU, "PadToMatch": PadToMatch}
+    with tfmot.quantization.keras.quantize_scope():
+        with keras.utils.custom_object_scope(custom_objects):
+            model = keras.models.load_model(model_path, compile=False)
+    print(f"Model loaded successfully from {model_path}")
+
+    img_files, calib_split = calibration_images(config, calibration)
+
+    mean = np.array(config.normalization["mean"], dtype=np.float32)
+    std = np.array(config.normalization["std"], dtype=np.float32)
 
     def representative_data_gen():
         shape_to_gen = list(input_shape)
@@ -194,10 +221,7 @@ def quantize_model(
             shape_to_gen = [1] + shape_to_gen
 
         if img_files:
-            print(
-                f"Calibration using {len(img_files)} images from {calib_img_dir} "
-                f"({calib_split} split)"
-            )
+            print(f"Calibration using {len(img_files)} images ({calib_split} split)")
             for img_path in img_files:
                 img = cv2.imread(img_path)
                 if img is not None:
@@ -209,7 +233,7 @@ def quantize_model(
                     img = np.expand_dims(img, axis=0)
                     yield [img]
         else:
-            # Only reachable with quantization.allow_noise_calibration: true.
+            # A noise calibration, asked for or allowed: see calibration_images.
             print(
                 "Warning: No calibration data found. Using random noise - "
                 "the resulting INT8 model is for debugging only."

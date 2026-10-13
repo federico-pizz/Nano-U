@@ -97,10 +97,9 @@ class DistillModel(keras.Model):
     def _supervised_loss(self, y_true, student_logits):
         """BCE, optionally blended with a precision-favoring Tversky term.
 
-        `tversky_weight = 0.0` is pure BCE, which is what every shipped preset
-        trains with; the blend exists so a student can be made deliberately
-        conservative (alpha_fp > beta_fn penalises a false 'path' pixel harder
-        than a missed one).
+        `tversky_weight = 0.0` is pure BCE. A positive weight makes the student
+        deliberately conservative (alpha_fp > beta_fn penalises a false 'path'
+        pixel harder than a missed one).
         """
         bce_term = self.bce_loss_fn(y_true, student_logits)
         if self.tversky_weight > 0.0:

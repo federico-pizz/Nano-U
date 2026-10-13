@@ -6,17 +6,16 @@
 # export rather than a training run, so they keep their nested shape.
 
 training:
-  # Optimization. epochs=100 and learning_rate=1e-3 are the values the shipped
-  # distillation path uses; every preset sets them explicitly anyway.
+  # Optimization
   epochs: 100
   batch_size: 16
   learning_rate: 1.0e-3
   weight_decay: 0.0
   optimizer: adam
 
-  # Augmentation. An empty augment_params falls back to make_dataset's own
-  # defaults (flip 0.5 + rotation 20 deg), so a preset that wants a specific
-  # regime has to spell it out.
+  # Augmentation. An empty augment_params falls back to augment_pair's defaults
+  # (the "full" regime: flip, rotation and colour jitter), so a preset that wants
+  # a specific regime has to spell it out.
   augment: false
   augment_params: {}
 
@@ -77,32 +76,22 @@ training:
   output_dir: null
 
 data:
-  num_classes: 1            # binary segmentation
-
   # Normalization: (x / 255.0 - mean) / std  ->  [-1, 1]
   normalization:
     mean: [0.5, 0.5, 0.5]
     std: [0.5, 0.5, 0.5]
 
-  # Split fractions used when the dataset was prepared. Recorded, not applied:
-  # the splits already exist on disk under data_root.
-  split:
-    train: 0.7
-    validation: 0.2
-    test: 0.1
-
+# The export is always full-integer INT8 with INT8 input and output; these keys
+# only choose the calibration data.
 quantization:
-  method: dynamic_range     # or "full_integer"
-  representative_dataset_size: 100
   # Split used to calibrate INT8 scales and zero-points. "val" reproduces the
   # published results, but val also selects the checkpoint, so calibration is
   # not independent of model selection; "train" is the conservative choice.
   calibration_split: val    # "val" or "train"
+  # Where the calibration data comes from. "noise" replaces the images with
+  # random noise, which is what an export with no usable calibration data does.
+  # It exists for the calibration ablation; a deployed model uses "images".
+  calibration_source: images  # "images" or "noise"
   # Debug escape hatch: calibrate on random noise when the split has no images.
   # Leave false - a noise-calibrated INT8 model runs but means nothing.
   allow_noise_calibration: false
-  input_type: int8
-  output_type: int8
-  supported_ops:
-    - TFLITE_BUILTINS_INT8
-    - SELECT_TF_OPS
