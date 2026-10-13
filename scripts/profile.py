@@ -1,4 +1,12 @@
-"""Stack and power profiling of the firmware on an attached device."""
+"""Stack and power profiling of the firmware on an attached device.
+
+Builds the `analysis` binary for a preset's model, flashes it, and writes the
+stack and power figures to <output_dir>/hardware/nanou/.
+
+Usage:
+    python scripts/profile.py
+    python scripts/profile.py --preset botanicgarden --voltage 5.0 --current 94
+"""
 
 import argparse
 import json
@@ -7,12 +15,20 @@ import sys
 import time
 from pathlib import Path
 
+from nanou.config import get_project_root, resolve
+from nanou.device.flash import firmware_env
 from nanou.device.profile import plot_stack_usage, run_analysis_on_device
 from nanou.device.protocol import parse_log_output
+from nanou.preflight import PreflightError, require_esp_toolchain, require_espflash
 
 
 def main():
     parser = argparse.ArgumentParser(description="Profile Nano-U on ESP32 hardware")
+    parser.add_argument(
+        "--preset",
+        default="tinyagri",
+        help="config preset from config/presets/ (default: tinyagri)",
+    )
     parser.add_argument(
         "--voltage", type=float, default=None, help="Supply voltage in V (skips interactive prompt)"
     )
@@ -21,17 +37,21 @@ def main():
     )
     args = parser.parse_args()
 
-    script_dir = Path(__file__).parent.resolve()
-    repo_root = script_dir.parent
-    out_dir = repo_root / "results" / "hardware" / "nanou"
+    try:
+        require_esp_toolchain()
+        require_espflash()
+        env = firmware_env(args.preset)
+    except PreflightError as e:
+        raise SystemExit(f"\n{e}") from e
+
+    firmware = get_project_root() / "firmware"
+    out_dir = Path(resolve(args.preset).output_dir or "results") / "hardware" / "nanou"
     out_dir.mkdir(parents=True, exist_ok=True)
     log_file = out_dir / "stack_log.txt"
 
     print("[1/3] Compiling analysis binary...")
     subprocess.run(
-        ["cargo", "build", "--release", "--bin", "analysis"],
-        cwd=repo_root / "firmware",
-        check=True,
+        ["cargo", "build", "--release", "--bin", "analysis"], cwd=firmware, env=env, check=True
     )
 
     print("\n[2/3] Flashing and running analysis...")
@@ -44,7 +64,8 @@ def main():
         success, current_ma, voltage_v = run_analysis_on_device(
             cmd,
             str(log_file),
-            cwd=repo_root / "firmware",
+            cwd=firmware,
+            env=env,
             preset_voltage=args.voltage,
             preset_current=args.current,
         )

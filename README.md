@@ -224,7 +224,7 @@ that is not part of the schema is an error rather than a silent default.
 python scripts/train.py --preset tinyagri
 ```
 
-> Training writes into the preset's `models_dir`, so a run with a shipped preset replaces the tracked `models/<dataset>/nanou.tflite`. To keep the shipped model, copy the preset and point `models_dir` somewhere else.
+> Training writes into the preset's `models_dir`, which for the shipped presets is where the tracked models live. A run that would replace files already there refuses to start and lists them; pass `--overwrite` to replace them, or copy the preset and point `models_dir` somewhere else to keep them.
 
 **Option B - Standard training (no distillation).** Trains teacher and student independently.
 
@@ -282,10 +282,22 @@ To actually rank settings this close, each config needs repeated runs with diffe
 
 Claims that need a training run to settle - QAD against QAT-only, KD-only and PTQ, the distillation temperature with and without the $T^2$ factor, and seed-to-seed variance - live in [`experiments/`](experiments/README.md), one table each.
 
+### Export
+
+Training already exports the student. To re-export a model on its own:
+
+```bash
+python scripts/export.py --preset tinyagri                        # <models_dir>/nanou.h5 -> nanou.tflite
+python scripts/export.py run/nanou.h5 run/nanou.tflite --preset tinyagri
+```
+
+The preset must be the one the model was trained with: it supplies the calibration images and the normalization.
+
 ### On-Device Evaluation
 
 ```bash
 python scripts/device_eval.py nanou --preset tinyagri
+python scripts/profile.py --preset tinyagri    # stack high-water mark and power, to results/<dataset>/hardware/
 ```
 
 ### MCU Deployment

@@ -44,29 +44,17 @@ def regenerate_quant_params(tflite_path, models_dir, model_name, config_path):
     return out_path
 
 
-def build(
-    binary,
-    preset="tinyagri",
-    model="nanou",
-    build_only=False,
-    no_monitor=False,
-    target_img=None,
-    port=None,
-):
-    """Check the preconditions, refresh the quant params, then run cargo.
+def firmware_env(preset="tinyagri", model="nanou", target_img=None):
+    """Refresh the quant params and return the environment cargo builds with.
 
-    Returns cargo's exit code. Raises `PreflightError` when a precondition
-    fails, with a message naming the command that fixes it.
+    Sets `MODELS_DIR`, `MODEL_NAME` and `TEST_IMG_DIR` from the preset, on top
+    of the current environment.
+
+    Raises:
+        PreflightError: the preset's model has no exported .tflite.
     """
-    root = get_project_root()
     resolved = resolve(preset)
     cfg = resolved.for_model(model)
-
-    require_esp_toolchain()
-    if not build_only:
-        require_espflash()
-        require_serial_port(port)
-
     tflite = require_tflite_model(cfg.models_dir, cfg.model_name, preset=preset)
 
     if quant_params_are_stale(cfg.models_dir, cfg.model_name):
@@ -82,6 +70,28 @@ def build(
     env["TEST_IMG_DIR"] = str(Path(cfg.data_root) / "test" / "img")
     if target_img is not None:
         env["TARGET_IMG_IDX"] = str(target_img)
+    return env
+
+
+def build(
+    binary,
+    preset="tinyagri",
+    model="nanou",
+    build_only=False,
+    no_monitor=False,
+    target_img=None,
+    port=None,
+):
+    """Check the preconditions, refresh the quant params, then run cargo.
+
+    Returns cargo's exit code. Raises `PreflightError` when a precondition
+    fails, with a message naming the command that fixes it.
+    """
+    require_esp_toolchain()
+    if not build_only:
+        require_espflash()
+        require_serial_port(port)
+    env = firmware_env(preset, model, target_img)
 
     action = "build" if build_only else "run"
     cmd = ["cargo", action, "--release", "--bin", binary]
@@ -98,4 +108,4 @@ def build(
     # cargo writes straight to the terminal, so flush first or the build output
     # appears above the lines describing the build.
     sys.stdout.flush()
-    return subprocess.run(cmd, cwd=root / "firmware", env=env).returncode
+    return subprocess.run(cmd, cwd=get_project_root() / "firmware", env=env).returncode

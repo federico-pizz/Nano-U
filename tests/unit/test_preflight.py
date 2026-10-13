@@ -15,6 +15,7 @@ from nanou.preflight import (
     quant_params_path,
     require_dataset,
     require_esp_toolchain,
+    require_free_outputs,
     require_keras_model,
     require_model,
     require_serial_port,
@@ -166,3 +167,21 @@ def test_require_teacher_returns_the_checkpoint(tmp_path):
 def test_require_teacher_names_the_training_command(weights):
     with pytest.raises(PreflightError, match="--no-distill --model bu_net --preset tinyagri"):
         require_teacher(weights, preset="tinyagri")
+
+
+# -- overwrite guard -------------------------------------------------------------
+
+
+def test_existing_outputs_name_the_overwrite_rerun(tmp_path):
+    (tmp_path / "nanou.tflite").touch()
+    with pytest.raises(PreflightError, match="--overwrite") as info:
+        require_free_outputs(
+            [tmp_path / "nanou.h5", tmp_path / "nanou.tflite"],
+            rerun="python scripts/train.py --preset x",
+        )
+    assert "nanou.tflite" in str(info.value)
+    assert "nanou.h5" not in str(info.value)
+
+
+def test_free_outputs_pass(tmp_path):
+    require_free_outputs([tmp_path / "nanou.h5"], rerun="python scripts/train.py")

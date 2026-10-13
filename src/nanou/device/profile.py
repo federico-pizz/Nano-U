@@ -45,13 +45,16 @@ def _read_power(preset_voltage, preset_current):
     return voltage_v, current_ma
 
 
-def run_analysis_on_device(cmd, log_file, cwd=None, preset_voltage=None, preset_current=None):
+def run_analysis_on_device(
+    cmd, log_file, cwd=None, env=None, preset_voltage=None, preset_current=None
+):
     """Run the analysis binary until it starts its power loop, teeing its output to a log file.
 
     Args:
         cmd: Command to run, as an argv list.
         log_file: Path the combined output is written to; `parse_log_output` reads it.
         cwd: Working directory for the command.
+        env: Environment for the command; None inherits this process's.
         preset_voltage: Supply voltage in volts, when measured externally.
         preset_current: Supply current in milliamps, when measured externally.
 
@@ -60,7 +63,9 @@ def run_analysis_on_device(cmd, log_file, cwd=None, preset_voltage=None, preset_
         reached POWER_MEASUREMENT_START; the caller decides whether to retry.
     """
     print(f"Executing: {' '.join(cmd)}")
-    with DeviceSession(cmd, cwd=cwd, log_path=log_file, timeout=TIMEOUT_SECONDS) as session:
+    with DeviceSession(
+        cmd, cwd=cwd, env=env, log_path=log_file, timeout=TIMEOUT_SECONDS
+    ) as session:
         for line in session.lines():
             if "POWER_MEASUREMENT_START" in line:
                 voltage_v, current_ma = _read_power(preset_voltage, preset_current)

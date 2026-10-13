@@ -14,7 +14,7 @@ from nanou.architectures import create_nano_u
 from nanou.config import TrainConfig
 from nanou.data import make_dataset
 from nanou.distill import DistillModel
-from nanou.train import train_with_distillation
+from nanou.train import CHECKPOINT_FILE, train_with_distillation
 
 H, W = 60, 80
 
@@ -113,7 +113,7 @@ def test_fit_produces_the_contract_history_keys(tmp_png_dataset, tmp_path):
 
 
 def test_fit_checkpoints_the_student_not_the_wrapper(tmp_png_dataset, tmp_path):
-    """`temp_model.h5` has to be loadable as the student, since that is what gets exported."""
+    """The checkpoint has to be loadable as the student, since that is what gets exported."""
     dataset = _dataset(tmp_png_dataset)
     student = _student()
     train_with_distillation(
@@ -125,7 +125,7 @@ def test_fit_checkpoints_the_student_not_the_wrapper(tmp_png_dataset, tmp_path):
         experiment_dir=str(tmp_path / "run"),
     )
 
-    checkpoint = tmp_path / "models" / "temp_model.h5"
+    checkpoint = tmp_path / "run" / CHECKPOINT_FILE
     assert checkpoint.exists()
     # Loading into a freshly built student proves the file holds the student's
     # topology and not the DistillModel wrapper's.

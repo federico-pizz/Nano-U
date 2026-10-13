@@ -40,10 +40,10 @@ def main():
 
     inf = run_benchmarks(args.model, config_path=config_path)["inference"]
     print("\nFinal Metrics:")
-    print(f"  Avg Latency:    {inf.get('avg_latency_ms', '?'):.2f} ms")
-    print(f"  P99 Latency:    {inf.get('p99_latency_ms', '?'):.2f} ms")
-    print(f"  Throughput:     {inf.get('throughput_fps', '?'):.1f} FPS")
-    print(f"  Total Time:     {inf.get('total_time_sec', '?'):.2f} sec")
+    print(f"  Avg Latency:    {inf['avg_latency_ms']:.2f} ms")
+    print(f"  P99 Latency:    {inf['p99_latency_ms']:.2f} ms")
+    print(f"  Throughput:     {inf['throughput_fps']:.1f} FPS")
+    print(f"  Total Time:     {inf['total_time_sec']:.2f} sec")
     print(f"{'=' * 55}")
 
 

@@ -149,6 +149,25 @@ def require_teacher(teacher_weights, preset: str | None = None) -> Path:
     )
 
 
+def require_free_outputs(paths: Iterable, rerun: str) -> None:
+    """Refuse to start a run that would replace trained models already on disk.
+
+    A shipped preset trains into the directory the tracked models live in, so a
+    run started to try something out would silently replace them.
+
+    Raises:
+        PreflightError: listing the files, naming the rerun with --overwrite.
+    """
+    existing = [Path(p) for p in paths if Path(p).exists()]
+    if existing:
+        listed = "\n".join(f"    {p}" for p in existing)
+        raise _fix(
+            f"This run would overwrite:\n{listed}\n\n"
+            "To keep them, copy the preset and point models_dir somewhere else",
+            f"{rerun} --overwrite",
+        )
+
+
 def quant_params_path(models_dir, model_name: str) -> Path:
     """Where `firmware/build.rs` looks for the calibration parameters."""
     return Path(models_dir) / f"{model_name}_quant_params.json"
@@ -249,6 +268,7 @@ __all__ = [
     "require_keras_model",
     "require_model",
     "require_tflite_model",
+    "require_free_outputs",
     "quant_params_path",
     "quant_params_are_stale",
     "require_esp_toolchain",

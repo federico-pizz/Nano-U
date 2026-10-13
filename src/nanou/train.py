@@ -32,6 +32,10 @@ for _gpu in tf.config.list_physical_devices("GPU"):
 # `train_model` takes them out before resolving, and uses them when present.
 FOLD_KEYS = ("cv_train_img", "cv_train_mask", "cv_val_img", "cv_val_mask")
 
+# Best-epoch checkpoint, written inside the run's own directory so that no other
+# run, concurrent or earlier, can leave one behind for this run to load.
+CHECKPOINT_FILE = "best.h5"
+
 
 def set_global_seed(seed: int | None) -> None:
     """Seed Python, NumPy and TensorFlow RNGs for reproducible runs.
@@ -119,10 +123,8 @@ def train_single_model(
         )
 
     output_dir = experiment_dir
-    # Model checkpoint - always save as temp_model.h5 in models_dir
-    models_dir = Path(config.models_dir or "models")
-    models_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = str(models_dir / "temp_model.h5")
+    Path(experiment_dir).mkdir(parents=True, exist_ok=True)
+    checkpoint_path = str(Path(experiment_dir) / CHECKPOINT_FILE)
 
     callbacks.append(
         keras.callbacks.ModelCheckpoint(
@@ -305,9 +307,8 @@ def train_with_distillation(
     epochs = int(config.epochs)
     batch_size = int(config.batch_size)
 
-    models_dir = Path(config.models_dir or "models")
-    models_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = str(models_dir / "temp_model.h5")
+    Path(experiment_dir).mkdir(parents=True, exist_ok=True)
+    checkpoint_path = str(Path(experiment_dir) / CHECKPOINT_FILE)
 
     print(
         f"\n[TRAIN-KD] student='{student.name}' teacher='{teacher.name}' "
@@ -407,11 +408,13 @@ def train_model(
     experiment_dir.mkdir(parents=True, exist_ok=True)
 
     # A caller can point models_dir elsewhere - the CV harness gives every fold
-    # its own - so concurrent runs never clobber a shared temp_model.h5 or
-    # <model>.h5.
+    # its own - so concurrent runs never clobber a shared <model>.h5.
     if config.models_dir is None:
         config = replace(config, models_dir="models")
     models_dir = Path(config.models_dir)
+
+    checkpoint = experiment_dir / CHECKPOINT_FILE
+    checkpoint.unlink(missing_ok=True)
 
     # Injected fold file lists bypass directory discovery, so a leakage-safe
     # grouped split trains through the exact same code path as a normal run.
@@ -515,11 +518,10 @@ def train_model(
         )
         model_to_save = model
 
-    # Restore best weights before saving if they exist
-    temp_checkpoint = str(models_dir / "temp_model.h5")
-    if os.path.exists(temp_checkpoint):
-        print(f"Loading best weights from {temp_checkpoint} for final save...")
-        model_to_save.load_weights(temp_checkpoint)
+    # Only this run can have written the checkpoint: it was deleted above.
+    if checkpoint.exists():
+        print(f"Loading best weights from {checkpoint} for final save...")
+        model_to_save.load_weights(str(checkpoint))
 
     models_dir.mkdir(parents=True, exist_ok=True)
     model_path = models_dir / f"{config.model_name}.h5"
@@ -531,8 +533,7 @@ def train_model(
     if is_qat_model:
         print(f"QAT model saved to {model_path}")
 
-    if os.path.exists(temp_checkpoint):
-        os.remove(temp_checkpoint)
+    checkpoint.unlink(missing_ok=True)
 
     history_path = experiment_dir / "history.json"
     history_dict = history.history if hasattr(history, "history") else history

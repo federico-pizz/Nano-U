@@ -17,6 +17,10 @@ Two paths, one program:
 
 Both write <results_dir>/summary.json, with the same schema.
 
+The models are written to the preset's models_dir. If that already holds the
+files a run would write - the shipped presets point at the tracked models - the
+run refuses to start unless --overwrite is given.
+
 Usage:
     python scripts/train.py
     python scripts/train.py --preset tinyagri
@@ -29,12 +33,27 @@ import sys
 from pathlib import Path
 
 from nanou.config import preset_path, resolve
-from nanou.pipeline import SUMMARY_FILE, run_pipeline
-from nanou.preflight import PreflightError, require_dataset
+from nanou.pipeline import STUDENT, SUMMARY_FILE, TEACHER, run_pipeline
+from nanou.preflight import (
+    PreflightError,
+    quant_params_path,
+    require_dataset,
+    require_free_outputs,
+)
 
 
 def _miou(report):
     return f"{report['miou']:.4f}" if report else "-"
+
+
+def _outputs(models_dir, models):
+    """Every file the run writes into models_dir. The teacher is never exported."""
+    directory = Path(models_dir or "models")
+    for name in models:
+        yield directory / f"{name}.h5"
+        if name != TEACHER:
+            yield directory / f"{name}.tflite"
+            yield quant_params_path(directory, name)
 
 
 def _print_summary(summary, summary_path):
@@ -75,6 +94,11 @@ def main():
     parser.add_argument(
         "--model", default=None, help="With --no-distill: the model/experiment section to train"
     )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace trained models already in the preset's models_dir",
+    )
     args = parser.parse_args()
 
     if args.model and not args.no_distill:
@@ -86,10 +110,16 @@ def main():
     config = resolve(path=config_path)
     output_dir = config.output_dir or "results/"
 
-    # The one expected failure, reported as its fix. Anything else is a bug or
+    # The expected failures, reported as their fix. Anything else is a bug or
     # a broken config, and is left to arrive with its traceback.
+    models = [args.model] if args.no_distill else [TEACHER, STUDENT]
     try:
         require_dataset(config.data_root, preset=args.preset)
+        if not args.overwrite:
+            require_free_outputs(
+                _outputs(config.models_dir, models),
+                rerun=" ".join(["python scripts/train.py", *sys.argv[1:]]),
+            )
     except PreflightError as e:
         print(f"\n{e}", file=sys.stderr)
         sys.exit(1)

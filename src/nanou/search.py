@@ -432,7 +432,7 @@ def _mark_done(run_dir: str, key: str, **result) -> None:
 
 # Module-level worker jobs so they are picklable by the 'spawn' process pool.
 # Each writes to its own models_dir (passed in config_overrides) so concurrent
-# jobs never clobber a shared temp_model.h5 / <model>.h5.
+# jobs never clobber a shared <model>.h5.
 
 
 def _train_teacher_job(job: dict[str, Any]):
