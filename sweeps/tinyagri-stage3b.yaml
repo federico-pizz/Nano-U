@@ -1,0 +1,23 @@
+# TinyAgri, CV stage 3b: the Tversky alpha_fp/beta_fn split, at weight 0.7.
+# Produced tinyagri.yaml's tversky_alpha/beta (0.8/0.2).
+#
+#   python scripts/sweep.py sweeps/tinyagri-stage3b.yaml --preset tinyagri
+#
+# Rebuilt from results/TinyAgri/cv_tversky/. The saved table has two folds per
+# row, so k is 2 here, not 4. The fold seed is not recorded; 37 is sweep.py's
+# default.
+k: 2
+epochs: 100
+seed: 37
+threshold: 0.5
+select: f0.5
+min_miou: 0.0
+grid:
+  temperature: [0.7]
+  alpha: [0.3]
+  regime: [photometric]
+  ce: [on]
+  tversky:              # on the alpha + beta = 1 line
+    - [0.7, 0.6, 0.4]
+    - [0.7, 0.7, 0.3]
+    - [0.7, 0.8, 0.2]

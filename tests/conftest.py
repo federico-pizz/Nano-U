@@ -1,8 +1,5 @@
 """Shared fixtures for the Nano-U test suite."""
 
-import os
-import tempfile
-
 import cv2
 import numpy as np
 import pytest
@@ -37,7 +34,7 @@ def mask_tensor():
 
 @pytest.fixture(scope="session")
 def logits_tensor():
-    """Raw logit batch (1, H, W, 1) — values outside [0, 1]."""
+    """Raw logit batch (1, H, W, 1) - values outside [0, 1]."""
     rng = np.random.default_rng(2)
     return tf.constant(rng.standard_normal((1, H, W, 1)).astype(np.float32) * 3.0)
 
@@ -69,5 +66,6 @@ def tmp_png_dataset(tmp_path_factory):
 @pytest.fixture(scope="session")
 def nano_u_model():
     """A small Nano-U instance (16-channel) built once per test session."""
-    from src.models.builders import create_nano_u
+    from nanou.architectures import create_nano_u
+
     return create_nano_u(input_shape=(H, W, 3), filters=[4, 8, 16], bottleneck=16)

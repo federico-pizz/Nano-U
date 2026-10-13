@@ -1,0 +1,24 @@
+# Botanic Garden, CV stage 3: how much of the Tversky term, at the tuned T=4.0
+# and at a low-temperature probe (T=0.5). Kept botanicgarden.yaml on plain BCE
+# (tversky_weight 0.0).
+#
+#   python scripts/sweep.py sweeps/botanicgarden-stage3.yaml --preset botanicgarden
+#
+# Rebuilt from results/BotanicGarden/cv_tversky/. The fold seed is not
+# recorded; 37 is sweep.py's default.
+k: 4
+epochs: 100
+seed: 37
+threshold: 0.5
+select: f0.5
+min_miou: 0.0
+grid:
+  temperature: [0.5, 4.0]
+  alpha: [0.3]
+  regime: [full]
+  ce: [on]
+  tversky:              # a bare weight means alpha_fp/beta_fn = 0.7/0.3
+    - 0.0
+    - 0.3
+    - 0.5
+    - 0.7

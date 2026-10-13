@@ -1,0 +1,47 @@
+# Botanic Garden - the configuration as submitted.
+extends: base
+
+data_root: data/BotanicGarden
+models_dir: models/BotanicGarden
+output_dir: results/BotanicGarden
+seed: 98
+
+input_shape: [60, 80, 3]
+early_stopping: true
+patience: 20
+optimizer: adamw
+lr_scheduler: plateau
+lr_plateau_patience: 10
+lr_plateau_factor: 0.2
+min_lr: 1.0e-6
+learning_rate: 1.0e-3
+augment: true
+epochs: 200
+
+nanou:
+  filters: [4, 8, 16]
+  bottleneck: 16
+  decoder_filters: [16, 8, 4]
+  batch_size: 16
+  weight_decay: 1.0e-4
+
+  use_distillation: true
+  teacher_model_name: bu_net
+  teacher_weights: models/BotanicGarden/bu_net.h5
+  # Lower alpha downweights the teacher term; the high temperature softens the
+  # teacher hard, which was the submission's bet on small distant-path regions.
+  alpha: 0.3
+  temperature: 8.0
+
+  # No tversky block in the submission, so the loss is plain BCE.
+
+  qat_enabled: true
+  track_redundancy: true
+  redundancy_layers: [enc1a_dw, bottleneck_a_dw, dec2_conv_b_pw]
+
+bu_net:
+  filters: [64, 128, 256, 512, 1024]
+  bottleneck: 1024
+  decoder_filters: [512, 256, 128, 64]
+  batch_size: 32
+  weight_decay: 1.0e-3

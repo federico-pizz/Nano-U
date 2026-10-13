@@ -9,12 +9,16 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
-from src.data import (
-    sorted_by_frame, make_dataset, augment_pair, sequence_group, grouped_kfold,
+from nanou.data import (
+    augment_pair,
+    grouped_kfold,
+    make_dataset,
+    sequence_group,
+    sorted_by_frame,
 )
 
+# -- grouped_kfold (leakage-safe folds) ---------------------------------------
 
-# ── grouped_kfold (leakage-safe folds) ───────────────────────────────────────
 
 def _groups_from(seqs_with_counts):
     g = []
@@ -56,16 +60,15 @@ def test_grouped_kfold_raises_on_k_lt_2():
         grouped_kfold(_groups_from([("a", 2), ("b", 2)]), k=1)
 
 
-# ── sequence_group (leakage-safe CV grouping) ────────────────────────────────
+# -- sequence_group (leakage-safe CV grouping) --------------------------------
+
 
 def test_sequence_group_tinyagri():
     assert sequence_group("d6_s1_frame100.png") == "d6_s1"
 
 
 def test_sequence_group_botanicgarden():
-    assert sequence_group(
-        "img_c54d7a_22290063136_seq_000000_000301.tif"
-    ) == "seq_000000"
+    assert sequence_group("img_c54d7a_22290063136_seq_000000_000301.tif") == "seq_000000"
 
 
 def test_sequence_group_bare_trailing_int_with_path():
@@ -82,7 +85,8 @@ def test_sequence_group_keeps_distinct_scenes_apart():
     assert a != b  # different scenes must not collapse into one CV group
 
 
-# ── sorted_by_frame ──────────────────────────────────────────────────────────
+# -- sorted_by_frame ----------------------------------------------------------
+
 
 def test_sorted_by_frame_numeric_not_lexicographic():
     files = ["frame_10.png", "frame_2.png", "frame_9.png"]
@@ -102,12 +106,32 @@ def test_sorted_by_frame_with_path_prefix():
     assert result[1].endswith("020.png")
 
 
-# ── make_dataset ─────────────────────────────────────────────────────────────
+def test_sorted_by_frame_breaks_ties_by_name():
+    """Frame numbers repeat across sequences; the name decides, whatever the listing order.
+
+    build.rs sorts the same way. If the two disagree on a tie, device output i
+    gets scored against the wrong mask.
+    """
+    files = [
+        "Tomatoes_scene2_frame490.png",
+        "Crops_scene1_frame490.png",
+        "Crops_scene1_frame12.png",
+    ]
+    expected = [
+        "Crops_scene1_frame12.png",
+        "Crops_scene1_frame490.png",
+        "Tomatoes_scene2_frame490.png",
+    ]
+    assert sorted_by_frame(files) == expected
+    assert sorted_by_frame(list(reversed(files))) == expected
+
+
+# -- make_dataset -------------------------------------------------------------
+
 
 def test_make_dataset_output_shape(tmp_png_dataset):
     imgs, masks = tmp_png_dataset["imgs"], tmp_png_dataset["masks"]
-    ds = make_dataset(imgs, masks, batch_size=2, shuffle=False, augment=False,
-                      target_size=(60, 80))
+    ds = make_dataset(imgs, masks, batch_size=2, shuffle=False, augment=False, target_size=(60, 80))
     batch_img, batch_mask = next(iter(ds))
     assert batch_img.shape == (2, 60, 80, 3)
     assert batch_mask.shape == (2, 60, 80, 1)
@@ -116,8 +140,16 @@ def test_make_dataset_output_shape(tmp_png_dataset):
 def test_make_dataset_normalization_range(tmp_png_dataset):
     """After normalization with mean=0.5, std=0.5 pixel values should be in ~[-1, 1]."""
     imgs, masks = tmp_png_dataset["imgs"], tmp_png_dataset["masks"]
-    ds = make_dataset(imgs, masks, batch_size=4, shuffle=False, augment=False,
-                      target_size=(60, 80), mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    ds = make_dataset(
+        imgs,
+        masks,
+        batch_size=4,
+        shuffle=False,
+        augment=False,
+        target_size=(60, 80),
+        mean=[0.5, 0.5, 0.5],
+        std=[0.5, 0.5, 0.5],
+    )
     batch_img, _ = next(iter(ds))
     vals = batch_img.numpy()
     assert vals.min() >= -1.1
@@ -127,18 +159,16 @@ def test_make_dataset_normalization_range(tmp_png_dataset):
 def test_make_dataset_no_shuffle_order(tmp_png_dataset):
     """With shuffle=False the dataset must yield images in sorted order."""
     imgs, masks = tmp_png_dataset["imgs"], tmp_png_dataset["masks"]
-    ds = make_dataset(imgs, masks, batch_size=1, shuffle=False, augment=False,
-                      target_size=(60, 80))
+    ds = make_dataset(imgs, masks, batch_size=1, shuffle=False, augment=False, target_size=(60, 80))
     first_run = [b[0].numpy() for b, _ in ds]
     second_run = [b[0].numpy() for b, _ in ds]
-    for a, b in zip(first_run, second_run):
+    for a, b in zip(first_run, second_run, strict=True):
         np.testing.assert_array_equal(a, b)
 
 
 def test_make_dataset_dtype(tmp_png_dataset):
     imgs, masks = tmp_png_dataset["imgs"], tmp_png_dataset["masks"]
-    ds = make_dataset(imgs, masks, batch_size=2, shuffle=False, augment=False,
-                      target_size=(60, 80))
+    ds = make_dataset(imgs, masks, batch_size=2, shuffle=False, augment=False, target_size=(60, 80))
     img_batch, mask_batch = next(iter(ds))
     assert img_batch.dtype == tf.float32
     assert mask_batch.dtype == tf.float32
@@ -147,11 +177,18 @@ def test_make_dataset_dtype(tmp_png_dataset):
 def test_make_dataset_unknown_augment_kwarg_raises(tmp_png_dataset):
     imgs, masks = tmp_png_dataset["imgs"], tmp_png_dataset["masks"]
     with pytest.raises(ValueError, match="Unknown augmentation kwargs"):
-        make_dataset(imgs, masks, batch_size=2, shuffle=False, augment=True,
-                     target_size=(60, 80), nonexistent_param=0.5)
+        make_dataset(
+            imgs,
+            masks,
+            batch_size=2,
+            shuffle=False,
+            augment=True,
+            target_size=(60, 80),
+            nonexistent_param=0.5,
+        )
 
 
-# ── image ↔ mask alignment ───────────────────────────────────────────────────
+# -- image <-> mask alignment ---------------------------------------------------
 #
 # make_dataset must pair each image with the mask sharing its basename, NOT by
 # position. Independent sorting + positional zipping is fragile because
@@ -161,6 +198,7 @@ def test_make_dataset_unknown_augment_kwarg_raises(tmp_png_dataset):
 #
 # Encoding trick: each pair's image AND mask are painted a solid value equal to
 # the pair's id, so after loading we can recover both ids and assert they match.
+
 
 def _write_solid_png(path, value, channels):
     shape = (60, 80, 3) if channels == 3 else (60, 80)
@@ -175,7 +213,7 @@ def _build_pair_dir(tmp_path, names, ids):
     img_dir.mkdir()
     mask_dir.mkdir()
     img_paths, mask_paths = [], []
-    for name, id_ in zip(names, ids):
+    for name, id_ in zip(names, ids, strict=True):
         ip, mp = img_dir / f"{name}.png", mask_dir / f"{name}.png"
         _write_solid_png(ip, id_, channels=3)
         _write_solid_png(mp, id_, channels=1)
@@ -187,7 +225,7 @@ def _build_pair_dir(tmp_path, names, ids):
 def _recover_pairs(ds):
     """Recover per-item (img_id, mask_id) from the solid pixel values.
 
-    Built with mean=0, std=1 so a value v survives as v/255; ×255 recovers v.
+    Built with mean=0, std=1 so a value v survives as v/255; x255 recovers v.
     """
     pairs = []
     for img_b, mask_b in ds:
@@ -199,10 +237,10 @@ def _recover_pairs(ds):
 
 
 def test_make_dataset_pairs_by_basename_not_position(tmp_path):
-    """Right image ↔ right mask even when the two lists are enumerated in
+    """Right image <-> right mask even when the two lists are enumerated in
     different orders and frame numbers collide across 'scenes'."""
     # sceneA_frameK and sceneB_frameK both reduce to frame number K under
-    # sorted_by_frame — the exact collision present in the real datasets.
+    # sorted_by_frame - the exact collision present in the real datasets.
     names = [f"sceneA_frame{k}" for k in range(4)] + [f"sceneB_frame{k}" for k in range(4)]
     ids = list(range(4)) + [10 + k for k in range(4)]
     imgs, masks = _build_pair_dir(tmp_path, names, ids)
@@ -211,8 +249,9 @@ def test_make_dataset_pairs_by_basename_not_position(tmp_path):
     random.Random(1).shuffle(imgs)
     random.Random(2).shuffle(masks)
 
-    ds = make_dataset(imgs, masks, batch_size=3, shuffle=False, augment=False,
-                      mean=[0, 0, 0], std=[1, 1, 1])
+    ds = make_dataset(
+        imgs, masks, batch_size=3, shuffle=False, augment=False, mean=[0, 0, 0], std=[1, 1, 1]
+    )
     pairs = _recover_pairs(ds)
     assert len(pairs) == len(names)
     for img_id, mask_id in pairs:
@@ -241,18 +280,18 @@ def test_make_dataset_no_shared_basename_raises(tmp_path):
 
 
 def test_make_dataset_extra_masks_ignored(tmp_path):
-    """More masks than images is fine — pairing is driven by the images."""
+    """More masks than images is fine - pairing is driven by the images."""
     names = [f"frame_{k:03d}" for k in range(5)]
     imgs, masks = _build_pair_dir(tmp_path, names, list(range(5)))
-    ds = make_dataset(imgs[:3], masks, batch_size=2, shuffle=False,
-                      mean=[0, 0, 0], std=[1, 1, 1])
+    ds = make_dataset(imgs[:3], masks, batch_size=2, shuffle=False, mean=[0, 0, 0], std=[1, 1, 1])
     pairs = _recover_pairs(ds)
     assert len(pairs) == 3
     for img_id, mask_id in pairs:
         assert img_id == mask_id
 
 
-# ── augment_pair ─────────────────────────────────────────────────────────────
+# -- augment_pair -------------------------------------------------------------
+
 
 def test_augment_pair_same_spatial_transform():
     """Image and mask must receive identical spatial transforms.
@@ -273,14 +312,13 @@ def test_augment_pair_same_spatial_transform():
 
     for seed in range(10):
         tf.random.set_seed(seed)
-        # No rotation — only flip and mild color jitter (bimodal 0/1 image survives)
+        # No rotation - only flip and mild color jitter (bimodal 0/1 image survives)
         aug_img, aug_mask = augment_pair(img, mask, flip_prob=0.5, max_rotation_deg=0.0)
         # Binarize image (channel 0) and mask the same way
-        img_fg = (aug_img.numpy()[..., 0] > 0.5)
-        mask_fg = (aug_mask.numpy()[..., 0] > 0.5)
+        img_fg = aug_img.numpy()[..., 0] > 0.5
+        mask_fg = aug_mask.numpy()[..., 0] > 0.5
         np.testing.assert_array_equal(
-            img_fg, mask_fg,
-            err_msg=f"seed={seed}: image and mask spatial transforms differ"
+            img_fg, mask_fg, err_msg=f"seed={seed}: image and mask spatial transforms differ"
         )
 
 
@@ -293,17 +331,19 @@ def test_augment_pair_mask_stays_binary():
     assert unique <= {0.0, 1.0}
 
 
-# ── seeded shuffle / reproducibility ─────────────────────────────────────────
+# -- seeded shuffle / reproducibility -----------------------------------------
+
 
 def test_make_dataset_seeded_shuffle_is_reproducible(tmp_path):
-    """Same seed → identical epoch order, and pairing survives the shuffle."""
+    """Same seed -> identical epoch order, and pairing survives the shuffle."""
     names = [f"frame_{k:03d}" for k in range(12)]
     ids = list(range(12))
     imgs, masks = _build_pair_dir(tmp_path, names, ids)
 
     def order(seed):
-        ds = make_dataset(imgs, masks, batch_size=4, shuffle=True, seed=seed,
-                          mean=[0, 0, 0], std=[1, 1, 1])
+        ds = make_dataset(
+            imgs, masks, batch_size=4, shuffle=True, seed=seed, mean=[0, 0, 0], std=[1, 1, 1]
+        )
         return _recover_pairs(ds)
 
     run_a = order(123)
@@ -321,14 +361,16 @@ def test_make_dataset_different_seed_changes_order(tmp_path):
     imgs, masks = _build_pair_dir(tmp_path, names, list(range(16)))
 
     def order(seed):
-        ds = make_dataset(imgs, masks, batch_size=4, shuffle=True, seed=seed,
-                          mean=[0, 0, 0], std=[1, 1, 1])
+        ds = make_dataset(
+            imgs, masks, batch_size=4, shuffle=True, seed=seed, mean=[0, 0, 0], std=[1, 1, 1]
+        )
         return [img_id for img_id, _ in _recover_pairs(ds)]
 
     assert order(1) != order(2), "different seeds should shuffle differently"
 
 
-# ── Python ↔ Rust frame-ordering parity ──────────────────────────────────────
+# -- Python <-> Rust frame-ordering parity --------------------------------------
+
 
 def _rust_frame_key(filename):
     """Faithful transcription of the sort key in firmware/build.rs:118-125:
@@ -343,8 +385,8 @@ def _rust_frame_key(filename):
     so the two orderings MUST agree on the real processed filenames.
     """
     stem = os.path.splitext(os.path.basename(filename))[0]
-    last = stem.split('_')[-1]
-    stripped = re.sub(r'^\D+', '', last)          # strip leading non-digits
+    last = stem.split("_")[-1]
+    stripped = re.sub(r"^\D+", "", last)  # strip leading non-digits
     return int(stripped) if stripped.isdigit() else 0
 
 
@@ -363,7 +405,9 @@ def test_sorted_by_frame_matches_build_rs_ordering():
         "Tomatoes_scene1_frame100.png",
         "Tomatoes_scene2_frame2.png",
         # bare-numeric and frameN variants
-        "frame500.png", "frame20.png", "0421.png",
+        "frame500.png",
+        "frame20.png",
+        "0421.png",
     ]
     shuffled = names[:]
     random.Random(0).shuffle(shuffled)
@@ -380,7 +424,7 @@ def test_augment_pair_rotation_is_cached_per_angle():
     an in-process sweep over augmentation regimes silently reused the first
     regime's rotation for every later regime.
     """
-    from src.data import augment_pair
+    from nanou.data import augment_pair
 
     img = tf.random.uniform((16, 16, 3))
     mask = tf.cast(tf.random.uniform((16, 16, 1)) > 0.5, tf.float32)
@@ -397,10 +441,18 @@ def test_augment_pair_rotation_is_cached_per_angle():
 
 def test_augment_pair_zero_rotation_is_identity():
     """max_rotation_deg=0 skips the resample entirely."""
-    from src.data import augment_pair
+    from nanou.data import augment_pair
 
     img = tf.random.uniform((16, 16, 3))
     mask = tf.cast(tf.random.uniform((16, 16, 1)) > 0.5, tf.float32)
-    out_img, _ = augment_pair(img, mask, flip_prob=0.0, max_rotation_deg=0.0,
-                              brightness=0.0, contrast=0.0, saturation=0.0, hue=0.0)
+    out_img, _ = augment_pair(
+        img,
+        mask,
+        flip_prob=0.0,
+        max_rotation_deg=0.0,
+        brightness=0.0,
+        contrast=0.0,
+        saturation=0.0,
+        hue=0.0,
+    )
     np.testing.assert_allclose(out_img.numpy(), img.numpy())

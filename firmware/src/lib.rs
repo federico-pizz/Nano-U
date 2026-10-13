@@ -53,20 +53,20 @@ pub const fn str_to_i32_const(s: &str) -> i32 {
 }
 
 // Quantization parameters (emitted by build.rs from _quant_params.json)
-pub const INPUT_SCALE: f32      = f32::from_bits(parse_u32_const(env!("NANO_U_INPUT_SCALE_BITS")));
-pub const INPUT_ZERO_POINT: i32 = str_to_i32_const(env!("NANO_U_INPUT_ZERO_POINT"));
-pub const IMG_H: usize          = parse_u32_const(env!("NANO_U_IMG_H")) as usize;
-pub const IMG_W: usize          = parse_u32_const(env!("NANO_U_IMG_W")) as usize;
+pub const INPUT_SCALE: f32      = f32::from_bits(parse_u32_const(env!("NANOU_INPUT_SCALE_BITS")));
+pub const INPUT_ZERO_POINT: i32 = str_to_i32_const(env!("NANOU_INPUT_ZERO_POINT"));
+pub const IMG_H: usize          = parse_u32_const(env!("NANOU_IMG_H")) as usize;
+pub const IMG_W: usize          = parse_u32_const(env!("NANOU_IMG_W")) as usize;
 pub const IMG_SIZE: usize       = IMG_H * IMG_W * 3;
-pub const NUM_IMAGES: usize     = parse_u32_const(env!("NANO_U_NUM_IMAGES")) as usize;
-pub const MEAN_R: f32 = f32::from_bits(parse_u32_const(env!("NANO_U_MEAN_R_BITS")));
-pub const MEAN_G: f32 = f32::from_bits(parse_u32_const(env!("NANO_U_MEAN_G_BITS")));
-pub const MEAN_B: f32 = f32::from_bits(parse_u32_const(env!("NANO_U_MEAN_B_BITS")));
-pub const STD_R: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_R_BITS")));
-pub const STD_G: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_G_BITS")));
-pub const STD_B: f32  = f32::from_bits(parse_u32_const(env!("NANO_U_STD_B_BITS")));
+pub const NUM_IMAGES: usize     = parse_u32_const(env!("NANOU_NUM_IMAGES")) as usize;
+pub const MEAN_R: f32 = f32::from_bits(parse_u32_const(env!("NANOU_MEAN_R_BITS")));
+pub const MEAN_G: f32 = f32::from_bits(parse_u32_const(env!("NANOU_MEAN_G_BITS")));
+pub const MEAN_B: f32 = f32::from_bits(parse_u32_const(env!("NANOU_MEAN_B_BITS")));
+pub const STD_R: f32  = f32::from_bits(parse_u32_const(env!("NANOU_STD_R_BITS")));
+pub const STD_G: f32  = f32::from_bits(parse_u32_const(env!("NANOU_STD_G_BITS")));
+pub const STD_B: f32  = f32::from_bits(parse_u32_const(env!("NANOU_STD_B_BITS")));
 
-/// Builds per-channel [0..255] → i8 lookup tables for INT8 image preprocessing.
+/// Builds per-channel [0..255] -> i8 lookup tables for INT8 image preprocessing.
 pub fn build_quant_luts() -> ([i8; 256], [i8; 256], [i8; 256]) {
     let mut lut_r = [0i8; 256];
     let mut lut_g = [0i8; 256];

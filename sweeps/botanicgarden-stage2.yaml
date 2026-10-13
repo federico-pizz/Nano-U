@@ -1,0 +1,19 @@
+# Botanic Garden, CV stage 2: distillation temperature x alpha, over the two
+# regimes stage 1 left standing. Produced botanicgarden.yaml's temperature
+# (4.0), alpha (0.3) and "full" regime.
+#
+#   python scripts/sweep.py sweeps/botanicgarden-stage2.yaml --preset botanicgarden
+#
+# Rebuilt from results/BotanicGarden/cv/. The fold seed is not recorded; 37 is
+# sweep.py's default.
+k: 4
+epochs: 100
+seed: 37
+threshold: 0.5
+select: f0.5
+min_miou: 0.0
+grid:
+  temperature: [2.0, 4.0, 8.0]
+  alpha: [0.3, 0.5, 0.7]
+  regime: [full, photometric]
+  ce: [on]

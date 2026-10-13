@@ -1,0 +1,68 @@
+# TinyAgri - the tuned configuration. This is what the current headline numbers
+# were produced with; tinyagri-paper.yaml is the submission-time one.
+extends: base
+
+data_root: data/TinyAgri     # the six split directories are derived from this
+models_dir: models/TinyAgri
+output_dir: results/TinyAgri
+seed: 98
+
+input_shape: [60, 80, 3]
+early_stopping: true
+patience: 20
+optimizer: adamw
+lr_scheduler: plateau
+lr_plateau_patience: 10
+lr_plateau_factor: 0.2
+min_lr: 1.0e-6
+learning_rate: 1.0e-3
+augment: true
+epochs: 200
+
+# Student - the model that ships to the MCU.
+nanou:
+  filters: [4, 8, 16]
+  bottleneck: 16
+  decoder_filters: [16, 8, 4]
+  batch_size: 16
+  weight_decay: 1.0e-4
+
+  use_distillation: true
+  teacher_model_name: bu_net
+  teacher_weights: models/TinyAgri/bu_net.h5
+  # Hyperparameters picked by the CV sweeps in sweeps/. A full rerun put every
+  # pick within run-to-run noise of its alternatives (README, "What the search
+  # found"): good settings, not measurably better ones.
+
+  # Stage 2 (tinyagri-stage2.yaml): mIoU 0.8609, F0.5 0.9143 on the T x alpha grid.
+  alpha: 0.3
+  temperature: 0.7
+
+  # Stage 3 (tinyagri-stage3.yaml): F0.5 0.9085 -> 0.9161 over weights
+  # {0.0, 0.3, 0.5, 0.7}. Stage 3b (tinyagri-stage3b.yaml): alpha_fp/beta_fn
+  # 0.8/0.2, F0.5 0.9258. The rerun did not reproduce either gap.
+  tversky_weight: 0.7
+  tversky_alpha: 0.8
+  tversky_beta: 0.2
+
+  # Stage 1 (tinyagri-stage1.yaml): the "photometric" regime, colour jitter
+  # only. Spelled out because an empty augment_params means the "full" regime.
+  augment_params:
+    flip_prob: 0.0
+    max_rotation_deg: 0.0
+    brightness: 0.2
+    contrast: 0.2
+    saturation: 0.2
+    hue: 0.05
+
+  qat_enabled: true
+  track_redundancy: true
+  redundancy_layers: [enc1a_dw, bottleneck_a_dw, dec2_conv_b_pw]
+
+# Teacher - trained on the host only, never quantized, never deployed.
+bu_net:
+  filters: [64, 128, 256, 512, 1024]
+  bottleneck: 1024
+  decoder_filters: [512, 256, 128, 64]
+  batch_size: 32
+  weight_decay: 5.0e-3

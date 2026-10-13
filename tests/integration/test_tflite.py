@@ -4,10 +4,10 @@ Verifies that the Nano-U model converts cleanly to TFLite and only uses
 operations supported by the microflow-rs firmware inference engine.
 """
 
-import tensorflow as tf
 import pytest
+import tensorflow as tf
 
-from src.models import create_nano_u
+from nanou.architectures import create_nano_u
 
 # Ops supported by microflow-rs (based on firmware source analysis)
 MICROFLOW_SUPPORTED_OPS = {

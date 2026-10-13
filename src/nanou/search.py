@@ -1,0 +1,691 @@
+"""Leakage-safe cross-validation hyperparameter search for Nano-U.
+
+Selects distillation/augmentation hyperparameters:
+
+  * Folds are built by whole capture sequence (``sequence_group``) with
+    :func:`nanou.data.grouped_kfold`, so no scene is split across the train and
+    validation side of a fold - adjacent near-duplicate frames cannot leak.
+  * The search runs over the **pooled train+val** frames only. The test split is
+    never touched here; it is measured once, afterwards, by ``nanou.evaluate.evaluate``.
+  * Each (fold, config) trains through the normal ``run_training`` code path
+    (QAT + distillation), with a **per-fold teacher** so the teacher never sees
+    its fold's validation frames either.
+
+The selection metric is the sweep file's ``select``: mIoU by default, with F0.5
+as the tiebreak, or F0.5/F1/F2 with mIoU as the tiebreak. The shipped sweeps all
+select on F0.5. F0.5/F1/F2/precision/recall/mIoU/Dice are logged per fold and
+aggregated (mean +/- std) into ``cv_results.{csv,json}`` in the output directory.
+
+The grid comes from a sweep file (``sweeps/*.yaml``, read by `load_sweep`).
+This is built to run unattended for hours. Example:
+
+    python scripts/sweep.py sweeps/tinyagri-stage3.yaml --preset tinyagri --jobs 3
+
+A sweep resumes: every finished run leaves a ``done.json`` behind, so the same
+command run again into the same output directory trains only what is missing.
+"""
+
+import hashlib
+import itertools
+import json
+import os
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import yaml
+
+from nanou.config import ResolvedConfig, resolve, resolve_path
+from nanou.data import grouped_kfold, make_dataset, sequence_group, sorted_by_frame
+from nanou.metrics import compute_segmentation_metrics
+from nanou.pipeline import run_training
+from nanou.predictor import load_predictor
+
+# -----------------------------------------------------------------------------
+# Pure, unit-testable search logic (no training, no TF state)
+# -----------------------------------------------------------------------------
+
+# Named augmentation regimes -> make_dataset kwargs.
+AUGMENT_REGIMES: dict[str, dict[str, Any]] = {
+    "none": {"augment": False, "augment_params": {}},
+    "geometric": {
+        "augment": True,
+        "augment_params": {
+            "flip_prob": 0.5,
+            "max_rotation_deg": 20.0,
+            "brightness": 0.0,
+            "contrast": 0.0,
+            "saturation": 0.0,
+            "hue": 0.0,
+        },
+    },
+    "photometric": {
+        "augment": True,
+        "augment_params": {
+            "flip_prob": 0.0,
+            "max_rotation_deg": 0.0,
+            "brightness": 0.2,
+            "contrast": 0.2,
+            "saturation": 0.2,
+            "hue": 0.05,
+        },
+    },
+    "full": {
+        "augment": True,
+        "augment_params": {
+            "flip_prob": 0.5,
+            "max_rotation_deg": 20.0,
+            "brightness": 0.2,
+            "contrast": 0.2,
+            "saturation": 0.2,
+            "hue": 0.05,
+        },
+    },
+}
+
+
+# Keys a grid point carries for the results table only. `make_config_overrides`
+# writes them next to the real overrides so every row says what was asked for;
+# they are taken out before training, since they are not part of the schema.
+ROW_ONLY_KEYS = ("ce_enabled", "requested_alpha", "augment_regime")
+
+
+def make_config_overrides(
+    temperature: float,
+    alpha: float,
+    regime: str,
+    ce_enabled: bool,
+    tversky_weight: float = 0.0,
+    tversky_alpha: float = 0.7,
+    tversky_beta: float = 0.3,
+) -> dict[str, Any]:
+    """Map one grid point to the config_overrides train_model understands.
+
+    CE on/off is expressed through the existing KD weighting: with the loss
+    ``(1-alpha)*CE + alpha*distill``, disabling CE is exactly ``alpha = 1.0``.
+    The requested alpha is kept (as ``requested_alpha``) for traceability.
+
+    ``tversky_weight`` (default 0.0 = pure BCE) blends the precision-favoring
+    Tversky term into the student's supervised loss
+    (``(1-w)*BCE + w*Tversky(alpha_fp, beta_fn)``). It is always recorded on the
+    row; the loss-shaping keys are only injected when the term is active so a
+    weight of 0 reproduces the legacy BCE config byte-for-byte.
+    """
+    if regime not in AUGMENT_REGIMES:
+        raise ValueError(f"unknown regime {regime!r}; choose from {sorted(AUGMENT_REGIMES)}")
+    reg = AUGMENT_REGIMES[regime]
+    effective_alpha = alpha if ce_enabled else 1.0
+    cfg = {
+        "temperature": float(temperature),
+        "alpha": float(effective_alpha),
+        "ce_enabled": bool(ce_enabled),
+        "requested_alpha": float(alpha),
+        "augment_regime": regime,
+        "augment": reg["augment"],
+        "augment_params": dict(reg["augment_params"]),
+        "tversky_weight": float(tversky_weight),
+    }
+    if tversky_weight > 0.0:
+        cfg["tversky_alpha"] = float(tversky_alpha)
+        cfg["tversky_beta"] = float(tversky_beta)
+    return cfg
+
+
+def expand_grid(
+    temperatures: list[float],
+    alphas: list[float],
+    regimes: list[str],
+    ce_options: list[bool],
+    tversky_specs: Sequence[float | tuple[float, float, float]] = ((0.0, 0.7, 0.3),),
+) -> list[dict[str, Any]]:
+    """Cartesian product -> config_overrides, de-duplicated.
+
+    When CE is off, alpha is forced to 1.0, so the alpha axis collapses; identical
+    effective configs (same temperature/effective-alpha/regime/ce/tversky) are
+    emitted once. ``tversky_specs`` is a list of ``(weight, alpha_fp, beta_fn)``
+    triples and defaults to ``((0.0, 0.7, 0.3),)`` so callers that don't sweep the
+    conservative loss get exactly the previous grid. Passing explicit triples (vs a
+    full alphaxbeta product) keeps the sweep on the intended simplex (e.g. alpha+beta=1).
+    A bare weight is also accepted and expands to ``(w, 0.7, 0.3)``, so a caller
+    sweeping only the blend factor can pass ``[0.0, 0.5]``.
+    """
+    specs = [
+        (float(spec), 0.7, 0.3) if isinstance(spec, (int, float)) else tuple(spec)
+        for spec in tversky_specs
+    ]
+    seen = set()
+    out: list[dict[str, Any]] = []
+    for T, a, reg, ce, (tw, ta, tb) in itertools.product(
+        temperatures, alphas, regimes, ce_options, specs
+    ):
+        cfg = make_config_overrides(
+            T, a, reg, ce, tversky_weight=tw, tversky_alpha=ta, tversky_beta=tb
+        )
+        key = (
+            cfg["temperature"],
+            cfg["alpha"],
+            cfg["augment_regime"],
+            cfg["ce_enabled"],
+            cfg["tversky_weight"],
+            cfg.get("tversky_alpha"),
+            cfg.get("tversky_beta"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cfg)
+    return out
+
+
+def aggregate_folds(
+    fold_metrics: list[dict[str, float]],
+    keys=("f0.5", "f1", "f2", "precision", "recall", "miou", "dice"),
+) -> dict[str, float]:
+    """Mean +/- std across folds for each metric -> flat ``<key>_mean/_std`` dict."""
+    agg: dict[str, float] = {"n_folds": len(fold_metrics)}
+    for k in keys:
+        vals = np.array([fm[k] for fm in fold_metrics], dtype=np.float64)
+        agg[f"{k}_mean"] = float(vals.mean())
+        agg[f"{k}_std"] = float(vals.std())
+    return agg
+
+
+def build_row(
+    cfg: dict[str, Any], agg: dict[str, float], fold_metrics: list[dict[str, float]]
+) -> dict[str, Any]:
+    """One results table row: the config dims + aggregates + per-fold headline."""
+    row = {
+        "temperature": cfg["temperature"],
+        "alpha": cfg["alpha"],
+        "requested_alpha": cfg["requested_alpha"],
+        "ce_enabled": cfg["ce_enabled"],
+        "augment_regime": cfg["augment_regime"],
+        "tversky_weight": cfg.get("tversky_weight", 0.0),
+        "tversky_alpha": cfg.get("tversky_alpha"),
+        "tversky_beta": cfg.get("tversky_beta"),
+    }
+    row.update(agg)
+    row["fold_f0.5"] = [round(fm["f0.5"], 5) for fm in fold_metrics]
+    row["fold_miou"] = [round(fm["miou"], 5) for fm in fold_metrics]
+    return row
+
+
+def select_best(
+    rows: list[dict[str, Any]],
+    primary: str = "miou_mean",
+    secondary: str = "f0.5_mean",
+    min_miou: float = 0.0,
+) -> dict[str, Any]:
+    """Pick the row maximizing the primary metric, breaking ties on the secondary.
+
+    Default is mIoU-primary with F0.5 as the tiebreak: keep the best-overlap
+    config, and among equal-overlap configs prefer the more precision-favoring
+    one. With ``min_miou > 0`` the choice is restricted to configs whose mean mIoU
+    clears the floor (useful only when a non-mIoU ``primary`` is requested).
+
+    Raises:
+        ValueError: if there are no rows, or if no row clears ``min_miou``. The
+            floor used to fall back to the full set with a warning - a filter
+            that silently stopped filtering in a sweep nobody watches.
+    """
+    if not rows:
+        raise ValueError("no rows to select from")
+    eligible = [r for r in rows if r.get("miou_mean", 0.0) >= min_miou]
+    if not eligible:
+        best = max(r.get("miou_mean", 0.0) for r in rows)
+        raise ValueError(
+            f"no config reaches the mIoU floor {min_miou:.3f} (the best mean mIoU is "
+            f"{best:.4f}); lower min_miou in the sweep file or widen the grid"
+        )
+    return max(eligible, key=lambda r: (r[primary], r[secondary]))
+
+
+# -- Sweep files ---------------------------------------------------------------
+
+# Optional top-level keys of a sweep file, with their defaults. `k`, `epochs`
+# and `grid` have none: they are what makes one sweep different from another.
+SWEEP_DEFAULTS: dict[str, Any] = {
+    "seed": 37,
+    "threshold": 0.5,
+    "select": "miou",
+    "min_miou": 0.0,
+    "fixed_teacher": None,
+}
+SWEEP_REQUIRED = ("k", "epochs", "grid")
+GRID_AXES = ("temperature", "alpha", "regime", "ce", "tversky")
+SELECT_METRICS = ("f0.5", "f1", "f2", "miou")
+
+
+def load_sweep(path) -> dict[str, Any]:
+    """Read a sweep file into the keyword arguments `run_cv` takes.
+
+    The file sets the folds, the epochs and one list per grid axis; see
+    ``sweeps/`` for the shape. The grid is expanded here, so the result can be
+    passed straight on. ``ce`` takes on/off quoted or not: unquoted, YAML
+    reads them as booleans.
+
+    Returns:
+        ``k``, ``epochs``, ``grid``, ``seed``, ``threshold``, ``select_primary``,
+        ``min_miou`` and ``fixed_teacher``.
+
+    Raises:
+        ValueError: on an unknown or missing key or axis, or a value outside
+            its choices - a typo in a sweep file is an error, as in a preset.
+    """
+    with open(path) as f:
+        raw = yaml.safe_load(f) or {}
+
+    unknown = sorted(set(raw) - set(SWEEP_DEFAULTS) - set(SWEEP_REQUIRED))
+    if unknown:
+        raise ValueError(f"{path}: unknown key(s) {unknown}")
+    missing = [key for key in SWEEP_REQUIRED if key not in raw]
+    if missing:
+        raise ValueError(f"{path}: missing required key(s) {missing}")
+    spec = {**SWEEP_DEFAULTS, **raw}
+
+    grid = spec["grid"]
+    if not isinstance(grid, dict):
+        raise ValueError(f"{path}: 'grid' must be a mapping of axis -> list of values")
+    unknown = sorted(set(grid) - set(GRID_AXES))
+    if unknown:
+        raise ValueError(f"{path}: unknown grid axis {unknown}; axes are {list(GRID_AXES)}")
+    # Tversky is the one optional axis: leaving it out means plain BCE.
+    grid = {"tversky": [[0.0, 0.7, 0.3]], **grid}
+    for axis in GRID_AXES:
+        if not isinstance(grid.get(axis), list) or not grid[axis]:
+            raise ValueError(f"{path}: grid axis '{axis}' must be a non-empty list")
+
+    ce = []
+    for value in grid["ce"]:
+        if not (isinstance(value, bool) or value in ("on", "off")):
+            raise ValueError(f"{path}: ce takes on/off, got {value!r}")
+        ce.append(value if isinstance(value, bool) else value == "on")
+
+    tversky = []
+    for entry in grid["tversky"]:
+        if isinstance(entry, (int, float)) and not isinstance(entry, bool):
+            tversky.append(float(entry))
+        elif isinstance(entry, list) and len(entry) == 3:
+            tversky.append(tuple(float(x) for x in entry))
+        else:
+            raise ValueError(
+                f"{path}: a tversky entry is a weight or a [weight, alpha_fp, beta_fn] "
+                f"triple, got {entry!r}"
+            )
+
+    if spec["select"] not in SELECT_METRICS:
+        raise ValueError(f"{path}: select must be one of {list(SELECT_METRICS)}")
+
+    return {
+        "k": int(spec["k"]),
+        "epochs": int(spec["epochs"]),
+        "grid": expand_grid(
+            [float(t) for t in grid["temperature"]],
+            [float(a) for a in grid["alpha"]],
+            [str(r) for r in grid["regime"]],
+            ce,
+            tversky,
+        ),
+        "seed": int(spec["seed"]),
+        "threshold": float(spec["threshold"]),
+        "select_primary": f"{spec['select']}_mean",
+        "min_miou": float(spec["min_miou"]),
+        "fixed_teacher": resolve_path(spec["fixed_teacher"]),
+    }
+
+
+# -----------------------------------------------------------------------------
+# Orchestration (real training; exercised manually, stubbed in tests)
+# -----------------------------------------------------------------------------
+
+
+def _list_split_files(config: ResolvedConfig, split: str):
+    """Resolve (img_files, mask_files) for a processed split, frame-sorted."""
+    sc = config.split_paths[split]
+    img_dir, mask_dir = sc["img"], sc["mask"]
+    imgs = sorted_by_frame(
+        [os.path.join(img_dir, f) for f in os.listdir(img_dir) if f.endswith(".png")]
+    )
+    masks = sorted_by_frame(
+        [os.path.join(mask_dir, f) for f in os.listdir(mask_dir) if f.endswith(".png")]
+    )
+    return imgs, masks
+
+
+def pool_train_val(config: ResolvedConfig):
+    """Pool the train and val processed splits (test stays untouched)."""
+    ti, tm = _list_split_files(config, "train")
+    try:
+        vi, vm = _list_split_files(config, "val")
+    except (KeyError, FileNotFoundError):
+        vi, vm = [], []
+    return ti + vi, tm + vm
+
+
+def evaluate_on_files(
+    model_path: str, img_files, mask_files, config: ResolvedConfig, threshold: float = 0.5
+) -> dict[str, float]:
+    """Build a dataset from explicit files and score a saved model on it."""
+    norm = config.normalization
+    ishape = config.input_shape
+    ds = make_dataset(
+        img_files,
+        mask_files,
+        batch_size=8,
+        shuffle=False,
+        augment=False,
+        target_size=(ishape[0], ishape[1]),
+        mean=norm["mean"],
+        std=norm["std"],
+    )
+    probs, masks, _ = load_predictor(model_path).run(ds)
+    groups = [sequence_group(p) for p in sorted_by_frame(img_files)]
+    if len(groups) != probs.shape[0]:
+        groups = None
+    return compute_segmentation_metrics(probs, masks, groups=groups, operating_threshold=threshold)
+
+
+# -- Resume ----------------------------------------------------------------------
+#
+# A run that finished writes `done.json` into its run directory, last and in
+# one rename, so a sweep killed halfway (a walltime, a crash, a shared GPU
+# running out of memory) leaves only complete markers. The marker holds a key
+# saying what the run was; a rerun whose job no longer matches it - the sweep
+# file was edited, the folds moved - is trained again rather than reused.
+
+DONE_FILE = "done.json"
+
+
+def _job_key(config_path: str, epochs: int, fold_lists: dict[str, Any], **extra) -> str:
+    """What a run was, reduced to a short hash.
+
+    Frames go in by file name, not by path, so a sweep resumes with the dataset
+    somewhere else - a cluster job copies it to node-local disk every time.
+    """
+    what = {
+        "preset": Path(config_path).name,
+        "epochs": epochs,
+        "train": sorted(os.path.basename(p) for p in fold_lists["cv_train_img"]),
+        "val": sorted(os.path.basename(p) for p in fold_lists["cv_val_img"]),
+        **extra,
+    }
+    return hashlib.sha256(json.dumps(what, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _load_done(run_dir: str, key: str) -> dict[str, Any] | None:
+    """The marker of a finished run, or None if there is none or it is for another job."""
+    try:
+        done = json.loads((Path(run_dir) / DONE_FILE).read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    return done if done.get("key") == key else None
+
+
+def _mark_done(run_dir: str, key: str, **result) -> None:
+    path = Path(run_dir) / DONE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"key": key, **result}, indent=2))
+    tmp.replace(path)
+
+
+# Module-level worker jobs so they are picklable by the 'spawn' process pool.
+# Each writes to its own models_dir (passed in config_overrides) so concurrent
+# jobs never clobber a shared <model>.h5.
+
+
+def _train_teacher_job(job: dict[str, Any]):
+    """Train one per-fold BU-Net teacher. Returns (fold_index, model_path)."""
+    try:
+        res = run_training(
+            "bu_net",
+            job["config_path"],
+            job["run_dir"],
+            config_overrides={
+                **job["fold_lists"],
+                "models_dir": job["models_dir"],
+                "epochs": job["epochs"],
+            },
+        )
+    except Exception as e:
+        # Not handled, only labelled: the note survives the trip back from a
+        # pool worker, so the traceback says which of the k runs broke.
+        e.add_note(f"while training the teacher for fold{job['fi']}")
+        raise
+    # Relative, so the output directory can move between a job and its resume.
+    _mark_done(job["run_dir"], job["key"], model=os.path.relpath(res["model_path"], job["run_dir"]))
+    return job["fi"], res["model_path"]
+
+
+def _train_student_job(job: dict[str, Any]):
+    """Train + evaluate one (config, fold) Nano-U student. Returns (ci, fi, metrics)."""
+    try:
+        res = run_training(
+            "nanou",
+            job["config_path"],
+            job["run_dir"],
+            config_overrides={
+                **job["fold_lists"],
+                **{k: v for k, v in job["cfg"].items() if k not in ROW_ONLY_KEYS},
+                "models_dir": job["models_dir"],
+                "epochs": job["epochs"],
+                "teacher_weights": job["teacher_weights"],
+            },
+        )
+    except Exception as e:
+        e.add_note(f"while training the student {job['tag']} fold{job['fi']}")
+        raise
+    config = resolve(path=job["config_path"])
+    fm = evaluate_on_files(
+        res["model_path"],
+        job["fold_lists"]["cv_val_img"],
+        job["fold_lists"]["cv_val_mask"],
+        config,
+        threshold=job["threshold"],
+    )
+    _mark_done(job["run_dir"], job["key"], metrics=fm)
+    return job["ci"], job["fi"], fm
+
+
+def _run_jobs(fn, jobs: list[dict[str, Any]], n_workers: int):
+    """Run jobs sequentially (n_workers<=1) or across a spawn process pool.
+
+    ``maxtasksperchild=1`` gives each job a fresh process, so a job's TF/CUDA
+    GPU memory is fully released before the next starts - letting ``n_workers``
+    full QAD pipelines coexist in VRAM without leak accumulation.
+    """
+    if n_workers <= 1 or len(jobs) <= 1:
+        return [fn(j) for j in jobs]
+    import multiprocessing as mp
+
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(processes=n_workers, maxtasksperchild=1) as pool:
+        return pool.map(fn, jobs)
+
+
+def run_cv(
+    config_path: str,
+    k: int,
+    epochs: int,
+    grid: list[dict[str, Any]],
+    output_dir: str,
+    threshold: float = 0.5,
+    seed: int = 37,
+    fixed_teacher: str | None = None,
+    select_primary: str = "miou_mean",
+    min_miou: float = 0.0,
+    jobs: int = 1,
+    teacher_jobs: int = 1,
+) -> dict[str, Any]:
+    """Drive the full grouped-CV sweep. Returns the assembled table + winner.
+
+    Teachers are trained **once per fold** (phase 1) and reused across every
+    config that shares the fold - the teacher depends only on the leakage-safe
+    fold split, not on the student hyperparameters, so this is exact, not an
+    approximation. ``jobs`` runs that many student pipelines concurrently;
+    ``teacher_jobs`` is separate because the 12.85M-param BU-Net teacher is far
+    heavier than the 3.3k-param student - three concurrent teachers OOM a ~6 GB
+    GPU, so teachers default to sequential.
+
+    Runs already finished in ``output_dir`` for the same job are reused, not
+    retrained (see ``DONE_FILE``), so a killed sweep resumes by running again.
+    """
+    config = resolve(path=config_path)
+    img_files, mask_files = pool_train_val(config)
+    mask_by_name = {os.path.basename(m): m for m in mask_files}
+    img_files = [i for i in img_files if os.path.basename(i) in mask_by_name]
+    groups = [sequence_group(i) for i in img_files]
+    splits = grouped_kfold(groups, k=k, seed=seed)
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Precompute the leakage-safe file lists for every fold.
+    fold_lists_by_fold: dict[int, dict[str, Any]] = {}
+    for fi, (tr_idx, va_idx) in enumerate(splits):
+        tr_img = [img_files[j] for j in tr_idx]
+        va_img = [img_files[j] for j in va_idx]
+        fold_lists_by_fold[fi] = {
+            "cv_train_img": tr_img,
+            "cv_train_mask": [mask_by_name[os.path.basename(i)] for i in tr_img],
+            "cv_val_img": va_img,
+            "cv_val_mask": [mask_by_name[os.path.basename(i)] for i in va_img],
+        }
+
+    print(
+        f"[CV] {len(img_files)} frames, {len(set(groups))} sequences, "
+        f"{len(splits)} folds, {len(grid)} configs, jobs={jobs}"
+    )
+
+    # -- Phase 1: one teacher per fold, cached & reused across all configs ------
+    if fixed_teacher is not None:
+        print("[CV] using a single fixed teacher for every fold (leakage caveat)")
+        teacher_of = {fi: fixed_teacher for fi in range(len(splits))}
+        teacher_key = {fi: fixed_teacher for fi in range(len(splits))}
+    else:
+        t_jobs = [
+            {
+                "config_path": config_path,
+                "run_dir": str(out / "teachers" / f"fold{fi}"),
+                "models_dir": str(out / "teachers" / f"fold{fi}" / "model"),
+                "fold_lists": fold_lists_by_fold[fi],
+                "epochs": epochs,
+                "fi": fi,
+                "key": _job_key(config_path, epochs, fold_lists_by_fold[fi]),
+            }
+            for fi in range(len(splits))
+        ]
+        teacher_key = {job["fi"]: job["key"] for job in t_jobs}
+        teacher_of = {}
+        todo = []
+        for job in t_jobs:
+            done = _load_done(job["run_dir"], job["key"])
+            model = Path(job["run_dir"]) / done["model"] if done else None
+            if model is not None and model.exists():
+                teacher_of[job["fi"]] = str(model)
+            else:
+                todo.append(job)
+        print(
+            f"[CV] training {len(todo)} per-fold teachers "
+            f"(vs {len(t_jobs) * len(grid)} before caching, "
+            f"{len(t_jobs) - len(todo)} already done), "
+            f"teacher_jobs={teacher_jobs}"
+        )
+        teacher_of.update(_run_jobs(_train_teacher_job, todo, min(teacher_jobs, len(todo))))
+
+    # -- Phase 2: one student per (config, fold), reusing the fold's teacher ----
+    s_jobs: list[dict[str, Any]] = []
+    tags: list[str] = []
+    for ci, cfg in enumerate(grid):
+        tag = (
+            f"T{cfg['temperature']}_a{cfg['alpha']}_"
+            f"{cfg['augment_regime']}_ce{int(cfg['ce_enabled'])}"
+        )
+        if cfg.get("tversky_weight", 0.0) > 0.0:
+            tag += f"_tv{cfg['tversky_weight']}"
+            ta, tb = cfg.get("tversky_alpha"), cfg.get("tversky_beta")
+            if (ta, tb) != (0.7, 0.3):
+                tag += f"_a{ta}b{tb}"
+        tags.append(tag)
+        for fi in range(len(splits)):
+            s_jobs.append(
+                {
+                    "config_path": config_path,
+                    "run_dir": str(out / "runs" / tag / f"fold{fi}"),
+                    "models_dir": str(out / "runs" / tag / f"fold{fi}" / "model"),
+                    "cfg": cfg,
+                    "fold_lists": fold_lists_by_fold[fi],
+                    "teacher_weights": teacher_of[fi],
+                    "epochs": epochs,
+                    "threshold": threshold,
+                    "ci": ci,
+                    "fi": fi,
+                    "tag": tag,
+                    "key": _job_key(
+                        config_path,
+                        epochs,
+                        fold_lists_by_fold[fi],
+                        cfg=cfg,
+                        threshold=threshold,
+                        teacher=teacher_key[fi],
+                    ),
+                }
+            )
+    student_results = []
+    todo = []
+    for job in s_jobs:
+        done = _load_done(job["run_dir"], job["key"])
+        if done:
+            student_results.append((job["ci"], job["fi"], done["metrics"]))
+        else:
+            todo.append(job)
+    print(f"[CV] training {len(todo)} student runs ({len(student_results)} already done)")
+    student_results += _run_jobs(_train_student_job, todo, min(jobs, len(todo)))
+
+    # -- Aggregate fold metrics per config -------------------------------------
+    by_config: dict[int, dict[int, dict[str, float]]] = {}
+    for ci, fi, fm in student_results:
+        by_config.setdefault(ci, {})[fi] = fm
+
+    rows: list[dict[str, Any]] = []
+    for ci, cfg in enumerate(grid):
+        fold_metrics = [by_config[ci][fi] for fi in sorted(by_config[ci])]
+        agg = aggregate_folds(fold_metrics)
+        rows.append(build_row(cfg, agg, fold_metrics))
+        print(
+            f"[{ci + 1}/{len(grid)}] {tags[ci]}: "
+            f"f0.5={agg['f0.5_mean']:.4f}+/-{agg['f0.5_std']:.4f} "
+            f"miou={agg['miou_mean']:.4f}+/-{agg['miou_std']:.4f}"
+        )
+
+    # The table goes to disk before selecting: an infeasible mIoU floor raises
+    # below, and hours of results must not go down with it.
+    _write_table(rows, out)
+    if min_miou > 0.0:
+        n_eligible = sum(1 for r in rows if r["miou_mean"] >= min_miou)
+        print(f"[CV] {n_eligible}/{len(rows)} configs clear the mIoU floor {min_miou:.3f}.")
+    # mIoU-primary breaks ties on the F0.5 safety axis; any other primary breaks
+    # ties on mIoU.
+    select_secondary = "f0.5_mean" if select_primary == "miou_mean" else "miou_mean"
+    best = select_best(rows, primary=select_primary, secondary=select_secondary, min_miou=min_miou)
+    print(
+        f"\n[CV] BEST by {select_primary} ({select_secondary} tiebreak, "
+        f"floor={min_miou:.3f}): "
+        f"T={best['temperature']} alpha={best['alpha']} "
+        f"regime={best['augment_regime']} ce={best['ce_enabled']} "
+        f"-> f0.5={best['f0.5_mean']:.4f} miou={best['miou_mean']:.4f}"
+    )
+    return {"rows": rows, "best": best}
+
+
+def _write_table(rows: list[dict[str, Any]], out: Path) -> None:
+    """Persist the results table as both JSON and (via pandas) CSV."""
+    (out / "cv_results.json").write_text(json.dumps(rows, indent=2))
+    try:
+        import pandas as pd
+
+        pd.DataFrame(rows).to_csv(out / "cv_results.csv", index=False)
+    except Exception as e:  # pandas is in requirements; never fail the sweep on I/O
+        print(f"[CV] CSV export skipped: {e}")
+    print(f"[CV] wrote {out / 'cv_results.json'} and cv_results.csv")

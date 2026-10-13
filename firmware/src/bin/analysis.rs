@@ -10,11 +10,11 @@ esp_bootloader_esp_idf::esp_app_desc!();
 use microflow::buffer::Buffer4D;
 use microflow::model;
 
-use nano_u_esp::{build_quant_luts, measure_stack, paint_stack, preprocess_rgb, stack_total, IMG_H, IMG_SIZE, IMG_W, NUM_IMAGES};
+use nanou_esp::{build_quant_luts, measure_stack, paint_stack, preprocess_rgb, stack_total, IMG_H, IMG_SIZE, IMG_W, NUM_IMAGES};
 
-// Model is copied from ../models/nano_u.tflite by build.rs (Python pipeline output)
+// Model is copied from ../models/nanou.tflite by build.rs (Python pipeline output)
 // Input: 60x80x3, Output: 60x80x1
-#[model("models/nano_u.tflite")]
+#[model("models/nanou.tflite")]
 struct UNet;
 
 static mut INPUT_BUFFER: Option<Buffer4D<i8, 1, IMG_H, IMG_W, 3>> = None;

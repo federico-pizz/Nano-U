@@ -1,25 +1,18 @@
-# ── Python / build artifacts ────────────────────────────────────────────────
+# -- Python -------------------------------------------------------------------
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
 build/
 dist/
 *.egg-info/
-*.egg
-.coverage
-.cache/
-.pytest_cache/
-.mypy_cache/
-
-# ── Virtual environments ─────────────────────────────────────────────────────
 .venv*/
 venv/
 env/
 ENV/
+.pytest_cache/
+.mypy_cache/
+.coverage
 
-# ── IDE / editor / OS ────────────────────────────────────────────────────────
+# -- IDE / editor / OS --------------------------------------------------------
 .vscode/
 .idea/
 *.swp
@@ -28,22 +21,28 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# ── Run outputs & local config (only the public template is tracked) ─────────
-results/
-config/*.yaml
-config/*.yml
-!config/config.yaml
+# -- Run outputs and local state ----------------------------------------------
+# Runs stay local; the summary each experiment writes for a reader is tracked.
+# Git cannot re-include a file inside an ignored directory, so these ignore the
+# contents rather than the directory, and their order matters.
+results/*
+!results/experiments/
+results/experiments/*/*
+!results/experiments/*/summary.json
+baseline/
+capture_out/
 
-# ── Media & data blobs (tracked exceptions whitelisted further down) ─────────
-*.png
-*.jpg
-*.jpeg
-*.rgb
-*.tif
-*.tiff
-*.json
+# Private configs live here, rather than behind a *.yaml rule.
+config/local/
 
-# ── Rust ─────────────────────────────────────────────────────────────────────
+# -- Datasets: keep the layout markers, ignore the content --------------------
+data/*/
+!data/*/.gitkeep
+
+# -- Dataset-specific extraction tools ----------------------------------------
+tools/
+
+# -- Rust ---------------------------------------------------------------------
 /target/
 **/target/
 Cargo.lock
@@ -52,20 +51,4 @@ firmware/.cargo/*
 !firmware/.cargo/config.toml
 firmware/models/*.tflite
 
-# ── Docs: keep READMEs, ignore other markdown drafts ────────────────────────
-*.md
-!README.md
-
-# ── tools/: ignore scratch, keep committed figures ──────────────────────────
-# After the docs block on purpose: opening tools/poster/ so the two committed
-# figures can be reached also lets `!README.md` above escape, so the directory
-# has to be re-ignored here, where these rules are the last word.
-tools/**
-!tools/
-!tools/figure_2.png
-!tools/poster/
-tools/poster/*
-!tools/poster/out/
-tools/poster/out/*
-!tools/poster/out/predictions_comparison.png
-!tools/poster/out/tinyagri_grid.png
+# Genuinely private, machine-local rules belong in .git/info/exclude, not here.

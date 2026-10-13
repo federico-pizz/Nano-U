@@ -1060,7 +1060,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nano_u_esp"
+name = "nanou_esp"
 version = "0.1.0"
 dependencies = [
  "critical-section",

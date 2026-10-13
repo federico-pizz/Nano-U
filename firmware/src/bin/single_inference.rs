@@ -10,13 +10,13 @@ esp_bootloader_esp_idf::esp_app_desc!();
 use microflow::buffer::{Buffer2D, Buffer4D};
 use microflow::model;
 
-use nano_u_esp::{build_quant_luts, parse_u32_const, preprocess_rgb, IMG_H, IMG_SIZE, IMG_W};
+use nanou_esp::{build_quant_luts, parse_u32_const, preprocess_rgb, IMG_H, IMG_SIZE, IMG_W};
 
 // Input: 60x80x3, Output: 60x80x1
-#[model("models/nano_u.tflite")]
+#[model("models/nanou.tflite")]
 struct UNet;
 
-const TARGET_IDX: usize = parse_u32_const(env!("NANO_U_TARGET_IMG_IDX")) as usize;
+const TARGET_IDX: usize = parse_u32_const(env!("NANOU_TARGET_IMG_IDX")) as usize;
 
 #[main]
 fn main() -> ! {

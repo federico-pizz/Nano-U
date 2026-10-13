@@ -2,12 +2,12 @@
 #![no_main]
 #![deny(unsafe_code)]
 
-//! Continuous ("regular") inference binary — the default `cargo run` target.
+//! Continuous ("regular") inference binary - the default `cargo run` target.
 //!
 //! Its only job is to *run*: it executes the segmentation model in an endless
 //! loop, one inference every [`INFERENCE_INTERVAL_MS`] milliseconds, and prints
 //! a short per-frame summary. It contains **no `unsafe` code** (enforced by
-//! `#![deny(unsafe_code)]`) and no profiling — stack/power measurement lives in
+//! `#![deny(unsafe_code)]`) and no profiling - stack/power measurement lives in
 //! the `analysis` binaries.
 //!
 //! The single input buffer is allocated once before the loop and overwritten in
@@ -22,11 +22,11 @@ esp_bootloader_esp_idf::esp_app_desc!();
 use microflow::buffer::{Buffer2D, Buffer4D};
 use microflow::model;
 
-use nano_u_esp::{build_quant_luts, preprocess_rgb, IMG_H, IMG_SIZE, IMG_W, NUM_IMAGES};
+use nanou_esp::{build_quant_luts, preprocess_rgb, IMG_H, IMG_SIZE, IMG_W, NUM_IMAGES};
 
 // Model is copied from ../models/<MODEL_NAME>.tflite by build.rs (Python pipeline output).
 // Input: 60x80x3, Output: 60x80x1
-#[model("models/nano_u.tflite")]
+#[model("models/nanou.tflite")]
 struct UNet;
 
 /// Delay between successive inferences. Change this to set the run cadence.
@@ -35,7 +35,7 @@ const INFERENCE_INTERVAL_MS: u32 = 500;
 /// Input frames, baked in at build time from the test image set.
 ///
 /// To change the input, swap the PNGs the build script reads (see `build.rs`,
-/// env var `TEST_IMG_DIR`) and rebuild — no code change is needed. Frames are
+/// env var `TEST_IMG_DIR`) and rebuild - no code change is needed. Frames are
 /// stored back-to-back as raw RGB8, `IMG_SIZE` bytes each.
 const RAW_IMAGES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/input_images.bin"));
 
